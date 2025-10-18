@@ -28,7 +28,7 @@ def internet_search(
 
 
 agent = create_deep_agent(
-    system_prompt="You are a general task actioning agent. Always respond to the user in markdown.",
+    system_prompt="You are a general task actioning agent. Always respond to the user in markdown. After the first user message, always use write_todos to plan out how you will approach the task initially. You can of course update this plan over time as you make progress and find out new context etc.",
     model=model,
     tools=[internet_search],
 )
