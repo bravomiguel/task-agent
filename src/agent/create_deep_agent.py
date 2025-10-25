@@ -20,7 +20,6 @@ from langgraph.types import Checkpointer
 
 from deepagents.middleware.filesystem import FilesystemMiddleware
 from deepagents.middleware.subagents import CompiledSubAgent, SubAgent, SubAgentMiddleware
-from agent.middleware import ThreadTitleMiddleware
 
 BASE_AGENT_PROMPT = "In order to complete the objective that the user asks of you, you have access to a number of standard tools."
 
@@ -95,7 +94,6 @@ def create_deep_agent(
         model = get_default_model()
 
     deepagent_middleware = [
-        ThreadTitleMiddleware(llm=model),
         TodoListMiddleware(),
         # FilesystemMiddleware(
         #     long_term_memory=use_longterm_memory,
