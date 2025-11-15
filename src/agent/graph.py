@@ -1,40 +1,61 @@
-from tavily import TavilyClient
-import os
-from typing import Literal
-from langchain.chat_models import init_chat_model
-from agent.middleware import ReviewMessageMiddleware, ThreadTitleMiddleware, IsDoneMiddleware
-from agent.create_deep_agent import create_deep_agent
-
-gpt_5 = init_chat_model(model="openai:gpt-5", reasoning={"effort": "minimal"})
-gpt_4_1 = init_chat_model(model="openai:gpt-4.1")
-gpt_5_mini = init_chat_model(model="openai:gpt-5-mini", disable_streaming=True)
-
-# It's best practice to initialize the client once and reuse it.
-tavily_client = TavilyClient(api_key=os.environ["TAVILY_API_KEY"])
-
-# Search tool to use to do research
-
-
-def internet_search(
-    query: str,
-    max_results: int = 5,
-    topic: Literal["general", "news", "finance"] = "general",
-    include_raw_content: bool = False,
-):
-    """Run a web search"""
-    search_docs = tavily_client.search(
-        query,
-        max_results=max_results,
-        include_raw_content=include_raw_content,
-        topic=topic,
-    )
-    return search_docs
-
-
-agent = create_deep_agent(
-    system_prompt="You are a general task actioning agent. Always respond to the user in markdown. After the first user message, always use write_todos to plan out how you will approach the task initially. You can of course update this plan over time as you make progress and find out new context etc.",
-    model=gpt_4_1,
-    middleware=[IsDoneMiddleware(), ThreadTitleMiddleware(
-        llm=gpt_5_mini), ReviewMessageMiddleware(llm=gpt_5_mini)],
-    tools=[internet_search],
-)
+"""Minimal agent creation with Modal sandbox and memory middleware."""  
+  
+from deepagents import create_deep_agent  
+from deepagents.backends import CompositeBackend, StoreBackend  
+from deepagents_cli.agent_memory import AgentMemoryMiddleware  
+from deepagents_cli.integrations.sandbox_factory import create_modal_sandbox  
+from langchain_core.language_models import BaseChatModel  
+from langgraph.checkpoint.memory import InMemorySaver  
+from langgraph.store.memory import InMemoryStore  
+  
+  
+def create_minimal_agent(  
+    model: str | BaseChatModel,  
+    assistant_id: str,  
+    tools: list,  
+    system_prompt: str,  
+):  
+    """Create a minimal agent with Modal sandbox and memory middleware.  
+      
+    Args:  
+        model: LLM model to use (e.g., "claude-sonnet-4-20250514")  
+        assistant_id: Agent identifier for memory storage  
+        tools: Additional tools (e.g., web_search, http_request, fetch_url)  
+        system_prompt: System prompt for the agent  
+          
+    Returns:  
+        Configured agent ready for execution  
+    """  
+    # Create Modal sandbox backend for remote code execution  
+    modal_sandbox = create_modal_sandbox()  
+      
+    # Composite backend factory: Modal sandbox (default) + StoreBackend for /memories/  
+    composite_backend = lambda rt: CompositeBackend(  
+        default=modal_sandbox,  # ModalBackend instead of StateBackend  
+        routes={  
+            "/memories/": StoreBackend(rt),  # StoreBackend instantiated with runtime  
+        }  
+    )  
+      
+    # Middleware: AgentMemoryMiddleware for long-term memory management  
+    agent_middleware = [  
+        AgentMemoryMiddleware(  
+            backend=(lambda rt: StoreBackend(rt)),  
+            memory_path="/memories/"  
+        ),  
+    ]  
+      
+    # Create the agent with InMemoryStore  
+    agent = create_deep_agent(  
+        model=model,  
+        system_prompt=system_prompt,  
+        tools=tools,  
+        backend=composite_backend,  # Factory function, not instance  
+        middleware=agent_middleware,  
+        store=InMemoryStore(),  # Store passed to create_deep_agent  
+    )  
+      
+    # Add checkpointer for state persistence  
+    agent.checkpointer = InMemorySaver()  
+      
+    return agent
