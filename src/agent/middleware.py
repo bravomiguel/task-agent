@@ -3,6 +3,8 @@ from langchain_core.messages import HumanMessage
 from langgraph.runtime import Runtime
 from typing import Annotated, Any, NotRequired
 from typing_extensions import TypedDict
+import asyncio
+from deepagents_cli.agent_memory import AgentMemoryMiddleware as BaseAgentMemoryMiddleware
 
 # Extend AgentState to include thread_title
 
@@ -90,48 +92,68 @@ class ReviewState(AgentState):
     review_message: NotRequired[str]
 
 
-class ReviewMessageMiddleware(AgentMiddleware[ReviewState]):  
-    state_schema = ReviewState  
-      
-    def __init__(self, llm):  
-        """Initialize with an LLM for title generation."""  
-        super().__init__()  
-        self.llm = llm  
-      
-    def after_agent(self, state: ReviewState, runtime: Runtime) -> dict[str, Any] | None:  
-        """Sync version: Generate review message after agent completes."""  
-        messages = state["messages"]  
-          
-        if not messages:  
-            return {"review_message": "No action needed."}  
-          
+class ReviewMessageMiddleware(AgentMiddleware[ReviewState]):
+    state_schema = ReviewState
+
+    def __init__(self, llm):
+        """Initialize with an LLM for title generation."""
+        super().__init__()
+        self.llm = llm
+
+    def after_agent(self, state: ReviewState, runtime: Runtime) -> dict[str, Any] | None:
+        """Sync version: Generate review message after agent completes."""
+        messages = state["messages"]
+
+        if not messages:
+            return {"review_message": "No action needed."}
+
         summary_prompt = f"""Review this conversation and summarize what input or request is needed from the human user.  
         Be concise and specific about what action or information is required.  
           
         Conversation:  
         {chr(10).join(f"{msg.type}: {msg.content}" for msg in messages[-5:])}  
           
-        Provide a brief summary (1 sentence) of what the user needs to do next."""  
-          
-        response = self.llm.invoke([{"role": "user", "content": summary_prompt}])  
-          
-        return {"review_message": response.content}  
-      
-    async def aafter_agent(self, state: ReviewState, runtime: Runtime) -> dict[str, Any] | None:  
-        """Async version: Generate review message after agent completes."""  
-        messages = state["messages"]  
-          
-        if not messages:  
-            return {"review_message": "No action needed."}  
-          
-        summary_prompt = f"""Review this conversation and summarize what input or request is needed from the human user.  
-        Be concise and specific about what action or information is required.  
-          
-        Conversation:  
-        {chr(10).join(f"{msg.type}: {msg.content}" for msg in messages[-5:])}  
-          
-        Provide a brief summary (1 sentence) of what the user needs to do next."""  
-          
-        response = await self.llm.ainvoke([{"role": "user", "content": summary_prompt}])  
-          
+        Provide a brief summary (1 sentence) of what the user needs to do next."""
+
+        response = self.llm.invoke(
+            [{"role": "user", "content": summary_prompt}])
+
         return {"review_message": response.content}
+
+    async def aafter_agent(self, state: ReviewState, runtime: Runtime) -> dict[str, Any] | None:
+        """Async version: Generate review message after agent completes."""
+        messages = state["messages"]
+
+        if not messages:
+            return {"review_message": "No action needed."}
+
+        summary_prompt = f"""Review this conversation and summarize what input or request is needed from the human user.  
+        Be concise and specific about what action or information is required.  
+          
+        Conversation:  
+        {chr(10).join(f"{msg.type}: {msg.content}" for msg in messages[-5:])}  
+          
+        Provide a brief summary (1 sentence) of what the user needs to do next."""
+
+        response = await self.llm.ainvoke([{"role": "user", "content": summary_prompt}])
+
+        return {"review_message": response.content}
+
+
+class AsyncAgentMemoryMiddleware(BaseAgentMemoryMiddleware):
+    """Async-compatible version of AgentMemoryMiddleware."""
+
+    async def abefore_agent(
+        self,
+        state,
+        runtime,
+    ):
+        """(async) Load agent memory from file before agent execution."""
+        if "agent_memory" not in state or state.get("agent_memory") is None:
+            # Wrap blocking read in asyncio.to_thread
+            file_data = await asyncio.to_thread(
+                self.backend.read,
+                "/agent.md"
+            )
+            return {"agent_memory": file_data}
+        return None
