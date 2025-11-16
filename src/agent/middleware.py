@@ -24,7 +24,6 @@ class ModalSandboxState(AgentState):
     """Extended state schema with Modal sandbox ID."""
 
     modal_sandbox_id: NotRequired[str]
-    modal_app_name: NotRequired[str]
 
 
 class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
@@ -42,14 +41,12 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
         startup_timeout: int = 180,
         idle_timeout: int = 60 * 3,  # 3 minutes
         max_timeout: int = 60 * 60 * 24,   # 24 hours
-        app_name: str = "agent-sandbox",
     ):
         super().__init__()
         self._workdir = workdir
         self._startup_timeout = startup_timeout
         self._idle_timeout = idle_timeout
         self._max_timeout = max_timeout
-        self._app_name = app_name
 
     def before_agent(
         self, state: ModalSandboxState, runtime: Runtime
@@ -75,7 +72,7 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
                 pass
 
         # Create new sandbox
-        app = modal.App.lookup(self._app_name, create_if_missing=True)
+        app = modal.App.lookup("agent-sandbox", create_if_missing=True)
         sandbox = modal.Sandbox.create(
             app=app,
             workdir=self._workdir,
@@ -102,7 +99,6 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
 
         return {
             "modal_sandbox_id": sandbox.object_id,
-            "modal_app_name": self._app_name,
         }
 
     async def abefore_agent(
@@ -146,7 +142,7 @@ class BackendMiddleware(AgentMiddleware[ModalSandboxState, Any]):
         """Inject CompositeBackend into state for tools to use (sync)."""
         # Import from your actual module paths
         from deepagents_cli.integrations.modal import ModalBackend
-        from deepagents.backends import CompositeBackend    
+        from deepagents.backends import CompositeBackend
 
         # Get sandbox for this thread
         sandbox = self._sandbox_middleware.get_sandbox(state)

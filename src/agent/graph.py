@@ -86,7 +86,6 @@ if not agent_md.exists():
 # The agent.md file is stored locally, not in the store
 long_term_backend = FilesystemBackend(root_dir=agent_dir, virtual_mode=True)
 
-# Middleware: AgentMemoryMiddleware for long-term memory management
 # Create a single instance of ModalSandboxMiddleware to be shared
 modal_sandbox_middleware = ModalSandboxMiddleware(idle_timeout=60)
 
