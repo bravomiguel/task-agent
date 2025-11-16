@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from langchain.agents.middleware import AgentMiddleware, AgentState
 from langchain_core.messages import HumanMessage
 from langgraph.runtime import Runtime
@@ -5,6 +7,172 @@ from typing import Annotated, Any, NotRequired
 from typing_extensions import TypedDict
 import asyncio
 from deepagents_cli.agent_memory import AgentMemoryMiddleware as BaseAgentMemoryMiddleware
+
+import time
+from typing import TYPE_CHECKING, Any
+
+from langchain.agents.middleware import AgentMiddleware, AgentState
+from typing_extensions import NotRequired
+from langgraph.channels.untracked_value import UntrackedValue
+
+if TYPE_CHECKING:
+    import modal
+    from langgraph.runtime import Runtime
+
+
+class ModalSandboxState(AgentState):
+    """Extended state schema with Modal sandbox ID."""
+
+    modal_sandbox_id: NotRequired[str]
+    modal_app_name: NotRequired[str]
+
+
+class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
+    """Middleware that manages Modal sandbox lifecycle per thread.  
+
+    Creates a new Modal sandbox when a thread starts and relies on Modal's  
+    idle_timeout to automatically terminate inactive sandboxes.  
+    """
+
+    state_schema = ModalSandboxState
+
+    def __init__(
+        self,
+        workdir: str = "/workspace",
+        startup_timeout: int = 180,
+        idle_timeout: int = 60 * 3,  # 3 minutes
+        max_timeout: int = 60 * 60 * 24,   # 24 hours
+        app_name: str = "agent-sandbox",
+    ):
+        super().__init__()
+        self._workdir = workdir
+        self._startup_timeout = startup_timeout
+        self._idle_timeout = idle_timeout
+        self._max_timeout = max_timeout
+        self._app_name = app_name
+
+    def before_agent(
+        self, state: ModalSandboxState, runtime: Runtime
+    ) -> dict[str, Any] | None:
+        """Create or reconnect to Modal sandbox for this thread."""
+        import modal
+
+        existing_sandbox_id = state.get("modal_sandbox_id")
+
+        if existing_sandbox_id:
+            try:
+                app = modal.App.lookup(self._app_name, create_if_missing=True)
+                sandbox = modal.Sandbox.from_id(
+                    sandbox_id=existing_sandbox_id, app=app)
+
+                # Verify sandbox is alive
+                try:
+                    process = sandbox.exec("echo", "alive", timeout=5)
+                    process.wait()
+                    if process.returncode == 0:
+                        return None  # Reuse existing
+                except Exception:
+                    pass
+            except Exception:
+                pass
+
+        # Create new sandbox
+        app = modal.App.lookup(self._app_name, create_if_missing=True)
+        sandbox = modal.Sandbox.create(
+            app=app,
+            workdir=self._workdir,
+            timeout=self._max_timeout,
+            idle_timeout=self._idle_timeout,
+        )
+
+        # Poll until ready
+        for _ in range(self._startup_timeout // 2):
+            if sandbox.poll() is not None:
+                raise RuntimeError("Modal sandbox terminated during startup")
+            try:
+                process = sandbox.exec("echo", "ready", timeout=5)
+                process.wait()
+                if process.returncode == 0:
+                    break
+            except Exception:
+                pass
+            time.sleep(2)
+        else:
+            sandbox.terminate()
+            raise RuntimeError(
+                f"Modal sandbox failed to start within {self._startup_timeout}s")
+
+        return {
+            "modal_sandbox_id": sandbox.object_id,
+            "modal_app_name": self._app_name,
+        }
+
+    async def abefore_agent(
+        self, state: ModalSandboxState, runtime: Runtime
+    ) -> dict[str, Any] | None:
+        """Async version delegates to sync implementation."""
+        return self.before_agent(state, runtime)
+
+    def get_sandbox(self, state: ModalSandboxState) -> modal.Sandbox:
+        """Get the active sandbox for this thread by ID."""
+        import modal
+
+        sandbox_id = state.get("modal_sandbox_id")
+        app_name = state.get("modal_app_name", self._app_name)
+
+        if not sandbox_id:
+            raise RuntimeError("Modal sandbox not initialized")
+
+        app = modal.App.lookup(app_name, create_if_missing=True)
+        return modal.Sandbox.from_id(sandbox_id)
+
+
+class BackendMiddleware(AgentMiddleware[ModalSandboxState, Any]):
+    """Middleware that provides CompositeBackend with Modal sandbox to tools.  
+
+    This middleware reconstructs the ModalBackend from the sandbox ID  
+    before each model call and wraps it in a CompositeBackend for routing.  
+    """
+    state_schema = ModalSandboxState
+
+    def __init__(
+        self,
+        sandbox_middleware: ModalSandboxMiddleware,
+        long_term_backend,  # FilesystemBackend for /memories/
+    ):
+        super().__init__()
+        self._sandbox_middleware = sandbox_middleware
+        self._long_term_backend = long_term_backend
+
+    def before_model(
+        self, state: ModalSandboxState, runtime: Runtime
+    ) -> dict[str, Any] | None:
+        """Inject CompositeBackend into state for tools to use (sync)."""
+        # Import from your actual module paths
+        from deepagents_cli.integrations.modal import ModalBackend
+        from deepagents.backends import CompositeBackend    
+
+        # Get sandbox for this thread
+        sandbox = self._sandbox_middleware.get_sandbox(state)
+
+        # Create ModalBackend
+        modal_backend = ModalBackend(sandbox)
+
+        # Create CompositeBackend with routing
+        composite_backend = CompositeBackend(
+            default=modal_backend,
+            routes={"/memories/": self._long_term_backend},
+        )
+
+        # Store composite backend (wrapped in UntrackedValue)
+        return {"modal_backend": UntrackedValue(composite_backend)}
+
+    async def abefore_model(
+        self, state: ModalSandboxState, runtime: Runtime
+    ) -> dict[str, Any] | None:
+        """Inject CompositeBackend into state for tools to use (async)."""
+        # Delegate to sync version since get_sandbox and backend creation are sync
+        return self.before_model(state, runtime)
 
 # Extend AgentState to include thread_title
 
