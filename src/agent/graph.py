@@ -87,9 +87,12 @@ if not agent_md.exists():
 long_term_backend = FilesystemBackend(root_dir=agent_dir, virtual_mode=True)
 
 # Middleware: AgentMemoryMiddleware for long-term memory management
+# Create a single instance of ModalSandboxMiddleware to be shared
+modal_sandbox_middleware = ModalSandboxMiddleware(idle_timeout=60)
+
 agent_middleware = [
-    ModalSandboxMiddleware(),
-    BackendMiddleware(ModalSandboxMiddleware(), long_term_backend),
+    modal_sandbox_middleware,
+    BackendMiddleware(modal_sandbox_middleware, long_term_backend),
     IsDoneMiddleware(),
     ThreadTitleMiddleware(llm=gpt_5_mini),
     AsyncAgentMemoryMiddleware(

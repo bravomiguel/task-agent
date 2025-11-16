@@ -61,9 +61,7 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
 
         if existing_sandbox_id:
             try:
-                app = modal.App.lookup(self._app_name, create_if_missing=True)
-                sandbox = modal.Sandbox.from_id(
-                    sandbox_id=existing_sandbox_id, app=app)
+                sandbox = modal.Sandbox.from_id(existing_sandbox_id)
 
                 # Verify sandbox is alive
                 try:
@@ -118,12 +116,10 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
         import modal
 
         sandbox_id = state.get("modal_sandbox_id")
-        app_name = state.get("modal_app_name", self._app_name)
 
         if not sandbox_id:
             raise RuntimeError("Modal sandbox not initialized")
 
-        app = modal.App.lookup(app_name, create_if_missing=True)
         return modal.Sandbox.from_id(sandbox_id)
 
 
