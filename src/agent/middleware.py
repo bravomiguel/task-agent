@@ -267,12 +267,13 @@ class ReviewMessageMiddleware(AgentMiddleware[ReviewState]):
         if not messages:
             return {"review_message": "No action needed."}
 
-        summary_prompt = f"""Review this conversation and summarize what input or request is needed from the human user.  
-        Be concise and specific about what action or information is required.  
-          
-        Conversation:  
-        {chr(10).join(f"{msg.type}: {msg.content}" for msg in messages[-5:])}  
-          
+        last_message = messages[-1]
+
+        summary_prompt = f"""Based on this response, what does the user need to do next?
+        Be concise and specific about what action or information is required.
+
+        Response: {last_message.content}
+
         Provide a brief summary (1 sentence) of what the user needs to do next."""
 
         response = self.llm.invoke(
@@ -287,12 +288,13 @@ class ReviewMessageMiddleware(AgentMiddleware[ReviewState]):
         if not messages:
             return {"review_message": "No action needed."}
 
-        summary_prompt = f"""Review this conversation and summarize what input or request is needed from the human user.  
-        Be concise and specific about what action or information is required.  
-          
-        Conversation:  
-        {chr(10).join(f"{msg.type}: {msg.content}" for msg in messages[-5:])}  
-          
+        last_message = messages[-1]
+
+        summary_prompt = f"""Based on this response, what does the user need to do next?
+        Be concise and specific about what action or information is required.
+
+        Response: {last_message.content}
+
         Provide a brief summary (1 sentence) of what the user needs to do next."""
 
         response = await self.llm.ainvoke([{"role": "user", "content": summary_prompt}])
