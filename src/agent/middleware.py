@@ -6,7 +6,6 @@ import time
 from langchain.agents.middleware import AgentMiddleware, AgentState
 from langchain_core.messages import HumanMessage
 from langgraph.runtime import Runtime
-from langgraph.channels.untracked_value import UntrackedValue
 from deepagents_cli.agent_memory import AgentMemoryMiddleware as BaseAgentMemoryMiddleware
 
 
@@ -100,64 +99,6 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
         """Async version delegates to sync implementation."""
         return self.before_agent(state, runtime)
 
-    def get_sandbox(self, state: ModalSandboxState) -> modal.Sandbox:
-        """Get the active sandbox for this thread by ID."""
-        import modal
-
-        sandbox_id = state.get("modal_sandbox_id")
-
-        if not sandbox_id:
-            raise RuntimeError("Modal sandbox not initialized")
-
-        return modal.Sandbox.from_id(sandbox_id)
-
-
-class BackendMiddleware(AgentMiddleware[ModalSandboxState, Any]):
-    """Middleware that provides CompositeBackend with Modal sandbox to tools.  
-
-    This middleware reconstructs the ModalBackend from the sandbox ID  
-    before each model call and wraps it in a CompositeBackend for routing.  
-    """
-    state_schema = ModalSandboxState
-
-    def __init__(
-        self,
-        sandbox_middleware: ModalSandboxMiddleware,
-        long_term_backend,  # FilesystemBackend for /memories/
-    ):
-        super().__init__()
-        self._sandbox_middleware = sandbox_middleware
-        self._long_term_backend = long_term_backend
-
-    def before_model(
-        self, state: ModalSandboxState, runtime: Runtime
-    ) -> dict[str, Any] | None:
-        """Inject CompositeBackend into state for tools to use (sync)."""
-        # Import from your actual module paths
-        from deepagents_cli.integrations.modal import ModalBackend
-        from deepagents.backends import CompositeBackend
-
-        # Get sandbox for this thread
-        sandbox = self._sandbox_middleware.get_sandbox(state)
-
-        # Create ModalBackend
-        modal_backend = ModalBackend(sandbox)
-
-        # Create CompositeBackend with routing
-        composite_backend = CompositeBackend(
-            default=modal_backend,
-            routes={"/memories/": self._long_term_backend},
-        )
-
-        # Store composite backend (wrapped in UntrackedValue)
-        return {"modal_backend": UntrackedValue(composite_backend)}
-
-    async def abefore_model(
-        self, state: ModalSandboxState, runtime: Runtime
-    ) -> dict[str, Any] | None:
-        """Inject CompositeBackend into state for tools to use (async)."""
-        # Delegate to sync version since get_sandbox and backend creation are sync
-        return self.before_model(state, runtime)
 
 # Extend AgentState to include thread_title
 

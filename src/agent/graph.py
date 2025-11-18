@@ -2,14 +2,15 @@
 
 from pathlib import Path
 from deepagents import create_deep_agent
-from deepagents.backends import CompositeBackend, StoreBackend
+from deepagents.backends import CompositeBackend
 from deepagents.backends.filesystem import FilesystemBackend
 from deepagents_cli.agent_memory import AgentMemoryMiddleware
-from deepagents_cli.integrations.sandbox_factory import create_modal_sandbox
 from deepagents_cli.config import get_default_coding_instructions
 from deepagents_cli.tools import http_request, fetch_url, web_search, tavily_client
+from deepagents_cli.integrations.modal import ModalBackend
 from langchain.chat_models import init_chat_model
-from agent.middleware import AsyncAgentMemoryMiddleware, BackendMiddleware, ModalSandboxMiddleware, ReviewMessageMiddleware, ThreadTitleMiddleware, IsDoneMiddleware
+from langgraph.prebuilt.tool_node import ToolRuntime
+from agent.middleware import AsyncAgentMemoryMiddleware, ModalSandboxMiddleware, ReviewMessageMiddleware, ThreadTitleMiddleware, IsDoneMiddleware
 
 # System prompt for Modal sandbox mode
 system_prompt = """### Current Working Directory      
@@ -87,11 +88,84 @@ if not agent_md.exists():
 long_term_backend = FilesystemBackend(root_dir=agent_dir, virtual_mode=True)
 
 # Create a single instance of ModalSandboxMiddleware to be shared
-modal_sandbox_middleware = ModalSandboxMiddleware(idle_timeout=60)
+modal_sandbox_middleware = ModalSandboxMiddleware(idle_timeout=30)
+
+
+class _LazyModalBackend:
+    """A lazy wrapper that defers ModalBackend creation until first use.
+
+    This is needed because FilesystemMiddleware calls the backend factory
+    from wrap_model_call with Runtime (no state), but we need state to get
+    sandbox_id. The actual backend is created lazily when methods are called
+    from tool context (ToolRuntime with state).
+    """
+
+    def __init__(self, runtime):
+        self._runtime = runtime
+        self._backend = None
+
+    def _get_backend(self):
+        if self._backend is None:
+            import modal
+            if not hasattr(self._runtime, 'state'):
+                raise RuntimeError("Cannot access backend - no state available in runtime context")
+            sandbox_id = self._runtime.state.get("modal_sandbox_id")
+            if not sandbox_id:
+                raise RuntimeError("Modal sandbox not initialized")
+            sandbox = modal.Sandbox.from_id(sandbox_id)
+            self._backend = ModalBackend(sandbox)
+        return self._backend
+
+    # Implement SandboxBackendProtocol methods by delegation
+    def ls_info(self, path):
+        return self._get_backend().ls_info(path)
+
+    def read(self, file_path, offset=0, limit=2000):
+        return self._get_backend().read(file_path, offset, limit)
+
+    def write(self, file_path, content):
+        return self._get_backend().write(file_path, content)
+
+    def edit(self, file_path, old_string, new_string, replace_all=False):
+        return self._get_backend().edit(file_path, old_string, new_string, replace_all)
+
+    def grep_raw(self, pattern, path=None, glob=None):
+        return self._get_backend().grep_raw(pattern, path, glob)
+
+    def glob_info(self, pattern, path="/"):
+        return self._get_backend().glob_info(pattern, path)
+
+    def execute(self, command):
+        return self._get_backend().execute(command)
+
+    @property
+    def id(self):
+        # Return a placeholder if backend not yet created
+        # This allows isinstance() checks to pass without triggering backend creation
+        if self._backend is None:
+            return "lazy-modal-backend"
+        return self._backend.id
+
+
+def create_backend_factory(filesystem_backend: FilesystemBackend):
+    """Create a backend factory that builds CompositeBackend with ModalBackend from runtime state."""
+
+    def backend_factory(runtime) -> CompositeBackend:
+        # Use lazy backend that defers sandbox connection until actual use
+        # This allows FilesystemMiddleware to check for execution support
+        # without needing state access
+        lazy_modal_backend = _LazyModalBackend(runtime)
+
+        return CompositeBackend(
+            default=lazy_modal_backend,
+            routes={"/memories/": filesystem_backend}
+        )
+
+    return backend_factory
+
 
 agent_middleware = [
     modal_sandbox_middleware,
-    BackendMiddleware(modal_sandbox_middleware, long_term_backend),
     IsDoneMiddleware(),
     ThreadTitleMiddleware(llm=gpt_5_mini),
     AsyncAgentMemoryMiddleware(
@@ -106,10 +180,11 @@ tools = [http_request, fetch_url]
 if tavily_client is not None:
     tools.append(web_search)
 
-# Create the agent with InMemoryStore
+# Create the agent with backend factory
 agent = create_deep_agent(
     model=gpt_4_1,
     system_prompt=system_prompt,
     tools=tools,
     middleware=agent_middleware,
+    backend=create_backend_factory(long_term_backend),
 )
