@@ -1,28 +1,21 @@
 from __future__ import annotations
 
+import asyncio
+from typing import Annotated, Any, NotRequired, TYPE_CHECKING
+import time
 from langchain.agents.middleware import AgentMiddleware, AgentState
 from langchain_core.messages import HumanMessage
 from langgraph.runtime import Runtime
-from typing import Annotated, Any, NotRequired
-from typing_extensions import TypedDict
-import asyncio
+from langgraph.channels.untracked_value import UntrackedValue
 from deepagents_cli.agent_memory import AgentMemoryMiddleware as BaseAgentMemoryMiddleware
 
-import time
-from typing import TYPE_CHECKING, Any
-
-from langchain.agents.middleware import AgentMiddleware, AgentState
-from typing_extensions import NotRequired
-from langgraph.channels.untracked_value import UntrackedValue
 
 if TYPE_CHECKING:
     import modal
-    from langgraph.runtime import Runtime
 
 
 class ModalSandboxState(AgentState):
     """Extended state schema with Modal sandbox ID."""
-
     modal_sandbox_id: NotRequired[str]
 
 
