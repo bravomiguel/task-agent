@@ -70,6 +70,7 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
             workdir=self._workdir,
             timeout=self._max_timeout,
             idle_timeout=self._idle_timeout,
+            verbose=True,
         )
 
         # Poll until ready
