@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import uuid
 from typing import Annotated, Any, NotRequired, TYPE_CHECKING
 import time
 from langchain.agents.middleware import AgentMiddleware, AgentState
+from typing import Callable, Awaitable
 from langchain_core.messages import HumanMessage
+from langchain.agents.middleware import ModelRequest, ModelResponse
+from langchain_core.runnables.config import var_child_runnable_config
 from langgraph.runtime import Runtime
 from deepagents_cli.agent_memory import AgentMemoryMiddleware as BaseAgentMemoryMiddleware
 
@@ -16,6 +20,7 @@ if TYPE_CHECKING:
 class ModalSandboxState(AgentState):
     """Extended state schema with Modal sandbox ID."""
     modal_sandbox_id: NotRequired[str]
+    thread_id: NotRequired[str]
 
 
 class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
@@ -33,12 +38,14 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
         startup_timeout: int = 180,
         idle_timeout: int = 60 * 3,  # 3 minutes
         max_timeout: int = 60 * 60 * 24,   # 24 hours
+        volume_name: str = "agent-threads",
     ):
         super().__init__()
         self._workdir = workdir
         self._startup_timeout = startup_timeout
         self._idle_timeout = idle_timeout
         self._max_timeout = max_timeout
+        self._volume_name = volume_name
 
     def before_agent(
         self, state: ModalSandboxState, runtime: Runtime
@@ -63,13 +70,21 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
             except Exception:
                 pass
 
-        # Create new sandbox
+        # Get or create v2 volume for persistent thread storage
+        volume = modal.Volume.from_name(
+            self._volume_name,
+            create_if_missing=True,
+            version=2
+        )
+
+        # Create new sandbox with volume mounted
         app = modal.App.lookup("agent-sandbox", create_if_missing=True)
         sandbox = modal.Sandbox.create(
             app=app,
             workdir=self._workdir,
             timeout=self._max_timeout,
             idle_timeout=self._idle_timeout,
+            volumes={"/threads": volume},
             verbose=True,
         )
 
@@ -90,8 +105,27 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
             raise RuntimeError(
                 f"Modal sandbox failed to start within {self._startup_timeout}s")
 
+        # Get thread_id from config, state, or generate new
+        thread_id = state.get("thread_id")
+        if not thread_id:
+            # Try to get from RunnableConfig context var
+            config = var_child_runnable_config.get()
+            if config:
+                thread_id = config.get("configurable", {}).get("thread_id")
+        if not thread_id and runtime.context and hasattr(runtime.context, 'thread_id'):
+            thread_id = runtime.context.thread_id
+        if not thread_id:
+            thread_id = str(uuid.uuid4())
+
+        # Create thread subfolder if it doesn't exist
+        # The volume is mounted, so mkdir works directly
+        process = sandbox.exec(
+            "mkdir", "-p", f"/threads/{thread_id}", timeout=10)
+        process.wait()
+
         return {
             "modal_sandbox_id": sandbox.object_id,
+            "thread_id": thread_id,
         }
 
     async def abefore_agent(
@@ -99,6 +133,44 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
     ) -> dict[str, Any] | None:
         """Async version delegates to sync implementation."""
         return self.before_agent(state, runtime)
+
+
+class ThreadContextMiddleware(AgentMiddleware[ModalSandboxState, Any]):
+    """Middleware that appends thread context to system prompt."""
+
+    state_schema = ModalSandboxState
+
+    def wrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], ModelResponse],
+    ) -> ModelResponse:
+        """Append thread context to system prompt."""
+        thread_id = request.state.get("thread_id")
+        if thread_id and request.system_prompt:
+            thread_context = (
+                f"\n\n### Current Thread\n"
+                f"Your thread ID is `{thread_id}`. "
+                f"Save user-requested files to `/threads/{thread_id}/`."
+            )
+            request.system_prompt = request.system_prompt + thread_context
+        return handler(request)
+
+    async def awrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
+    ) -> ModelResponse:
+        """Async version: Append thread context to system prompt."""
+        thread_id = request.state.get("thread_id")
+        if thread_id and request.system_prompt:
+            thread_context = (
+                f"\n\n### Current Thread\n"
+                f"Your thread ID is `{thread_id}`. "
+                f"Save user-requested files to `/threads/{thread_id}/`."
+            )
+            request.system_prompt = request.system_prompt + thread_context
+        return await handler(request)
 
 
 # Extend AgentState to include thread_title
