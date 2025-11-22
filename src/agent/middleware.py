@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from typing import Annotated, Any, NotRequired, TYPE_CHECKING
+from typing import Annotated, Any, NotRequired
 import time
 from langchain.agents.middleware import AgentMiddleware, AgentState
 from typing import Callable, Awaitable
@@ -13,14 +13,11 @@ from langgraph.runtime import Runtime
 from deepagents_cli.agent_memory import AgentMemoryMiddleware as BaseAgentMemoryMiddleware
 
 
-if TYPE_CHECKING:
-    import modal
-
-
 class ModalSandboxState(AgentState):
     """Extended state schema with Modal sandbox ID."""
     modal_sandbox_id: NotRequired[str]
     thread_id: NotRequired[str]
+    modal_snapshot_id: NotRequired[str]
 
 
 class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
@@ -90,10 +87,21 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
             version=2
         )
 
+        # Check if we should restore from a snapshot
+        snapshot_id = state.get("modal_snapshot_id")
+        image = None
+        if snapshot_id:
+            try:
+                image = modal.Image.from_id(snapshot_id)
+            except Exception:
+                # Snapshot not found or expired, proceed without it
+                pass
+
         # Create new sandbox with volume mounted and workdir set to thread folder
         app = modal.App.lookup("agent-sandbox", create_if_missing=True)
         sandbox = modal.Sandbox.create(
             app=app,
+            image=image,  # Restore from snapshot if available
             workdir=f"/threads/{thread_id}",
             timeout=self._max_timeout,
             idle_timeout=self._idle_timeout,
@@ -134,6 +142,36 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
     ) -> dict[str, Any] | None:
         """Async version delegates to sync implementation."""
         return self.before_agent(state, runtime)
+
+    def after_agent(
+        self, state: ModalSandboxState, runtime: Runtime
+    ) -> dict[str, Any] | None:
+        """Create filesystem snapshot to preserve /workspace state."""
+        import modal
+
+        sandbox_id = state.get("modal_sandbox_id")
+        if not sandbox_id:
+            return None
+
+        try:
+            # Reconnect to sandbox
+            sandbox = modal.Sandbox.from_id(sandbox_id)
+
+            # Create filesystem snapshot
+            snapshot = sandbox.snapshot_filesystem(timeout=55)
+
+            return {
+                "modal_snapshot_id": snapshot.object_id,
+            }
+        except Exception:
+            # If snapshotting fails, continue without updating snapshot
+            return None
+
+    async def aafter_agent(
+        self, state: ModalSandboxState, runtime: Runtime
+    ) -> dict[str, Any] | None:
+        """Async version delegates to sync implementation."""
+        return self.after_agent(state, runtime)
 
 
 class ThreadContextMiddleware(AgentMiddleware[ModalSandboxState, Any]):

@@ -13,7 +13,7 @@ from deepagents.backends import CompositeBackend
 
 # Initialize model
 gpt_4_1 = init_chat_model(model="openai:gpt-4.1")
-gpt_5_mini = init_chat_model(model="openai:gpt-5-mini", disable_streaming=True)
+gpt_4_1_mini = init_chat_model(model="openai:gpt-4.1-mini", disable_streaming=True)
 
 # Initialize agent directory and agent.md file
 assistant_id = "my-agent"
@@ -45,19 +45,19 @@ def create_backend_factory(filesystem_backend: FilesystemBackend):
 
 
 # Create a single instance of ModalSandboxMiddleware to be shared
-modal_sandbox_middleware = ModalSandboxMiddleware(idle_timeout=60)
+modal_sandbox_middleware = ModalSandboxMiddleware(idle_timeout=30)
 
 
 agent_middleware = [
     modal_sandbox_middleware,
     ThreadContextMiddleware(),
     IsDoneMiddleware(),
-    ThreadTitleMiddleware(llm=gpt_5_mini),
+    ThreadTitleMiddleware(llm=gpt_4_1_mini),
     AsyncAgentMemoryMiddleware(
         backend=long_term_backend,
         memory_path="/memories/"
     ),
-    ReviewMessageMiddleware(llm=gpt_5_mini),
+    ReviewMessageMiddleware(llm=gpt_4_1_mini),
 ]
 
 # Build tools list - conditionally include web_search if Tavily is available
