@@ -14,7 +14,6 @@ from langchain_core.messages import HumanMessage
 from langchain.agents.middleware import ModelRequest, ModelResponse
 from langchain_core.runnables.config import var_child_runnable_config
 from langgraph.runtime import Runtime
-from deepagents_cli.agent_memory import AgentMemoryMiddleware as BaseAgentMemoryMiddleware
 
 
 class ModalSandboxState(AgentState):
@@ -388,22 +387,3 @@ class ReviewMessageMiddleware(AgentMiddleware[ReviewState]):
         response = await self.llm.ainvoke([{"role": "user", "content": summary_prompt}])
 
         return {"review_message": response.content}
-
-
-class AsyncAgentMemoryMiddleware(BaseAgentMemoryMiddleware):
-    """Async-compatible version of AgentMemoryMiddleware."""
-
-    async def abefore_agent(
-        self,
-        state,
-        runtime,
-    ):
-        """(async) Load agent memory from file before agent execution."""
-        if "agent_memory" not in state or state.get("agent_memory") is None:
-            # Wrap blocking read in asyncio.to_thread
-            file_data = await asyncio.to_thread(
-                self.backend.read,
-                "/agent.md"
-            )
-            return {"agent_memory": file_data}
-        return None

@@ -3,10 +3,9 @@
 from pathlib import Path
 from deepagents import create_deep_agent
 from deepagents.backends.filesystem import FilesystemBackend
-from deepagents_cli.config import get_default_coding_instructions
 from deepagents_cli.tools import http_request, fetch_url, web_search, tavily_client
 from langchain.chat_models import init_chat_model
-from agent.middleware import AsyncAgentMemoryMiddleware, ModalSandboxMiddleware, ThreadContextMiddleware, ReviewMessageMiddleware, ThreadTitleMiddleware, IsDoneMiddleware
+from agent.middleware import ModalSandboxMiddleware, ThreadContextMiddleware, ReviewMessageMiddleware, ThreadTitleMiddleware, IsDoneMiddleware
 from agent.system_prompt import SYSTEM_PROMPT
 from agent.modal_backend import LazyModalBackend
 from deepagents.backends import CompositeBackend
@@ -15,15 +14,12 @@ from deepagents.backends import CompositeBackend
 gpt_4_1 = init_chat_model(model="openai:gpt-4.1")
 gpt_4_1_mini = init_chat_model(model="openai:gpt-4.1-mini", disable_streaming=True)
 
-# Initialize agent directory and agent.md file
+# Initialize agent directory for /memories/ storage
 assistant_id = "my-agent"
 agent_dir = Path.home() / ".deepagents" / assistant_id
 agent_dir.mkdir(parents=True, exist_ok=True)
-agent_md = agent_dir / "agent.md"
-if not agent_md.exists():
-    agent_md.write_text(get_default_coding_instructions())
 
-# The agent.md file is stored locally
+# Backend for /memories/ files (not agent.md - that's removed)
 long_term_backend = FilesystemBackend(root_dir=agent_dir, virtual_mode=True)
 
 
@@ -53,10 +49,6 @@ agent_middleware = [
     ThreadContextMiddleware(),
     IsDoneMiddleware(),
     ThreadTitleMiddleware(llm=gpt_4_1_mini),
-    AsyncAgentMemoryMiddleware(
-        backend=long_term_backend,
-        memory_path="/memories/"
-    ),
     ReviewMessageMiddleware(llm=gpt_4_1_mini),
 ]
 
