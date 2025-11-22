@@ -1,41 +1,24 @@
 """graph.py - deep agent with Modal sandbox and memory middleware."""
 
-from pathlib import Path
 from deepagents import create_deep_agent
-from deepagents.backends.filesystem import FilesystemBackend
 from deepagents_cli.tools import http_request, fetch_url, web_search, tavily_client
 from langchain.chat_models import init_chat_model
 from agent.middleware import ModalSandboxMiddleware, ThreadContextMiddleware, ReviewMessageMiddleware, ThreadTitleMiddleware, IsDoneMiddleware
 from agent.system_prompt import SYSTEM_PROMPT
 from agent.modal_backend import LazyModalBackend
-from deepagents.backends import CompositeBackend
 
 # Initialize model
 gpt_4_1 = init_chat_model(model="openai:gpt-4.1")
 gpt_4_1_mini = init_chat_model(model="openai:gpt-4.1-mini", disable_streaming=True)
 
-# Initialize agent directory for /memories/ storage
-assistant_id = "my-agent"
-agent_dir = Path.home() / ".deepagents" / assistant_id
-agent_dir.mkdir(parents=True, exist_ok=True)
 
-# Backend for /memories/ files (not agent.md - that's removed)
-long_term_backend = FilesystemBackend(root_dir=agent_dir, virtual_mode=True)
+def create_backend_factory():
+    """Create a backend factory that builds LazyModalBackend from runtime state."""
 
-
-def create_backend_factory(filesystem_backend: FilesystemBackend):
-    """Create a backend factory that builds CompositeBackend with LazyModalBackend from runtime state."""
-
-    def backend_factory(runtime) -> CompositeBackend:
-        # Use lazy backend that defers sandbox connection until actual use
-        # This allows FilesystemMiddleware to check for execution support
-        # without needing state access
-        lazy_modal_backend = LazyModalBackend(runtime)
-
-        return CompositeBackend(
-            default=lazy_modal_backend,
-            routes={"/memories/": filesystem_backend}
-        )
+    def backend_factory(runtime):
+        # LazyModalBackend handles all paths: /threads, /memories, /workspace
+        # Volumes are mounted by ModalSandboxMiddleware
+        return LazyModalBackend(runtime)
 
     return backend_factory
 
@@ -63,5 +46,5 @@ agent = create_deep_agent(
     system_prompt=SYSTEM_PROMPT,
     tools=tools,
     middleware=agent_middleware,
-    backend=create_backend_factory(long_term_backend),
+    backend=create_backend_factory(),
 )

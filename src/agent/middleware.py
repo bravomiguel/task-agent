@@ -40,6 +40,7 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
         idle_timeout: int = 60 * 3,  # 3 minutes
         max_timeout: int = 60 * 60 * 24,   # 24 hours
         volume_name: str = "agent-threads",
+        memory_volume_name: str = "agent-memories",
     ):
         super().__init__()
         self._workdir = workdir
@@ -47,6 +48,7 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
         self._idle_timeout = idle_timeout
         self._max_timeout = max_timeout
         self._volume_name = volume_name
+        self._memory_volume_name = memory_volume_name
 
     def before_agent(
         self, state: ModalSandboxState, runtime: Runtime
@@ -84,9 +86,14 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
         if not thread_id:
             thread_id = str(uuid.uuid4())
 
-        # Get or create v2 volume for persistent thread storage
-        volume = modal.Volume.from_name(
+        # Get or create v2 volumes for persistent storage
+        thread_volume = modal.Volume.from_name(
             self._volume_name,
+            create_if_missing=True,
+            version=2
+        )
+        memory_volume = modal.Volume.from_name(
+            self._memory_volume_name,
             create_if_missing=True,
             version=2
         )
@@ -101,7 +108,7 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
                 # Snapshot not found or expired, proceed without it
                 pass
 
-        # Create new sandbox with volume mounted and workdir set to thread folder
+        # Create new sandbox with volumes mounted and workdir set to thread folder
         app = modal.App.lookup("agent-sandbox", create_if_missing=True)
         sandbox = modal.Sandbox.create(
             app=app,
@@ -109,7 +116,10 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
             workdir=f"/threads/{thread_id}",
             timeout=self._max_timeout,
             idle_timeout=self._idle_timeout,
-            volumes={"/threads": volume},
+            volumes={
+                "/threads": thread_volume,
+                "/memories": memory_volume,
+            },
             verbose=True,
         )
 

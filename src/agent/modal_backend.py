@@ -39,14 +39,14 @@ class LazyModalBackend:
 
     # Implement SandboxBackendProtocol methods by delegation
     def ls_info(self, path):
-        # Reload before listing /threads/ to see all thread files
-        if path.startswith("/threads"):
+        # Reload before listing /threads/ or /memories/ to see all files
+        if path.startswith("/threads") or path.startswith("/memories"):
             self._reload_volumes()
         return self._get_backend().ls_info(path)
 
     def read(self, file_path, offset=0, limit=2000):
-        # Reload before reading from /threads/ to get latest from other sandboxes
-        if file_path.startswith("/threads"):
+        # Reload before reading from /threads/ or /memories/ to get latest from other sandboxes
+        if file_path.startswith("/threads") or file_path.startswith("/memories"):
             self._reload_volumes()
         return self._get_backend().read(file_path, offset, limit)
 
@@ -59,14 +59,14 @@ class LazyModalBackend:
         return self._get_backend().edit(file_path, old_string, new_string, replace_all)
 
     def grep_raw(self, pattern, path=None, glob=None):
-        # Reload before searching in /threads/ to see all thread files
-        if path and path.startswith("/threads"):
+        # Reload before searching in /threads/ or /memories/ to see all files
+        if path and (path.startswith("/threads") or path.startswith("/memories")):
             self._reload_volumes()
         return self._get_backend().grep_raw(pattern, path, glob)
 
     def glob_info(self, pattern, path="/"):
-        # Reload before globbing in /threads/ to see all thread files
-        if path.startswith("/threads"):
+        # Reload before globbing in /threads/ or /memories/ to see all files
+        if path.startswith("/threads") or path.startswith("/memories"):
             self._reload_volumes()
         return self._get_backend().glob_info(pattern, path)
 
