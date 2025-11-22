@@ -8,6 +8,7 @@ import uuid
 from pathlib import Path
 from typing import Annotated, Any, NotRequired
 import time
+from datetime import datetime, timezone
 from langchain.agents.middleware import AgentMiddleware, AgentState
 from typing import Callable, Awaitable
 from langchain_core.messages import HumanMessage
@@ -39,8 +40,8 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
         startup_timeout: int = 180,
         idle_timeout: int = 60 * 3,  # 3 minutes
         max_timeout: int = 60 * 60 * 24,   # 24 hours
-        volume_name: str = "agent-threads",
-        memory_volume_name: str = "agent-memories",
+        volume_name: str = "threads",
+        memory_volume_name: str = "memories",
     ):
         super().__init__()
         self._workdir = workdir
@@ -364,14 +365,22 @@ class ReviewMessageMiddleware(AgentMiddleware[ReviewState]):
         if not messages:
             return {"review_message": "No action needed."}
 
-        last_message = messages[-1]
+        # Get last 5 messages for context
+        recent_messages = messages[-5:]
+        messages_text = "\n\n".join([
+            f"{msg.__class__.__name__}: {msg.content}"
+            for msg in recent_messages
+        ])
 
-        summary_prompt = f"""Based on this response, what does the user need to do next?
-        Be concise and specific about what action or information is required.
+        summary_prompt = f"""Based on this conversation, what does the user need to do next?
 
-        Response: {last_message.content}
+        Recent conversation:
+        {messages_text}
 
-        Provide a brief summary (1 sentence) of what the user needs to do next."""
+        Provide a brief, imperative instruction addressed directly to the user (1 sentence).
+        Include enough context to be descriptive but stay concise.
+        Examples: "Review the Modal sandbox changes and test the agent." or "Run the updated migration script for the database." or "No action needed."
+        Be direct and actionable."""
 
         response = self.llm.invoke(
             [{"role": "user", "content": summary_prompt}])
@@ -385,15 +394,59 @@ class ReviewMessageMiddleware(AgentMiddleware[ReviewState]):
         if not messages:
             return {"review_message": "No action needed."}
 
-        last_message = messages[-1]
+        # Get last 5 messages for context
+        recent_messages = messages[-5:]
+        messages_text = "\n\n".join([
+            f"{msg.__class__.__name__}: {msg.content}"
+            for msg in recent_messages
+        ])
 
-        summary_prompt = f"""Based on this response, what does the user need to do next?
-        Be concise and specific about what action or information is required.
+        summary_prompt = f"""Based on this conversation, what does the user need to do next?
 
-        Response: {last_message.content}
+        Recent conversation:
+        {messages_text}
 
-        Provide a brief summary (1 sentence) of what the user needs to do next."""
+        Provide a brief, imperative instruction addressed directly to the user (1 sentence).
+        Include enough context to be descriptive but stay concise.
+        Examples: "Review the Modal sandbox changes and test the agent." or "Run the updated migration script for the database." or "No action needed."
+        Be direct and actionable."""
 
         response = await self.llm.ainvoke([{"role": "user", "content": summary_prompt}])
 
         return {"review_message": response.content}
+
+
+class DateTimeContextMiddleware(AgentMiddleware):
+    """Middleware that injects current date/time into user messages."""
+
+    def wrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], ModelResponse],
+    ) -> ModelResponse:
+        """Prepend timestamp to the last user message."""
+        # Find the last HumanMessage and prepend timestamp
+        for msg in reversed(request.messages):
+            if isinstance(msg, HumanMessage):
+                current_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+                # Only prepend if not already timestamped
+                if not msg.content.startswith("["):
+                    msg.content = f"[{current_time}] {msg.content}"
+                break
+        return handler(request)
+
+    async def awrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
+    ) -> ModelResponse:
+        """Async version: Prepend timestamp to the last user message."""
+        # Find the last HumanMessage and prepend timestamp
+        for msg in reversed(request.messages):
+            if isinstance(msg, HumanMessage):
+                current_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+                # Only prepend if not already timestamped
+                if not msg.content.startswith("["):
+                    msg.content = f"[{current_time}] {msg.content}"
+                break
+        return await handler(request)
