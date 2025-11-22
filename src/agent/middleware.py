@@ -70,6 +70,19 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
             except Exception:
                 pass
 
+        # Get thread_id from config, state, or generate new
+        # Must determine thread_id BEFORE creating sandbox to set workdir
+        thread_id = state.get("thread_id")
+        if not thread_id:
+            # Try to get from RunnableConfig context var
+            config = var_child_runnable_config.get()
+            if config:
+                thread_id = config.get("configurable", {}).get("thread_id")
+        if not thread_id and runtime.context and hasattr(runtime.context, 'thread_id'):
+            thread_id = runtime.context.thread_id
+        if not thread_id:
+            thread_id = str(uuid.uuid4())
+
         # Get or create v2 volume for persistent thread storage
         volume = modal.Volume.from_name(
             self._volume_name,
@@ -77,11 +90,11 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
             version=2
         )
 
-        # Create new sandbox with volume mounted
+        # Create new sandbox with volume mounted and workdir set to thread folder
         app = modal.App.lookup("agent-sandbox", create_if_missing=True)
         sandbox = modal.Sandbox.create(
             app=app,
-            workdir=self._workdir,
+            workdir=f"/threads/{thread_id}",
             timeout=self._max_timeout,
             idle_timeout=self._idle_timeout,
             volumes={"/threads": volume},
@@ -105,20 +118,8 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
             raise RuntimeError(
                 f"Modal sandbox failed to start within {self._startup_timeout}s")
 
-        # Get thread_id from config, state, or generate new
-        thread_id = state.get("thread_id")
-        if not thread_id:
-            # Try to get from RunnableConfig context var
-            config = var_child_runnable_config.get()
-            if config:
-                thread_id = config.get("configurable", {}).get("thread_id")
-        if not thread_id and runtime.context and hasattr(runtime.context, 'thread_id'):
-            thread_id = runtime.context.thread_id
-        if not thread_id:
-            thread_id = str(uuid.uuid4())
-
-        # Create thread subfolder if it doesn't exist
-        # The volume is mounted, so mkdir works directly
+        # Create thread subfolder if it doesn't exist (safety measure)
+        # The volume is mounted at /threads, so mkdir ensures the subdirectory exists
         process = sandbox.exec(
             "mkdir", "-p", f"/threads/{thread_id}", timeout=10)
         process.wait()
