@@ -5,9 +5,7 @@ import json
 import os
 import requests
 import shlex
-import string
 import uuid
-from pathlib import Path
 from typing import Annotated, Any, NotRequired
 import time
 from datetime import datetime, timezone
@@ -102,7 +100,6 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
     """
 
     state_schema = ModalSandboxState
-    _SETUP_SCRIPT_PATH = Path(__file__).parent / "modal_setup.sh"
 
     def __init__(
         self,
@@ -235,10 +232,6 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
             "mkdir", "-p", f"/threads/{thread_id}", timeout=10)
         process.wait()
 
-        # Run setup script only for fresh sandboxes (not restored from snapshot)
-        if not snapshot_id:
-            self._run_setup_script(sandbox)
-
         state_updates = {
             "modal_sandbox_id": sandbox.object_id,
             "thread_id": thread_id,
@@ -249,39 +242,6 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
             state_updates["gdrive_access_token"] = gdrive_access_token
 
         return state_updates
-
-    def _run_setup_script(self, sandbox) -> None:
-        """Run setup script in sandbox if it exists.
-
-        Args:
-            sandbox: Active Modal Sandbox instance
-
-        Raises:
-            RuntimeError: If setup script fails
-        """
-        if not self._SETUP_SCRIPT_PATH.exists():
-            return  # No setup script, skip silently
-
-        # Read script content
-        script_content = self._SETUP_SCRIPT_PATH.read_text()
-
-        # Expand ${VAR} syntax using local environment
-        template = string.Template(script_content)
-        expanded_script = template.safe_substitute(os.environ)
-
-        # Execute in sandbox
-        process = sandbox.exec("bash", "-c", expanded_script, timeout=300)
-        process.wait()
-
-        if process.returncode != 0:
-            stderr = process.stderr.read() if process.stderr else ""
-            stdout = process.stdout.read() if process.stdout else ""
-            output = stdout or ""
-            if stderr:
-                output += "\n" + stderr if output else stderr
-            raise RuntimeError(
-                f"Setup script failed (exit {process.returncode}): {output}"
-            )
 
     async def abefore_agent(
         self, state: ModalSandboxState, runtime: Runtime

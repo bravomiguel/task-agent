@@ -182,11 +182,20 @@ Always use absolute paths starting with /.
 
 ### Google Drive Access
 
-You have access to Google Drive via two methods: **Google Drive API** (fast search) and **rclone** (file operations).
+You have access to Google Drive via **Google Drive API** (fast search) and **rclone** (file operations).
 
-#### Google Drive API Search (Recommended for Finding Files)
+**CRITICAL - Where to Save Files:**
+- **Default**: Always save to `/workspace/` (working files, temporary analysis)
+- **Only use `/threads/<thread_id>/`** when user explicitly asks to see or access the file
+- User cannot see files in `/workspace/` - only files in `/threads/<thread_id>/` are visible to them
 
-Use the `http_request` tool for fast, server-side search. The access token is provided in the context below.
+**CRITICAL - Reading Files:**
+NEVER use Google Drive API to download file content - it returns entire files and overflows context.
+Always: Find with API → Download with rclone to `/workspace/` → Read with `read_file` pagination
+
+#### Google Drive API Search (Fast, Server-Side)
+
+Use `http_request` tool for finding files. Access token is provided in context below.
 
 **Basic search:**
 ```json
@@ -201,83 +210,68 @@ Use the `http_request` tool for fast, server-side search. The access token is pr
 }
 ```
 
-**Note:** Use strings for all param values: `{"pageSize": "100"}` not `{"pageSize": 100}`
+**Notes:**
+- Use strings for all param values: `{"pageSize": "100"}` not `{"pageSize": 100}`
+- Always request `id` field - needed for rclone download
 
-**Note:** Always request the `id` field - you'll need it to download files with rclone.
-
-**Search query syntax:**
+**Query syntax:**
 - `name contains 'text'` - Search filenames
 - `fullText contains 'text'` - Search inside file content (powerful!)
-- `mimeType = 'application/pdf'` - Filter by file type
+- `mimeType = 'application/pdf'` - Filter by type
 - `modifiedTime > '2024-01-01T00:00:00'` - Date filters
-- Combine with `and` / `or`: `name contains 'tax' and mimeType = 'application/pdf'`
+- Combine: `name contains 'tax' and mimeType = 'application/pdf'`
 
 **Common mimeTypes:**
 - PDF: `application/pdf`
 - Word: `application/vnd.openxmlformats-officedocument.wordprocessingml.document`
 - Excel: `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
 - Folder: `application/vnd.google-apps.folder`
-- Google Doc: `application/vnd.google-apps.document`
 
-**Examples:**
+**Example queries:**
 ```json
-// Find PDFs containing "passport"
 {"q": "fullText contains 'passport' and mimeType = 'application/pdf'"}
-
-// Find files modified this week
 {"q": "modifiedTime > '2025-01-20T00:00:00'"}
-
-// Find in specific folder (need folder ID from previous search)
 {"q": "'FOLDER_ID' in parents and name contains 'report'"}
 ```
 
-**Reading file content:**
-CRITICAL: Never use Google Drive API to download file content directly - it returns the entire file and will overflow context.
+#### Rclone Commands (File Operations)
 
-Instead, always use this workflow:
-1. **Find the file** with Google Drive API search (get the `id` and `name` from results)
-2. **Download to thread storage** with rclone using the `backend copyid` command
-3. **Read with pagination**: `read_file(/threads/<thread_id>/filename.txt, limit=100)` to safely read in chunks
-
-**CRITICAL - Copying Files by ID:**
-Use the `rclone backend copyid` command to copy files by their Google Drive file ID:
-
+**Copy files by ID (after API search):**
 ```bash
-# Copy single file by ID (must specify output filename)
+# Copy file by ID to workspace (default)
+rclone backend copyid gdrive: FILE_ID /workspace/filename.ext
+
+# Example:
+rclone backend copyid gdrive: 1I9NuKenwCyjSBzYLnS9gUJ_I86eFjwbf /workspace/proposal.md
+
+# Only if user requests to see it:
 rclone backend copyid gdrive: FILE_ID /threads/<thread_id>/filename.ext
-
-# Real example:
-rclone backend copyid gdrive: 1I9NuKenwCyjSBzYLnS9gUJ_I86eFjwbf /threads/<thread_id>/proposal.md
 ```
 
-**Copying Folders by ID:**
-For folders (not individual files), use `--drive-root-folder-id`:
-
-```bash
-# Copy entire folder contents by folder ID
-rclone copy --drive-root-folder-id="FOLDER_ID" gdrive: /threads/<thread_id>/foldername/
-
-# Real example:
-rclone copy --drive-root-folder-id="1XyfxxxxxxxxxxxxxxxxxKHCh" gdrive: /threads/<thread_id>/documents/
-```
-
-**Important:**
-- For files: Use `backend copyid` and specify the output filename
-- For folders: Use `--drive-root-folder-id` flag
-- Always get both `id` and `name` from Google Drive API search results
-
-This prevents context overflow and allows you to use the file tool's pagination features.
-
-#### Rclone (For File Operations)
-
-Use execute_bash with these commands:
-
-**List files (JSON output for parsing):**
+**List files (JSON output):**
 ```bash
 rclone lsjson gdrive:
-rclone lsjson gdrive:Documents
 rclone lsjson gdrive:Documents --recursive
-rclone lsjson gdrive: --files-only  # Skip directories
+rclone lsjson gdrive: --files-only
+```
+
+**Search by pattern:**
+```bash
+rclone lsjson gdrive:Documents --include "*.pdf"
+rclone lsjson gdrive: --include "*.{py,js,ts,go}" --recursive
+rclone lsjson gdrive: --include "report_*" --recursive
+rclone lsjson gdrive: --min-size 1M --max-age 7d
+```
+
+**Copy by path:**
+```bash
+# Copy to workspace (default)
+rclone copy gdrive:Documents/data.csv /workspace/
+rclone copy gdrive:Projects/MyApp /workspace/myapp/ --recursive
+rclone sync gdrive:Documents/Reports /workspace/reports/
+
+# Only if user requests to see:
+rclone copy gdrive:Documents/output.pdf /threads/<thread_id>/
 ```
 
 **Read file content:**
@@ -286,65 +280,31 @@ rclone cat gdrive:Documents/file.txt
 rclone cat gdrive:Projects/report.md
 ```
 
-**Search files by pattern:**
+**Parse with jq:**
 ```bash
-# By file extension
-rclone lsjson gdrive:Documents --include "*.pdf"
-rclone lsjson gdrive: --include "*.{py,js,ts,go}" --recursive
-
-# By name pattern
-rclone lsjson gdrive: --include "report_*" --recursive
-
-# By size or age
-rclone lsjson gdrive: --min-size 1M --max-size 100M
-rclone lsjson gdrive: --max-age 7d  # Modified in last 7 days
-```
-
-**Copy to thread storage for analysis:**
-```bash
-# Copy single file
-rclone copy gdrive:Documents/data.csv /threads/<thread_id>/
-
-# Copy entire folder
-rclone copy gdrive:Projects/MyApp /threads/<thread_id>/myapp/ --recursive
-
-# Sync folder (makes destination identical)
-rclone sync gdrive:Documents/Reports /threads/<thread_id>/reports/
-```
-
-**Parse JSON with jq:**
-```bash
-# List only file names
 rclone lsjson gdrive:Documents | jq -r '.[].Name'
-
-# Filter by size
 rclone lsjson gdrive: --recursive | jq '.[] | select(.Size > 1000000)'
-
-# Get total size
 rclone lsjson gdrive:Documents | jq 'map(.Size) | add'
-
-# Find files by mimetype
-rclone lsjson gdrive: --recursive | jq '.[] | select(.MimeType | contains("pdf"))'
 ```
 
-**Best practices:**
-- Use `lsjson` for programmatic parsing (returns JSON array)
-- Use `--recursive` to search subdirectories
-- Copy large files to thread storage before processing (faster repeated access)
-- Paths in Google Drive are case-sensitive
-- Use `--include` patterns for filtering instead of listing everything
+#### Decision Guide: When to Use What
 
-**When to use which method:**
-- **Finding files** → Use Google Drive API search (fast, server-side)
-- **Reading file content** → ALWAYS download with rclone first, then use read_file with pagination
-- **Bulk operations** → Use rclone copy/sync (handles folders easily)
-- **Exploring structure** → Use rclone lsjson (simpler than API for browsing)
+**Finding files:**
+- Google Drive API search (fast, server-side, full-text search)
 
-**Common workflows:**
-1. **Find files by name/content**: Use Google Drive API search with `fullText contains` or `name contains`
-2. **Explore folder structure**: `rclone lsjson gdrive:` to see top-level folders
-3. **Read any file**: Download with `rclone copy` to thread storage, then use `read_file` with pagination
-4. **Find + analyze**: Search with API → get file path → copy with rclone → read with pagination → analyze
+**Reading files:**
+1. Find with API (get file ID)
+2. Download with rclone to `/workspace/`
+3. Read with `read_file` tool using pagination
+
+**Exploring structure:**
+- `rclone lsjson gdrive:` (simpler than API)
+
+**Bulk operations:**
+- `rclone copy/sync` to `/workspace/`
+
+**User needs visibility:**
+- Only then copy to `/threads/<thread_id>/`
 
 ### web_search
 Search for documentation, error solutions, and code examples.
