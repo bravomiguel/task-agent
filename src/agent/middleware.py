@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import requests
 import shlex
 import string
 import uuid
@@ -15,13 +17,81 @@ from langchain_core.messages import HumanMessage
 from langchain.agents.middleware import ModelRequest, ModelResponse
 from langchain_core.runnables.config import var_child_runnable_config
 from langgraph.runtime import Runtime
+import modal
+
+
+# Create Modal image with rclone and dependencies
+rclone_image = (
+    modal.Image.debian_slim()
+    .apt_install("curl", "unzip", "jq", "ripgrep")
+    .run_commands(
+        # Install latest rclone binary
+        "curl -O https://downloads.rclone.org/rclone-current-linux-amd64.zip",
+        "unzip -q rclone-current-linux-amd64.zip",
+        "cp rclone-*-linux-amd64/rclone /usr/local/bin/",
+        "chmod 755 /usr/local/bin/rclone",
+        "rm -rf rclone-*",
+        # Verify installation
+        "rclone version"
+    )
+)
+
+
+def fetch_composio_gdrive_token() -> dict[str, str]:
+    """Fetch Google Drive token from Composio API.
+
+    Returns:
+        Dict with RCLONE_CONFIG_* environment variables for Google Drive
+
+    Raises:
+        RuntimeError: If API call fails or token not found
+    """
+    composio_api_key = os.environ.get("COMPOSIO_API_KEY")
+    if not composio_api_key:
+        raise RuntimeError("COMPOSIO_API_KEY not found in environment")
+
+    # Hardcoded connected account ID for now (will be dynamic later)
+    connected_account_id = "ca_VHLP3Y6uKgAZ"
+
+    url = f"https://backend.composio.dev/api/v3/connected_accounts/{connected_account_id}"
+    headers = {"X-API-Key": composio_api_key}
+
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+
+        # Extract tokens from response
+        access_token = data.get("data", {}).get("access_token")
+        refresh_token = data.get("data", {}).get("refresh_token")
+
+        if not access_token or not refresh_token:
+            raise RuntimeError("access_token or refresh_token not found in Composio response")
+
+        # Build rclone token JSON
+        token_json = json.dumps({
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "token_type": "Bearer"
+        })
+
+        # Return environment variables for rclone
+        return {
+            "RCLONE_CONFIG_GDRIVE_TYPE": "drive",
+            "RCLONE_CONFIG_GDRIVE_SCOPE": "drive",
+            "RCLONE_CONFIG_GDRIVE_TOKEN": token_json,
+        }
+
+    except requests.exceptions.RequestException as e:
+        raise RuntimeError(f"Failed to fetch Composio token: {e}")
 
 
 class ModalSandboxState(AgentState):
-    """Extended state schema with Modal sandbox ID."""
+    """Extended state schema with Modal sandbox ID and Google Drive access."""
     modal_sandbox_id: NotRequired[str]
     thread_id: NotRequired[str]
     modal_snapshot_id: NotRequired[str]
+    gdrive_access_token: NotRequired[str]
 
 
 class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
@@ -109,11 +179,28 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
                 # Snapshot not found or expired, proceed without it
                 pass
 
+        # Use rclone image if no snapshot to restore
+        if image is None:
+            image = rclone_image
+
+        # Fetch Google Drive token from Composio
+        gdrive_access_token = None
+        try:
+            gdrive_env = fetch_composio_gdrive_token()
+            # Extract access token from the token JSON for API calls
+            token_json_str = gdrive_env.get("RCLONE_CONFIG_GDRIVE_TOKEN", "{}")
+            token_data = json.loads(token_json_str)
+            gdrive_access_token = token_data.get("access_token")
+        except Exception as e:
+            # Log error but continue without Google Drive access
+            print(f"Warning: Could not fetch Google Drive token: {e}")
+            gdrive_env = {}
+
         # Create new sandbox with volumes mounted and workdir set to thread folder
         app = modal.App.lookup("agent-sandbox", create_if_missing=True)
         sandbox = modal.Sandbox.create(
             app=app,
-            image=image,  # Restore from snapshot if available
+            image=image,
             workdir=f"/threads/{thread_id}",
             timeout=self._max_timeout,
             idle_timeout=self._idle_timeout,
@@ -121,6 +208,7 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
                 "/threads": thread_volume,
                 "/memories": memory_volume,
             },
+            env=gdrive_env,  # Inject Google Drive rclone config
             verbose=True,
         )
 
@@ -151,10 +239,16 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
         if not snapshot_id:
             self._run_setup_script(sandbox)
 
-        return {
+        state_updates = {
             "modal_sandbox_id": sandbox.object_id,
             "thread_id": thread_id,
         }
+
+        # Add access token to state if available
+        if gdrive_access_token:
+            state_updates["gdrive_access_token"] = gdrive_access_token
+
+        return state_updates
 
     def _run_setup_script(self, sandbox) -> None:
         """Run setup script in sandbox if it exists.
@@ -226,8 +320,8 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
         return self.after_agent(state, runtime)
 
 
-class ThreadContextMiddleware(AgentMiddleware[ModalSandboxState, Any]):
-    """Middleware that appends thread context to system prompt."""
+class DynamicContextMiddleware(AgentMiddleware[ModalSandboxState, Any]):
+    """Middleware that injects dynamic context (thread ID, access tokens) into system prompt."""
 
     state_schema = ModalSandboxState
 
@@ -236,15 +330,33 @@ class ThreadContextMiddleware(AgentMiddleware[ModalSandboxState, Any]):
         request: ModelRequest,
         handler: Callable[[ModelRequest], ModelResponse],
     ) -> ModelResponse:
-        """Append thread context to system prompt."""
+        """Inject dynamic context into system prompt."""
+        if not request.system_prompt:
+            return handler(request)
+
+        dynamic_context = ""
+
+        # Add thread context
         thread_id = request.state.get("thread_id")
-        if thread_id and request.system_prompt:
-            thread_context = (
+        if thread_id:
+            dynamic_context += (
                 f"\n\n### Current Thread\n"
                 f"Your thread ID is `{thread_id}`. "
                 f"Save user-requested files to `/threads/{thread_id}/`."
             )
-            request.system_prompt = request.system_prompt + thread_context
+
+        # Add Google Drive access token if available
+        gdrive_token = request.state.get("gdrive_access_token")
+        if gdrive_token:
+            dynamic_context += (
+                f"\n\n### Google Drive Access Token\n"
+                f"For Google Drive API requests, use this access token:\n"
+                f"```\n{gdrive_token}\n```"
+            )
+
+        if dynamic_context:
+            request.system_prompt = request.system_prompt + dynamic_context
+
         return handler(request)
 
     async def awrap_model_call(
@@ -252,15 +364,33 @@ class ThreadContextMiddleware(AgentMiddleware[ModalSandboxState, Any]):
         request: ModelRequest,
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse:
-        """Async version: Append thread context to system prompt."""
+        """Async version: Inject dynamic context into system prompt."""
+        if not request.system_prompt:
+            return await handler(request)
+
+        dynamic_context = ""
+
+        # Add thread context
         thread_id = request.state.get("thread_id")
-        if thread_id and request.system_prompt:
-            thread_context = (
+        if thread_id:
+            dynamic_context += (
                 f"\n\n### Current Thread\n"
                 f"Your thread ID is `{thread_id}`. "
                 f"Save user-requested files to `/threads/{thread_id}/`."
             )
-            request.system_prompt = request.system_prompt + thread_context
+
+        # Add Google Drive access token if available
+        gdrive_token = request.state.get("gdrive_access_token")
+        if gdrive_token:
+            dynamic_context += (
+                f"\n\n### Google Drive Access Token\n"
+                f"For Google Drive API requests, use this access token:\n"
+                f"```\n{gdrive_token}\n```"
+            )
+
+        if dynamic_context:
+            request.system_prompt = request.system_prompt + dynamic_context
+
         return await handler(request)
 
 

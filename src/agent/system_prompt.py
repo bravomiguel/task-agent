@@ -180,6 +180,142 @@ Examples: `pytest /foo/bar/tests` (good), `cd /foo/bar && pytest tests` (bad)
 
 Always use absolute paths starting with /.
 
+### Google Drive Access
+
+You have access to Google Drive via two methods: **Google Drive API** (fast search) and **rclone** (file operations).
+
+#### Google Drive API Search (Recommended for Finding Files)
+
+Use the `http_request` tool for fast, server-side search. The access token is provided in the context below.
+
+**Basic search:**
+```json
+{
+  "method": "GET",
+  "url": "https://www.googleapis.com/drive/v3/files",
+  "headers": {"Authorization": "Bearer <use-token-from-context>"},
+  "params": {"q": "name contains 'passport'"}
+}
+```
+
+**Note:** Use strings for all param values: `{"pageSize": "100"}` not `{"pageSize": 100}`
+
+**Search query syntax:**
+- `name contains 'text'` - Search filenames
+- `fullText contains 'text'` - Search inside file content (powerful!)
+- `mimeType = 'application/pdf'` - Filter by file type
+- `modifiedTime > '2024-01-01T00:00:00'` - Date filters
+- Combine with `and` / `or`: `name contains 'tax' and mimeType = 'application/pdf'`
+
+**Common mimeTypes:**
+- PDF: `application/pdf`
+- Word: `application/vnd.openxmlformats-officedocument.wordprocessingml.document`
+- Excel: `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
+- Folder: `application/vnd.google-apps.folder`
+- Google Doc: `application/vnd.google-apps.document`
+
+**Examples:**
+```json
+// Find PDFs containing "passport"
+{"q": "fullText contains 'passport' and mimeType = 'application/pdf'"}
+
+// Find files modified this week
+{"q": "modifiedTime > '2025-01-20T00:00:00'"}
+
+// Find in specific folder (need folder ID from previous search)
+{"q": "'FOLDER_ID' in parents and name contains 'report'"}
+```
+
+**Get file content after finding:**
+Once you have the file ID from search results, download with:
+```json
+{
+  "method": "GET",
+  "url": "https://www.googleapis.com/drive/v3/files/FILE_ID",
+  "headers": {"Authorization": "Bearer <token>"},
+  "params": {"alt": "media"}
+}
+```
+
+#### Rclone (For File Operations)
+
+Use execute_bash with these commands:
+
+**List files (JSON output for parsing):**
+```bash
+rclone lsjson gdrive:
+rclone lsjson gdrive:Documents
+rclone lsjson gdrive:Documents --recursive
+rclone lsjson gdrive: --files-only  # Skip directories
+```
+
+**Read file content:**
+```bash
+rclone cat gdrive:Documents/file.txt
+rclone cat gdrive:Projects/report.md
+```
+
+**Search files by pattern:**
+```bash
+# By file extension
+rclone lsjson gdrive:Documents --include "*.pdf"
+rclone lsjson gdrive: --include "*.{py,js,ts,go}" --recursive
+
+# By name pattern
+rclone lsjson gdrive: --include "report_*" --recursive
+
+# By size or age
+rclone lsjson gdrive: --min-size 1M --max-size 100M
+rclone lsjson gdrive: --max-age 7d  # Modified in last 7 days
+```
+
+**Copy to thread storage for analysis:**
+```bash
+# Copy single file
+rclone copy gdrive:Documents/data.csv /threads/<thread_id>/
+
+# Copy entire folder
+rclone copy gdrive:Projects/MyApp /threads/<thread_id>/myapp/ --recursive
+
+# Sync folder (makes destination identical)
+rclone sync gdrive:Documents/Reports /threads/<thread_id>/reports/
+```
+
+**Parse JSON with jq:**
+```bash
+# List only file names
+rclone lsjson gdrive:Documents | jq -r '.[].Name'
+
+# Filter by size
+rclone lsjson gdrive: --recursive | jq '.[] | select(.Size > 1000000)'
+
+# Get total size
+rclone lsjson gdrive:Documents | jq 'map(.Size) | add'
+
+# Find files by mimetype
+rclone lsjson gdrive: --recursive | jq '.[] | select(.MimeType | contains("pdf"))'
+```
+
+**Best practices:**
+- Use `lsjson` for programmatic parsing (returns JSON array)
+- Use `--recursive` to search subdirectories
+- Copy large files to thread storage before processing (faster repeated access)
+- Paths in Google Drive are case-sensitive
+- Use `--include` patterns for filtering instead of listing everything
+
+**When to use which method:**
+- **Finding files** → Use Google Drive API search (fast, server-side)
+- **Reading file content** → Use rclone cat or Google Drive API download
+- **Bulk operations** → Use rclone copy/sync (handles folders easily)
+- **Exploring structure** → Use rclone lsjson (simpler than API for browsing)
+
+**Common workflows:**
+1. **Find files by name/content**: Use Google Drive API search with `fullText contains` or `name contains`
+2. **Explore folder structure**: `rclone lsjson gdrive:` to see top-level folders
+3. **Read small files**: `rclone cat gdrive:path/to/file.txt` or Google Drive API download
+4. **Process large files**: Copy to thread storage with rclone, then work with local copy
+5. **Find + analyze**: Search with API → get file path → copy with rclone → analyze local copy
+
 ### web_search
 Search for documentation, error solutions, and code examples.
 
