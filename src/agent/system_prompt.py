@@ -194,11 +194,16 @@ Use the `http_request` tool for fast, server-side search. The access token is pr
   "method": "GET",
   "url": "https://www.googleapis.com/drive/v3/files",
   "headers": {"Authorization": "Bearer <use-token-from-context>"},
-  "params": {"q": "name contains 'passport'"}
+  "params": {
+    "q": "name contains 'passport'",
+    "fields": "files(id, name, mimeType, modifiedTime)"
+  }
 }
 ```
 
 **Note:** Use strings for all param values: `{"pageSize": "100"}` not `{"pageSize": 100}`
+
+**Note:** Always request the `id` field - you'll need it to download files with rclone.
 
 **Search query syntax:**
 - `name contains 'text'` - Search filenames
@@ -226,16 +231,42 @@ Use the `http_request` tool for fast, server-side search. The access token is pr
 {"q": "'FOLDER_ID' in parents and name contains 'report'"}
 ```
 
-**Get file content after finding:**
-Once you have the file ID from search results, download with:
-```json
-{
-  "method": "GET",
-  "url": "https://www.googleapis.com/drive/v3/files/FILE_ID",
-  "headers": {"Authorization": "Bearer <token>"},
-  "params": {"alt": "media"}
-}
+**Reading file content:**
+CRITICAL: Never use Google Drive API to download file content directly - it returns the entire file and will overflow context.
+
+Instead, always use this workflow:
+1. **Find the file** with Google Drive API search (get the `id` and `name` from results)
+2. **Download to thread storage** with rclone using the `backend copyid` command
+3. **Read with pagination**: `read_file(/threads/<thread_id>/filename.txt, limit=100)` to safely read in chunks
+
+**CRITICAL - Copying Files by ID:**
+Use the `rclone backend copyid` command to copy files by their Google Drive file ID:
+
+```bash
+# Copy single file by ID (must specify output filename)
+rclone backend copyid gdrive: FILE_ID /threads/<thread_id>/filename.ext
+
+# Real example:
+rclone backend copyid gdrive: 1I9NuKenwCyjSBzYLnS9gUJ_I86eFjwbf /threads/<thread_id>/proposal.md
 ```
+
+**Copying Folders by ID:**
+For folders (not individual files), use `--drive-root-folder-id`:
+
+```bash
+# Copy entire folder contents by folder ID
+rclone copy --drive-root-folder-id="FOLDER_ID" gdrive: /threads/<thread_id>/foldername/
+
+# Real example:
+rclone copy --drive-root-folder-id="1XyfxxxxxxxxxxxxxxxxxKHCh" gdrive: /threads/<thread_id>/documents/
+```
+
+**Important:**
+- For files: Use `backend copyid` and specify the output filename
+- For folders: Use `--drive-root-folder-id` flag
+- Always get both `id` and `name` from Google Drive API search results
+
+This prevents context overflow and allows you to use the file tool's pagination features.
 
 #### Rclone (For File Operations)
 
@@ -305,16 +336,15 @@ rclone lsjson gdrive: --recursive | jq '.[] | select(.MimeType | contains("pdf")
 
 **When to use which method:**
 - **Finding files** → Use Google Drive API search (fast, server-side)
-- **Reading file content** → Use rclone cat or Google Drive API download
+- **Reading file content** → ALWAYS download with rclone first, then use read_file with pagination
 - **Bulk operations** → Use rclone copy/sync (handles folders easily)
 - **Exploring structure** → Use rclone lsjson (simpler than API for browsing)
 
 **Common workflows:**
 1. **Find files by name/content**: Use Google Drive API search with `fullText contains` or `name contains`
 2. **Explore folder structure**: `rclone lsjson gdrive:` to see top-level folders
-3. **Read small files**: `rclone cat gdrive:path/to/file.txt` or Google Drive API download
-4. **Process large files**: Copy to thread storage with rclone, then work with local copy
-5. **Find + analyze**: Search with API → get file path → copy with rclone → analyze local copy
+3. **Read any file**: Download with `rclone copy` to thread storage, then use `read_file` with pagination
+4. **Find + analyze**: Search with API → get file path → copy with rclone → read with pagination → analyze
 
 ### web_search
 Search for documentation, error solutions, and code examples.
