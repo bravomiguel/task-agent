@@ -210,6 +210,8 @@ Use `http_request` tool for finding files. Access token is provided in context b
 }
 ```
 
+**Google Drive API reference:** For operations beyond search (permissions, sharing, metadata), see https://developers.google.com/workspace/drive/api/reference/rest/v3 - use `http_request` tool with access token from context.
+
 **Notes:**
 - Use strings for all param values: `{"pageSize": "100"}` not `{"pageSize": 100}`
 - Always request `id` field - needed for rclone download
