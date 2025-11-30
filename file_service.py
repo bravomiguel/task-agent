@@ -129,24 +129,75 @@ def update_file(session_id: str, file_path: str, content: str) -> dict:
 
 
 @app.function(volumes={"/threads": volume})
-def delete_file(session_id: str, file_path: str) -> dict:
+def delete_file(session_id: str, file_path: str, sandbox_id: str = None) -> dict:
     """
     Delete a file from a thread's folder.
 
-    Note: Modal Volume API doesn't have a direct delete method yet.
-    This is a placeholder for future implementation.
+    Uses Modal Sandbox to delete the file since Volume API doesn't have native delete.
+    If no sandbox_id is provided, creates a temporary sandbox for deletion.
 
     Args:
         session_id: Thread/session ID
         file_path: Path to file relative to session folder
+        sandbox_id: Optional Modal sandbox ID to use for deletion
 
     Returns:
         Dictionary with 'success' boolean and optional 'error'
     """
-    return {
-        "success": False,
-        "error": "Delete not implemented - Modal Volume API limitation"
-    }
+    try:
+        full_path = f"/threads/{session_id}/{file_path}"
+
+        if sandbox_id:
+            # Use existing sandbox
+            try:
+                sb = modal.Sandbox.from_id(sandbox_id)
+            except Exception:
+                # If sandbox doesn't exist, create temporary one
+                sb = modal.Sandbox.create(
+                    image=modal.Image.debian_slim(),
+                    volumes={"/threads": volume},
+                    timeout=60
+                )
+        else:
+            # Create temporary sandbox for deletion
+            sb = modal.Sandbox.create(
+                image=modal.Image.debian_slim(),
+                volumes={"/threads": volume},
+                timeout=60
+            )
+
+        # Delete the file using rm command
+        process = sb.exec("rm", "-f", full_path, timeout=10)
+        process.wait()
+
+        if process.returncode == 0:
+            # Commit the volume to persist deletion
+            volume.commit()
+
+            # Terminate temporary sandbox if we created one
+            if not sandbox_id:
+                sb.terminate()
+
+            return {"success": True}
+        else:
+            error_msg = process.stderr.read() if process.stderr else "Unknown error"
+            print(f"Error deleting file {file_path}: {error_msg}")
+
+            # Terminate temporary sandbox if we created one
+            if not sandbox_id:
+                sb.terminate()
+
+            return {
+                "success": False,
+                "error": f"Failed to delete file: {error_msg}"
+            }
+
+    except Exception as e:
+        print(f"Error deleting file {file_path} for session {session_id}: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
 
 
 @app.function()
