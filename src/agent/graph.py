@@ -30,7 +30,7 @@ modal_sandbox_middleware = ModalSandboxMiddleware(idle_timeout=30)
 agent_middleware = [
     modal_sandbox_middleware,
     DynamicContextMiddleware(),
-    DateTimeContextMiddleware(),
+    # DateTimeContextMiddleware(),
     VolumeCommitMiddleware(),
     IsDoneMiddleware(),
     OpenFilesMiddleware(),
