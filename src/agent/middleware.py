@@ -109,6 +109,7 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
         max_timeout: int = 60 * 60 * 24,   # 24 hours
         volume_name: str = "threads",
         memory_volume_name: str = "memories",
+        skills_volume_name: str = "skills",
     ):
         super().__init__()
         self._workdir = workdir
@@ -117,6 +118,7 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
         self._max_timeout = max_timeout
         self._volume_name = volume_name
         self._memory_volume_name = memory_volume_name
+        self._skills_volume_name = skills_volume_name
 
     def before_agent(
         self, state: ModalSandboxState, runtime: Runtime
@@ -165,6 +167,11 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
             create_if_missing=True,
             version=2
         )
+        skills_volume = modal.Volume.from_name(
+            self._skills_volume_name,
+            create_if_missing=True,
+            version=2
+        )
 
         # Check if we should restore from a snapshot
         snapshot_id = state.get("modal_snapshot_id")
@@ -204,6 +211,7 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
             volumes={
                 "/threads": thread_volume,
                 "/memories": memory_volume,
+                "/skills": skills_volume,
             },
             env=gdrive_env,  # Inject Google Drive rclone config
             verbose=True,
