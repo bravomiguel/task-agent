@@ -18,18 +18,69 @@ from langgraph.runtime import Runtime
 import modal
 
 
-# Modal image with rclone and dependencies
+# Modal image with rclone, document processing tools, and skill dependencies
 rclone_image = (
-    modal.Image.debian_slim()
-    .apt_install("curl", "unzip", "jq", "ripgrep")
+    modal.Image.debian_slim(python_version="3.11")
+    # System packages for document processing and utilities
+    .apt_install(
+        # Base utilities
+        "curl",
+        "unzip",
+        "jq",
+        "ripgrep",
+        # Document conversion and processing
+        "pandoc",
+        "libreoffice",
+        # PDF tools (poppler-utils)
+        "poppler-utils",
+        # PDF manipulation CLI
+        "qpdf",
+        # OCR support
+        "tesseract-ocr",
+        # Virtual framebuffer for headless LibreOffice
+        "xvfb",
+        # Node.js for pptx/docx JavaScript libraries
+        "nodejs",
+        "npm",
+    )
+    # Python packages for document processing skills
+    .pip_install(
+        # PDF processing
+        "pypdf",
+        "pdfplumber",
+        "reportlab",
+        "pdf2image",
+        "pytesseract",
+        "pypdfium2",
+        # Image processing
+        "Pillow",
+        # Data analysis
+        "pandas",
+        # Excel processing
+        "openpyxl",
+        # PowerPoint processing
+        "python-pptx",
+        # Secure XML parsing for OOXML
+        "defusedxml",
+        "lxml",
+        # Text extraction from presentations
+        "markitdown[pptx]",
+    )
+    # Node.js global packages for presentation/document creation
     .run_commands(
-        # Install latest rclone binary
+        # Install Node.js packages globally
+        "npm install -g pptxgenjs playwright react-icons react react-dom docx",
+        # Install Playwright browsers (chromium for HTML rendering)
+        "npx playwright install chromium",
+        "npx playwright install-deps chromium",
+    )
+    # Install rclone for Google Drive sync
+    .run_commands(
         "curl -O https://downloads.rclone.org/rclone-current-linux-amd64.zip",
         "unzip -q rclone-current-linux-amd64.zip",
         "cp rclone-*-linux-amd64/rclone /usr/local/bin/",
         "chmod 755 /usr/local/bin/rclone",
         "rm -rf rclone-*",
-        # Verify installation
         "rclone version",
     )
 )
