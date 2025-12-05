@@ -166,3 +166,6 @@ uv.lock
 # Claude Code
 .claude/
 .claude-trace/
+
+# Skills (stored in Modal volume, synced via sync_skills.py)
+skills/
