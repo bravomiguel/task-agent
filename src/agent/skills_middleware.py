@@ -1,10 +1,11 @@
-"""Skills middleware for Modal volume-based skill loading.
+"""Skills middleware for loading skills baked into Modal image.
 
 Implements Anthropic's progressive disclosure pattern for agent skills:
-1. Load skill metadata (name + description) from /skills volume at session start
+1. Load skill metadata (name + description) from /skills directory at session start
 2. Inject skills list into system prompt
 3. Agent reads full SKILL.md on-demand when relevant
-4. Auto-seeds skills from local directory if not present in volume
+
+Skills are baked into the Modal image at build time from agent/skills/ directory.
 """
 
 from __future__ import annotations
@@ -20,9 +21,6 @@ from langchain.agents.middleware import ModelRequest, ModelResponse
 
 # Maximum size for SKILL.md files (10MB)
 MAX_SKILL_FILE_SIZE = 10 * 1024 * 1024
-
-# Local skills directory (relative to agent package)
-LOCAL_SKILLS_DIR = Path(__file__).parent.parent.parent / "skills"
 
 
 class SkillMetadata(TypedDict):
@@ -116,7 +114,7 @@ def _list_skills_from_sandbox(sandbox: modal.Sandbox, skills_dir: str = "/skills
     """List all skills from the sandbox's /skills directory.
 
     Args:
-        sandbox: Modal sandbox with skills volume mounted
+        sandbox: Modal sandbox with skills baked into image
         skills_dir: Path to skills directory in sandbox
 
     Returns:
@@ -156,139 +154,38 @@ def _list_skills_from_sandbox(sandbox: modal.Sandbox, skills_dir: str = "/skills
     return skills
 
 
-def _seed_skills_to_volume(volume: modal.Volume, local_skills_dir: Path) -> None:
-    """Seed skills from local directory to Modal volume.
-
-    Args:
-        volume: Modal volume to seed skills into
-        local_skills_dir: Local directory containing skill folders
-    """
-    if not local_skills_dir.exists():
-        return
-
-    for skill_dir in local_skills_dir.iterdir():
-        if not skill_dir.is_dir():
-            continue
-
-        skill_md = skill_dir / "SKILL.md"
-        if not skill_md.exists():
-            continue
-
-        # Upload all files in skill directory
-        for file_path in skill_dir.rglob("*"):
-            if file_path.is_file():
-                relative_path = file_path.relative_to(local_skills_dir)
-                remote_path = f"/{relative_path}"
-
-                with open(file_path, "rb") as f:
-                    volume.write_file(remote_path, f)
-
-    volume.commit()
-
-
-def _check_and_seed_skills(sandbox: modal.Sandbox, volume: modal.Volume, local_skills_dir: Path) -> None:
-    """Check if skills exist in volume, seed if missing.
-
-    Args:
-        sandbox: Modal sandbox to check skills in
-        volume: Modal volume to seed skills into
-        local_skills_dir: Local directory containing skill folders
-    """
-    if not local_skills_dir.exists():
-        return
-
-    # Get list of local skills
-    local_skill_names = {
-        d.name for d in local_skills_dir.iterdir()
-        if d.is_dir() and (d / "SKILL.md").exists()
-    }
-
-    if not local_skill_names:
-        return
-
-    # Check which skills exist in volume
-    try:
-        process = sandbox.exec("ls", "-1", "/skills", timeout=10)
-        process.wait()
-        if process.returncode == 0:
-            existing_skills = set(process.stdout.read().strip().split("\n"))
-        else:
-            existing_skills = set()
-    except Exception:
-        existing_skills = set()
-
-    # Find missing skills
-    missing_skills = local_skill_names - existing_skills
-
-    if not missing_skills:
-        return
-
-    # Seed missing skills
-    for skill_name in missing_skills:
-        skill_dir = local_skills_dir / skill_name
-
-        for file_path in skill_dir.rglob("*"):
-            if file_path.is_file():
-                relative_path = file_path.relative_to(local_skills_dir)
-                remote_path = f"/{relative_path}"
-
-                with open(file_path, "rb") as f:
-                    volume.write_file(remote_path, f)
-
-    volume.commit()
-
-    # Reload volume in sandbox to see new files
-    volume.reload()
-
-
 class SkillsMiddleware(AgentMiddleware[SkillsState, Any]):
-    """Middleware for loading and exposing agent skills from Modal volume.
+    """Middleware for loading and exposing agent skills from Modal image.
 
     Implements progressive disclosure:
     1. Parse YAML frontmatter from SKILL.md files at session start
     2. Inject skills metadata (name + description) into system prompt
     3. Agent reads full SKILL.md content when relevant to a task
-    4. Auto-seeds skills from local directory if not present in volume
+
+    Skills are baked into the Modal image at /skills/ directory.
     """
 
     state_schema = SkillsState
 
     def __init__(
         self,
-        skills_volume_name: str = "skills",
-        skills_mount_path: str = "/skills",
-        local_skills_dir: Path | None = None,
+        skills_path: str = "/skills",
     ) -> None:
         """Initialize the skills middleware.
 
         Args:
-            skills_volume_name: Name of the Modal volume for skills
-            skills_mount_path: Mount path in sandbox
-            local_skills_dir: Local directory to seed skills from (defaults to agent/skills)
+            skills_path: Path to skills directory in sandbox (baked into image)
         """
         super().__init__()
-        self.skills_volume_name = skills_volume_name
-        self.skills_mount_path = skills_mount_path
-        self.local_skills_dir = local_skills_dir or LOCAL_SKILLS_DIR
-        self._skills_volume: modal.Volume | None = None
-
-    def get_skills_volume(self) -> modal.Volume:
-        """Get or create the skills volume."""
-        if self._skills_volume is None:
-            self._skills_volume = modal.Volume.from_name(
-                self.skills_volume_name,
-                create_if_missing=True,
-                version=2
-            )
-        return self._skills_volume
+        self.skills_path = skills_path
 
     def before_agent(
         self, state: SkillsState, runtime: Any
     ) -> dict[str, Any] | None:
-        """Load skills metadata and auto-seed if needed.
+        """Load skills metadata from the /skills directory.
 
-        Discovers available skills from the /skills volume at the start
-        of each interaction. Seeds missing skills from local directory.
+        Discovers available skills from the /skills directory at the start
+        of each interaction.
         """
         sandbox_id = state.get("modal_sandbox_id")
         if not sandbox_id:
@@ -296,13 +193,9 @@ class SkillsMiddleware(AgentMiddleware[SkillsState, Any]):
 
         try:
             sandbox = modal.Sandbox.from_id(sandbox_id)
-            volume = self.get_skills_volume()
-
-            # Auto-seed missing skills
-            _check_and_seed_skills(sandbox, volume, self.local_skills_dir)
 
             # Load skills metadata
-            skills = _list_skills_from_sandbox(sandbox, self.skills_mount_path)
+            skills = _list_skills_from_sandbox(sandbox, self.skills_path)
 
             return {"skills_metadata": skills}
         except Exception:

@@ -6,6 +6,7 @@ import os
 import requests
 import shlex
 import uuid
+from pathlib import Path
 from typing import Annotated, Any, NotRequired
 import time
 from datetime import datetime, timezone
@@ -18,7 +19,10 @@ from langgraph.runtime import Runtime
 import modal
 
 
-# Create Modal image with rclone and dependencies
+# Path to local skills directory (for baking into image)
+SKILLS_DIR = Path(__file__).parent.parent.parent / "skills"
+
+# Create Modal image with rclone, dependencies, and skills baked in
 rclone_image = (
     modal.Image.debian_slim()
     .apt_install("curl", "unzip", "jq", "ripgrep")
@@ -30,8 +34,11 @@ rclone_image = (
         "chmod 755 /usr/local/bin/rclone",
         "rm -rf rclone-*",
         # Verify installation
-        "rclone version"
+        "rclone version",
+        # Create skills directory
+        "mkdir -p /skills",
     )
+    .add_local_dir(str(SKILLS_DIR), "/skills", copy=True)
 )
 
 
@@ -109,7 +116,6 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
         max_timeout: int = 60 * 60 * 24,   # 24 hours
         volume_name: str = "threads",
         memory_volume_name: str = "memories",
-        skills_volume_name: str = "skills",
     ):
         super().__init__()
         self._workdir = workdir
@@ -118,7 +124,6 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
         self._max_timeout = max_timeout
         self._volume_name = volume_name
         self._memory_volume_name = memory_volume_name
-        self._skills_volume_name = skills_volume_name
 
     def before_agent(
         self, state: ModalSandboxState, runtime: Runtime
@@ -167,11 +172,6 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
             create_if_missing=True,
             version=2
         )
-        skills_volume = modal.Volume.from_name(
-            self._skills_volume_name,
-            create_if_missing=True,
-            version=2
-        )
 
         # Check if we should restore from a snapshot
         snapshot_id = state.get("modal_snapshot_id")
@@ -201,6 +201,7 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
             gdrive_env = {}
 
         # Create new sandbox with volumes mounted and workdir set to thread folder
+        # Note: /skills is baked into the image, not a volume
         app = modal.App.lookup("agent-sandbox", create_if_missing=True)
         sandbox = modal.Sandbox.create(
             app=app,
@@ -211,7 +212,6 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
             volumes={
                 "/threads": thread_volume,
                 "/memories": memory_volume,
-                "/skills": skills_volume,
             },
             env=gdrive_env,  # Inject Google Drive rclone config
             verbose=True,
