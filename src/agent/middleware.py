@@ -38,7 +38,7 @@ rclone_image = (
         # Create skills directory
         "mkdir -p /skills",
     )
-    .add_local_dir(str(SKILLS_DIR), "/skills", copy=True)
+    .add_local_dir(str(SKILLS_DIR), "/skills")
 )
 
 
