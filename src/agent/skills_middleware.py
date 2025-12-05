@@ -38,24 +38,35 @@ class SkillsState(AgentState):
 SKILLS_SYSTEM_PROMPT = """
 ## Skills System
 
-You have access to a skills library that provides specialized capabilities and domain knowledge.
+You have access to a skills library with specialized capabilities for document manipulation.
+These skills contain tested patterns from extensive trial and error that significantly improve output quality.
 
 **Skills Directory:** `/skills/`
 
 {skills_list}
 
-**How to Use Skills (Progressive Disclosure):**
+**CRITICAL - Read Skills BEFORE Acting:**
 
-Skills follow a **progressive disclosure** pattern:
+When a user's task matches a skill, your FIRST action must be to read the SKILL.md file.
+Do NOT start writing code or creating files until you've read the relevant skill(s).
 
-1. **Recognize when a skill applies**: Check if the user's task matches any skill's description
-2. **Read the skill's full instructions**: Use read_file or execute with cat to read the SKILL.md path shown
-3. **Follow the skill's instructions**: SKILL.md contains step-by-step workflows, best practices, and examples
-4. **Access supporting files**: Skills may include Python scripts or configs in their directory
+**Task → Skill Mapping:**
+- "create/edit a Word document" → read `/skills/docx/SKILL.md`
+- "fill a PDF form" or "work with PDF" → read `/skills/pdf/SKILL.md`
+- "make a presentation" → read `/skills/pptx/SKILL.md`
+- "work with spreadsheet/Excel" → read `/skills/xlsx/SKILL.md`
 
-**Skills are Self-Documenting:**
-- Each SKILL.md tells you exactly what the skill does and how to use it
-- The skill list above shows the full path for each skill's SKILL.md file
+**Multiple Skills:**
+Complex tasks may require combining multiple skills. Don't limit yourself to one.
+Example: "Convert this spreadsheet data into a presentation" → read both xlsx AND pptx skills
+
+**Progressive Disclosure Pattern:**
+1. Recognize task matches a skill from the list above
+2. Read the SKILL.md file FIRST (use read_file tool)
+3. Follow the skill's workflows, patterns, and best practices
+4. Access supporting scripts/configs as directed by the skill
+
+The extra time to read skills before starting is worth it - they prevent common mistakes and produce better results.
 """
 
 

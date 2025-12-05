@@ -69,10 +69,7 @@ rclone_image = (
     # Node.js global packages for presentation/document creation
     .run_commands(
         # Install Node.js packages globally
-        "npm install -g pptxgenjs playwright react-icons react react-dom docx",
-        # Install Playwright browsers (chromium for HTML rendering)
-        "npx playwright install chromium",
-        "npx playwright install-deps chromium",
+        "npm install -g pptxgenjs react-icons react react-dom docx",
     )
     # Install rclone for Google Drive sync
     .run_commands(
@@ -256,7 +253,7 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
         sandbox = modal.Sandbox.create(
             app=app,
             image=image,
-            workdir=f"/threads/{thread_id}",
+            workdir="/workspace",
             timeout=self._max_timeout,
             idle_timeout=self._idle_timeout,
             volumes={

@@ -3,13 +3,14 @@
 from deepagents import create_deep_agent
 from deepagents_cli.tools import http_request, fetch_url, web_search, tavily_client
 from langchain.chat_models import init_chat_model
+from langchain_openai import ChatOpenAI
 from agent.middleware import ModalSandboxMiddleware, DynamicContextMiddleware, ReviewMessageMiddleware, ThreadTitleMiddleware, IsDoneMiddleware, DateTimeContextMiddleware, VolumeCommitMiddleware, OpenFilesMiddleware
 from agent.skills_middleware import SkillsMiddleware
 from agent.system_prompt import SYSTEM_PROMPT
 from agent.modal_backend import LazyModalBackend
 
-# Initialize model
-gpt_4_1 = init_chat_model(model="openai:gpt-4.1")
+# Initialize models
+gpt_5_1 = ChatOpenAI(model="gpt-5.1", reasoning_effort="none")
 gpt_4_1_mini = init_chat_model(model="openai:gpt-4.1-mini", disable_streaming=True)
 
 
@@ -25,7 +26,7 @@ def create_backend_factory():
 
 
 # Create a single instance of ModalSandboxMiddleware to be shared
-modal_sandbox_middleware = ModalSandboxMiddleware(idle_timeout=30)
+modal_sandbox_middleware = ModalSandboxMiddleware()
 
 
 agent_middleware = [
@@ -47,7 +48,7 @@ if tavily_client is not None:
 
 # Create the agent with backend factory
 agent = create_deep_agent(
-    model=gpt_4_1,
+    model=gpt_5_1,
     system_prompt=SYSTEM_PROMPT,
     tools=tools,
     middleware=agent_middleware,
