@@ -10,7 +10,7 @@ from agent.system_prompt import SYSTEM_PROMPT
 from agent.modal_backend import LazyModalBackend
 
 # Initialize models
-gpt_5_1 = ChatOpenAI(model="gpt-5.1", reasoning_effort="none")
+gpt_5_1 = ChatOpenAI(model="gpt-5.1", reasoning_effort="low")
 gpt_4_1_mini = init_chat_model(model="openai:gpt-4.1-mini", disable_streaming=True)
 
 
