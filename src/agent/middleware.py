@@ -17,6 +17,7 @@ from langchain_core.runnables.config import var_child_runnable_config
 from langgraph.runtime import Runtime
 import modal
 
+modal.enable_output()
 
 # Modal image with rclone, document processing tools, and skill dependencies
 rclone_image = (
@@ -63,13 +64,22 @@ rclone_image = (
         # Secure XML parsing for OOXML
         "defusedxml",
         "lxml",
+        # Python 2/3 compatibility (used by pptx rearrange.py)
+        "six",
         # Text extraction from presentations
         "markitdown[pptx]",
     )
     # Node.js global packages for presentation/document creation
     .run_commands(
         # Install Node.js packages globally
-        "npm install -g pptxgenjs react-icons react react-dom docx",
+        "npm install -g pptxgenjs playwright react-icons react react-dom docx",
+        # Install Playwright browsers (chromium for HTML rendering)
+        "npx playwright install chromium",
+        "npx playwright install-deps chromium",
+    )
+    # Install sharp globally (dependency for html2pptx, which agent extracts locally per skill instructions)
+    .run_commands(
+        "npm install -g sharp",
     )
     # Install rclone for Google Drive sync
     .run_commands(
@@ -248,7 +258,13 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
             print(f"Warning: Could not fetch Google Drive token: {e}")
             gdrive_env = {}
 
-        # Create new sandbox with volumes mounted and workdir set to thread folder
+        # Add NODE_PATH so Node.js can find globally installed npm packages
+        sandbox_env = {
+            "NODE_PATH": "/usr/local/lib/node_modules",
+            **gdrive_env,
+        }
+
+        # Create new sandbox with volumes mounted and workdir set to workspace
         app = modal.App.lookup("agent-sandbox", create_if_missing=True)
         sandbox = modal.Sandbox.create(
             app=app,
@@ -261,7 +277,7 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
                 "/memories": memory_volume,
                 "/skills": skills_volume,
             },
-            env=gdrive_env,  # Inject Google Drive rclone config
+            env=sandbox_env,
             verbose=True,
         )
 

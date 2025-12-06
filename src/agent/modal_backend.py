@@ -1,9 +1,10 @@
 """Lazy Modal backend with volume commit/reload support."""
 
 from deepagents_cli.integrations.modal import ModalBackend
+from deepagents.backends.protocol import SandboxBackendProtocol
 
 
-class LazyModalBackend:
+class LazyModalBackend(SandboxBackendProtocol):
     """A lazy wrapper that defers ModalBackend creation until first use.
 
     This is needed because FilesystemMiddleware calls the backend factory
