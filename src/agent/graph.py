@@ -4,7 +4,7 @@ from deepagents import create_deep_agent
 from deepagents_cli.tools import http_request, fetch_url, web_search, tavily_client
 from langchain.chat_models import init_chat_model
 from langchain_openai import ChatOpenAI
-from agent.middleware import ModalSandboxMiddleware, DynamicContextMiddleware, ReviewMessageMiddleware, ThreadTitleMiddleware, IsDoneMiddleware, DateTimeContextMiddleware, VolumeCommitMiddleware, OpenFilesMiddleware
+from agent.middleware import ModalSandboxMiddleware, DynamicContextMiddleware, ReviewMessageMiddleware, ThreadTitleMiddleware, IsDoneMiddleware, VolumeCommitMiddleware, OpenFilesMiddleware
 from agent.skills_middleware import SkillsMiddleware
 from agent.system_prompt import SYSTEM_PROMPT
 from agent.modal_backend import LazyModalBackend
@@ -33,7 +33,6 @@ agent_middleware = [
     modal_sandbox_middleware,
     DynamicContextMiddleware(),
     SkillsMiddleware(),
-    # DateTimeContextMiddleware(),
     VolumeCommitMiddleware(),
     IsDoneMiddleware(),
     OpenFilesMiddleware(),
