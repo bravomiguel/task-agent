@@ -508,10 +508,10 @@ class IsDoneMiddleware(AgentMiddleware[IsDoneState]):
     state_schema = IsDoneState
 
 
-def open_files_reducer(left, right):
-    # If both are None, default to empty structure
+def open_file_path_reducer(left, right):
+    # If both are None, default to None
     if left is None and right is None:
-        return {"openFilePaths": [], "activeFilePath": None}
+        return None
     # If only right is None, keep left
     if right is None:
         return left
@@ -519,20 +519,16 @@ def open_files_reducer(left, right):
     return right
 
 
-class OpenFilesState(AgentState):
-    open_files: Annotated[NotRequired[dict], open_files_reducer]
+class OpenFilePathState(AgentState):
+    open_file_path: Annotated[NotRequired[str | None], open_file_path_reducer]
 
 
-class OpenFilesMiddleware(AgentMiddleware[OpenFilesState]):
-    """Middleware that adds open_files dict to agent state.
+class OpenFilePathMiddleware(AgentMiddleware[OpenFilePathState]):
+    """Middleware that adds open_file_path string to agent state.
 
-    Structure:
-    {
-        "openFilePaths": ["file1.md", "file2.py"],
-        "activeFilePath": "file1.md"
-    }
+    Tracks the single currently open file path, or None if no file is open.
     """
-    state_schema = OpenFilesState
+    state_schema = OpenFilePathState
 
 
 class ReviewState(AgentState):
