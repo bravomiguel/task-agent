@@ -510,13 +510,7 @@ class IsDoneMiddleware(AgentMiddleware[IsDoneState]):
 
 
 def open_file_path_reducer(left, right):
-    # If both are None, default to None
-    if left is None and right is None:
-        return None
-    # If only right is None, keep left
-    if right is None:
-        return left
-    # Otherwise, use right (the new value)
+    # Right value always takes precedence, including None to clear
     return right
 
 
