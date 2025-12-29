@@ -55,6 +55,8 @@ Do NOT start writing code or creating files until you've read the relevant skill
 - "fill a PDF form" or "work with PDF" → read `/skills/pdf/SKILL.md`
 - "make a presentation" → read `/skills/pptx/SKILL.md`
 - "work with spreadsheet/Excel" → read `/skills/xlsx/SKILL.md`
+- "search threads" or "create/manage runs" → read `/skills/langgraph-api/SKILL.md`
+- "triage incoming email/message/webhook" → read `/skills/task-intake/SKILL.md`
 
 **Multiple Skills:**
 Complex tasks may require combining multiple skills. Don't limit yourself to one.
