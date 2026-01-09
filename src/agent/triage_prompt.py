@@ -56,30 +56,19 @@ Use the rules from `/memories/triage.md` to decide:
 
 ---
 
-### Step 4: Fetch All Threads (If Processing)
+### Step 4: Fetch and Dump Threads (If Processing)
 
-If the event passes the filter, fetch all threads from the LangGraph API:
+If the event passes the filter, fetch all threads and dump to files in a single command:
 
 ```bash
-curl -X GET "{LANGGRAPH_API_URL}/threads/search?limit=1000" \\
+mkdir -p /workspace/threads && \\
+curl -s -X GET "{LANGGRAPH_API_URL}/threads/search?limit=1000" \\
   -H "Authorization: Bearer 123" \\
-  -H "Content-Type: application/json" > /workspace/threads.json
-```
-
----
-
-### Step 5: Dump Threads to Files
-
-Save all thread data to separate files for searching:
-
-```bash
-mkdir -p /workspace/threads
-
-cat /workspace/threads.json | jq -c '.[]' | while read -r thread; do
+  -H "Content-Type: application/json" | \\
+jq -c '.[]' | while read -r thread; do
   thread_id=$(echo "$thread" | jq -r '.thread_id')
   thread_title=$(echo "$thread" | jq -r '.values.thread_title // "Untitled"')
   is_done=$(echo "$thread" | jq -r '.values.is_done // false')
-
   {{
     echo "THREAD_ID: $thread_id"
     echo "TITLE: $thread_title"
@@ -92,7 +81,7 @@ done
 
 ---
 
-### Step 6: Filter to Active Threads
+### Step 5: Filter to Active Threads
 
 Only consider threads where `is_done=false`:
 
@@ -108,24 +97,23 @@ if [ ! -s /workspace/active_threads.txt ]; then
 fi
 ```
 
-If `active_threads.txt` is empty, skip directly to Step 9 Option B (Create New Thread).
+If `active_threads.txt` is empty, skip directly to Step 8 Option B (Create New Thread).
 
 ---
 
-### Step 7: Search for Relevant Thread (Only if Active Threads Exist)
+### Step 6: Search for Relevant Thread (Only if Active Threads Exist)
 
 Use the file tools (grep, read_file, ls) to search through `/workspace/threads/` and find threads relevant to the incoming email.
 
-**Your goal:** Find the best matching active thread based on:
-- Keywords from email subject and body (project names, topics, deliverables, people)
-- Sender mentioned in thread messages
-- Related context or follow-ups
+**Your goal:** Find the best matching active thread based on incoming event content.
 
 Use your reasoning to determine what to search for and how to evaluate relevance.
 
+Err on the side of creating a new thread if you're unsure.
+
 ---
 
-### Step 8: Make Routing Decision
+### Step 7: Make Routing Decision
 
 **Route to EXISTING thread if:**
 - Email references a specific ongoing project/task
@@ -142,7 +130,7 @@ Use your reasoning to determine what to search for and how to evaluate relevance
 
 ---
 
-### Step 9: Execute Action via LangGraph API
+### Step 8: Execute Action via LangGraph API
 
 #### Option A: Add to Existing Thread
 
@@ -195,7 +183,7 @@ curl -X POST "{LANGGRAPH_API_URL}/threads/${{thread_id}}/runs" \\
 
 ---
 
-### Step 10: Exit Silently
+### Step 9: Exit Silently
 
 Once you've executed the curl command(s), your job is done. Simply STOP.
 
