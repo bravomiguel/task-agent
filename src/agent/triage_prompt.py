@@ -43,7 +43,7 @@ The user message will contain an event in XML format. Example:
 </email>
 ```
 
-Parse this to extract the from, subject, and body fields.
+Parse this to extract the event content (e.g. for an email that includes the from, subject, and body fields).
 
 ---
 
@@ -61,7 +61,7 @@ Use the rules from `/memories/triage.md` to decide:
 If the event passes the filter, fetch all threads from the LangGraph API:
 
 ```bash
-curl -X GET "{LANGGRAPH_API_URL}/threads/search?limit=100" \\
+curl -X GET "{LANGGRAPH_API_URL}/threads/search?limit=1000" \\
   -H "Authorization: Bearer 123" \\
   -H "Content-Type: application/json" > /workspace/threads.json
 ```
@@ -97,12 +97,22 @@ done
 Only consider threads where `is_done=false`:
 
 ```bash
-grep -l "IS_DONE: false" /workspace/threads/*.txt > /workspace/active_threads.txt
+grep -l "IS_DONE: false" /workspace/threads/*.txt > /workspace/active_threads.txt 2>/dev/null || touch /workspace/active_threads.txt
 ```
+
+**Check if any active threads exist:**
+
+```bash
+if [ ! -s /workspace/active_threads.txt ]; then
+  echo "No active threads - creating new thread"
+fi
+```
+
+If `active_threads.txt` is empty, skip directly to Step 9 Option B (Create New Thread).
 
 ---
 
-### Step 7: Search for Relevant Thread
+### Step 7: Search for Relevant Thread (Only if Active Threads Exist)
 
 Extract keywords from the email subject and body, then search active threads:
 
