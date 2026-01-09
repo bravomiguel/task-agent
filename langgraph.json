@@ -1,7 +1,8 @@
 {
   "dependencies": ["."],
   "graphs": {
-    "task_agent": "./src/agent/graph.py:agent"
+    "task_agent": "./src/agent/graph.py:agent",
+    "triage_agent": "./src/agent/triage_graph.py:triage_agent"
   },
   "env": ".env"
 }

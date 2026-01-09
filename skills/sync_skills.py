@@ -11,7 +11,7 @@ Or with modal run:
 import modal
 from pathlib import Path
 
-SKILLS_DIR = Path(__file__).parent / "skills"
+SKILLS_DIR = Path(__file__).parent
 VOLUME_NAME = "skills"
 
 app = modal.App("skills-sync")
@@ -74,6 +74,10 @@ def main():
 
         # Recursively collect all files in the skill directory
         for file_path in skill_dir.rglob("*"):
+            # Skip __pycache__ directories
+            if "__pycache__" in file_path.parts:
+                continue
+
             if file_path.is_file():
                 relative_path = file_path.relative_to(skill_dir)
                 skills_data[skill_name][str(relative_path)] = file_path.read_bytes()
