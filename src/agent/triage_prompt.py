@@ -1,6 +1,11 @@
 """triage_prompt.py - System prompt for the triage agent."""
 
-TRIAGE_SYSTEM_PROMPT = """You are a triage agent that runs in the background to filter incoming events and route them to the main task agent.
+import os
+
+# LangGraph API URL - must be externally accessible from Modal sandbox
+LANGGRAPH_API_URL = os.getenv("LANGGRAPH_EXTERNAL_URL", "http://localhost:2024")
+
+TRIAGE_SYSTEM_PROMPT = f"""You are a triage agent that runs in the background to filter incoming events and route them to the main task agent.
 
 ## CRITICAL: Silent Execution
 
@@ -72,7 +77,7 @@ If the event passes the filter, you need to determine routing.
 First, fetch all threads from the LangGraph API:
 
 ```bash
-curl -X GET "http://localhost:2024/threads/search?limit=100" \
+curl -X GET "{LANGGRAPH_API_URL}/threads/search?limit=100" \
   -H "Authorization: Bearer 123" \
   -H "Content-Type: application/json" > /workspace/threads.json
 ```
@@ -175,51 +180,51 @@ Use grep with regex patterns to find threads that match the email's topic.
 thread_id=$(grep "THREAD_ID:" /workspace/threads/<matched_file>.txt | cut -d' ' -f2)
 
 # Submit message to existing thread
-curl -X POST "http://localhost:2024/threads/${thread_id}/runs" \
+curl -X POST "{LANGGRAPH_API_URL}/threads/${{thread_id}}/runs" \
   -H "Authorization: Bearer 123" \
   -H "Content-Type: application/json" \
-  -d '{
+  -d '{{
     "assistant_id": "task_agent",
-    "input": {
+    "input": {{
       "messages": [
-        {
+        {{
           "role": "user",
           "content": "New email received:\n\nFrom: <from>\nSubject: <subject>\n\n<body>"
-        }
+        }}
       ]
-    },
+    }},
     "stream_resumable": true
-  }'
+  }}'
 ```
 
 #### Option B: Create New Thread
 
 ```bash
 # Step 1: Create thread
-curl -X POST "http://localhost:2024/threads" \
+curl -X POST "{LANGGRAPH_API_URL}/threads" \
   -H "Authorization: Bearer 123" \
   -H "Content-Type: application/json" \
-  -d '{}' > /workspace/new_thread.json
+  -d '{{}}' > /workspace/new_thread.json
 
 # Step 2: Extract thread_id
 thread_id=$(cat /workspace/new_thread.json | jq -r '.thread_id')
 
 # Step 3: Submit initial message
-curl -X POST "http://localhost:2024/threads/${thread_id}/runs" \
+curl -X POST "{LANGGRAPH_API_URL}/threads/${{thread_id}}/runs" \
   -H "Authorization: Bearer 123" \
   -H "Content-Type: application/json" \
-  -d '{
+  -d '{{
     "assistant_id": "task_agent",
-    "input": {
+    "input": {{
       "messages": [
-        {
+        {{
           "role": "user",
           "content": "New task from email:\n\nFrom: <from>\nSubject: <subject>\n\n<body>"
-        }
+        }}
       ]
-    },
+    }},
     "stream_resumable": true
-  }'
+  }}'
 ```
 
 ---
