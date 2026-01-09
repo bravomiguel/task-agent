@@ -7,8 +7,8 @@ from agent.middleware import ModalSandboxMiddleware
 from agent.triage_prompt import TRIAGE_SYSTEM_PROMPT
 from agent.modal_backend import LazyModalBackend
 
-# Initialize model - GPT-4.1-mini for higher rate limits (200K TPM vs 30K)
-gpt_4_1_mini = ChatOpenAI(model="gpt-4.1-mini")
+# Initialize model - GPT-5-mini for higher rate limits
+gpt_5_mini = ChatOpenAI(model="gpt-5-mini")
 
 
 def create_backend_factory():
@@ -41,7 +41,7 @@ if tavily_client is not None:
 
 # Create the triage agent with backend factory
 triage_agent = create_deep_agent(
-    model=gpt_4_1_mini,
+    model=gpt_5_mini,
     system_prompt=TRIAGE_SYSTEM_PROMPT,
     tools=tools,
     middleware=triage_middleware,
