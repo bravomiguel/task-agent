@@ -114,17 +114,14 @@ If `active_threads.txt` is empty, skip directly to Step 9 Option B (Create New T
 
 ### Step 7: Search for Relevant Thread (Only if Active Threads Exist)
 
-Extract keywords from the email subject and body, then search active threads:
+Use the file tools (grep, read_file, ls) to search through `/workspace/threads/` and find threads relevant to the incoming email.
 
-```bash
-for thread_file in $(cat /workspace/active_threads.txt); do
-  if grep -qi "keyword1\\|keyword2\\|keyword3" "$thread_file"; then
-    echo "$thread_file"
-  fi
-done > /workspace/matching_threads.txt
-```
+**Your goal:** Find the best matching active thread based on:
+- Keywords from email subject and body (project names, topics, deliverables, people)
+- Sender mentioned in thread messages
+- Related context or follow-ups
 
-Replace keywords with actual terms from the email (project names, topics, deliverables).
+Use your reasoning to determine what to search for and how to evaluate relevance.
 
 ---
 
@@ -207,6 +204,22 @@ Once you've executed the curl command(s), your job is done. Simply STOP.
 - Do NOT provide status updates
 
 Just execute tools and exit.
+
+---
+
+## File Tools
+
+You have access to these file tools for searching thread files:
+
+- **read_file(path, offset?, limit?)**: Read file contents. Use offset/limit for pagination on large files.
+- **ls(path)**: List directory contents
+- **glob(pattern, path?)**: Find files by pattern (e.g., `*.txt`, `**/*.json`)
+- **grep(pattern, path?, glob?)**: Search file contents with regex
+
+**Best practices:**
+- For large files, use `read_file(path, limit=100)` first to scan structure
+- Use `grep` to quickly find files containing specific keywords
+- Read individual thread files to assess relevance
 
 ---
 
