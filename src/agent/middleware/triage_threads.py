@@ -12,8 +12,8 @@ from langchain.agents.middleware import AgentMiddleware, AgentState
 from langgraph.runtime import Runtime
 
 
-# LangGraph API URL - use internal URL since middleware runs on same server
-LANGGRAPH_API_URL = os.getenv("LANGGRAPH_INTERNAL_URL", "http://localhost:2024")
+# LangGraph API URL
+LANGGRAPH_API_URL = os.getenv("LANGGRAPH_API_URL", "http://localhost:2024")
 
 
 class TriageThreadsState(AgentState):
@@ -53,10 +53,11 @@ class TriageThreadsMiddleware(AgentMiddleware[TriageThreadsState, Any]):
             # Fetch all threads via LangGraph API
             threads = self._fetch_threads()
 
-            # Filter for active threads (is_done is not true)
+            # Filter for active task_agent threads only
             active_threads = [
                 t for t in threads
-                if not t.get("values", {}).get("is_done", False)
+                if t.get("metadata", {}).get("graph_id") == "task_agent"
+                and not t.get("values", {}).get("is_done", False)
             ]
 
             # Dump active threads to sandbox
@@ -71,17 +72,18 @@ class TriageThreadsMiddleware(AgentMiddleware[TriageThreadsState, Any]):
 
     def _fetch_threads(self) -> list[dict]:
         """Fetch all threads from LangGraph API."""
+        url = f"{self._api_url}/threads/search"
+        print(f"DEBUG: Fetching threads from {url}")
         response = httpx.post(
-            f"{self._api_url}/threads/search",
-            headers={
-                "Authorization": "Bearer 123",
-                "Content-Type": "application/json",
-            },
-            json={"limit": 1000},
+            url,
+            headers={"Content-Type": "application/json"},
+            json={"limit": 100},
             timeout=30,
         )
         response.raise_for_status()
-        return response.json()
+        threads = response.json()
+        print(f"DEBUG: Fetched {len(threads)} threads")
+        return threads
 
     def _dump_threads_to_sandbox(
         self, sandbox: modal.Sandbox, threads: list[dict]
@@ -127,5 +129,45 @@ TITLE: {thread_title}
     async def abefore_agent(
         self, state: TriageThreadsState, runtime: Runtime
     ) -> dict[str, Any] | None:
-        """Async version delegates to sync implementation."""
-        return self.before_agent(state, runtime)
+        """Async version with non-blocking HTTP."""
+        sandbox_id = state.get("modal_sandbox_id")
+        if not sandbox_id:
+            print("Warning: No modal_sandbox_id in state, cannot dump threads")
+            return {"active_thread_count": 0}
+
+        try:
+            # Fetch threads via async HTTP
+            threads = await self._afetch_threads()
+
+            # Filter for active task_agent threads only
+            active_threads = [
+                t for t in threads
+                if t.get("metadata", {}).get("graph_id") == "task_agent"
+                and not t.get("values", {}).get("is_done", False)
+            ]
+
+            # Dump active threads to sandbox
+            sandbox = modal.Sandbox.from_id(sandbox_id)
+            self._dump_threads_to_sandbox(sandbox, active_threads)
+
+            return {"active_thread_count": len(active_threads)}
+
+        except Exception as e:
+            print(f"Warning: Could not fetch/dump threads: {e}")
+            return {"active_thread_count": 0}
+
+    async def _afetch_threads(self) -> list[dict]:
+        """Fetch all threads from LangGraph API (async)."""
+        url = f"{self._api_url}/threads/search"
+        print(f"DEBUG: Fetching threads from {url} (async)")
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                url,
+                headers={"Content-Type": "application/json"},
+                json={"limit": 100},
+                timeout=30,
+            )
+        response.raise_for_status()
+        threads = response.json()
+        print(f"DEBUG: Fetched {len(threads)} threads")
+        return threads

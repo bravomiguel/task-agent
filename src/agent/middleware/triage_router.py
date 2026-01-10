@@ -13,8 +13,8 @@ from langgraph.runtime import Runtime
 from agent.triage_schema import TriageDecision
 
 
-# LangGraph API URL - use internal URL since middleware runs on same server
-LANGGRAPH_API_URL = os.getenv("LANGGRAPH_INTERNAL_URL", "http://localhost:2024")
+# LangGraph API URL
+LANGGRAPH_API_URL = os.getenv("LANGGRAPH_API_URL", "http://localhost:2024")
 
 
 class TriageRouterState(AgentState):
@@ -120,10 +120,7 @@ class TriageRouterMiddleware(AgentMiddleware[TriageRouterState, Any]):
         """Create a new thread via LangGraph API."""
         response = httpx.post(
             f"{self._api_url}/threads",
-            headers={
-                "Authorization": "Bearer 123",
-                "Content-Type": "application/json",
-            },
+            headers={"Content-Type": "application/json"},
             json={},
             timeout=30,
         )
@@ -134,10 +131,7 @@ class TriageRouterMiddleware(AgentMiddleware[TriageRouterState, Any]):
         """Create a run on a thread via LangGraph API."""
         response = httpx.post(
             f"{self._api_url}/threads/{thread_id}/runs",
-            headers={
-                "Authorization": "Bearer 123",
-                "Content-Type": "application/json",
-            },
+            headers={"Content-Type": "application/json"},
             json={
                 "assistant_id": "task_agent",
                 "input": {
@@ -157,5 +151,85 @@ class TriageRouterMiddleware(AgentMiddleware[TriageRouterState, Any]):
     async def aafter_agent(
         self, state: TriageRouterState, runtime: Runtime
     ) -> dict[str, Any] | None:
-        """Async version delegates to sync implementation."""
-        return self.after_agent(state, runtime)
+        """Async version with non-blocking HTTP."""
+        # Get structured decision from state
+        decision = state.get("structured_response")
+        if decision is None:
+            print("Warning: No structured_response in state, cannot route")
+            return None
+
+        # Handle filter_out action
+        if decision.action == "filter_out":
+            print("Triage: Event filtered out")
+            return None
+
+        # Handle route action
+        if decision.action != "route":
+            print(f"Warning: Unknown action '{decision.action}'")
+            return None
+
+        if not decision.thread_id:
+            print("Warning: No thread_id in routing decision")
+            return None
+
+        # Get the original event from first user message
+        messages = state.get("messages", [])
+        event_content = self._extract_event_content(messages)
+        if not event_content:
+            print("Warning: Could not extract event content")
+            return None
+
+        # Format message content for the task agent
+        message_content = self._format_message_for_task_agent(event_content)
+
+        # Execute routing
+        try:
+            thread_id = decision.thread_id
+
+            async with httpx.AsyncClient() as client:
+                if thread_id == "new":
+                    # Create new thread then kick off run
+                    thread_id = await self._acreate_thread(client)
+                    print(f"Triage: Created new thread {thread_id}")
+
+                # Kick off run on thread
+                await self._acreate_run(client, thread_id, message_content)
+                print(f"Triage: Kicked off run on thread {thread_id}")
+        except Exception as e:
+            print(f"Error executing routing: {e}")
+
+        return None
+
+    async def _acreate_thread(self, client: httpx.AsyncClient) -> str:
+        """Create a new thread via LangGraph API (async)."""
+        response = await client.post(
+            f"{self._api_url}/threads",
+            headers={"Content-Type": "application/json"},
+            json={},
+            timeout=30,
+        )
+        response.raise_for_status()
+        return response.json()["thread_id"]
+
+    async def _acreate_run(
+        self, client: httpx.AsyncClient, thread_id: str, message_content: str
+    ) -> None:
+        """Create a run on a thread via LangGraph API (async)."""
+        response = await client.post(
+            f"{self._api_url}/threads/{thread_id}/runs",
+            headers={"Content-Type": "application/json"},
+            json={
+                "assistant_id": "task_agent",
+                "input": {
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": message_content,
+                        }
+                    ]
+                },
+                "stream_resumable": True,
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
