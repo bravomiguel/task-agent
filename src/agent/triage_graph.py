@@ -1,14 +1,21 @@
 """triage_graph.py - lightweight triage agent for filtering incoming events."""
 
 from deepagents import create_deep_agent
-from deepagents_cli.tools import http_request, fetch_url, web_search, tavily_client
 from langchain_openai import ChatOpenAI
-from agent.middleware import ModalSandboxMiddleware, TriageRulesMiddleware, TriageContextMiddleware
+
+from agent.middleware import (
+    ModalSandboxMiddleware,
+    TriageRulesMiddleware,
+    TriageThreadsMiddleware,
+    TriageContextMiddleware,
+    TriageRouterMiddleware,
+)
 from agent.triage_prompt import TRIAGE_SYSTEM_PROMPT
+from agent.triage_schema import TriageDecision
 from agent.modal_backend import LazyModalBackend
 
-# Initialize model - GPT-5-mini for higher rate limits
-gpt_5_mini = ChatOpenAI(model="gpt-5-mini", reasoning_effort="low")
+# Initialize model
+gpt_4_1 = ChatOpenAI(model="gpt-4.1")
 
 
 def create_backend_factory():
@@ -30,25 +37,31 @@ triage_sandbox_middleware = ModalSandboxMiddleware(
 )
 
 # Triage middleware stack:
-# 1. ModalSandboxMiddleware - creates sandbox, mounts volumes
-# 2. TriageRulesMiddleware - reads /memories/triage.md into state
-# 3. TriageContextMiddleware - injects rules into system prompt
+# BEFORE_AGENT:
+#   1. ModalSandboxMiddleware - creates sandbox, mounts volumes
+#   2. TriageRulesMiddleware - reads /memories/triage.md into state
+#   3. TriageThreadsMiddleware - fetches threads, dumps active to sandbox
+#   4. TriageContextMiddleware - injects rules + thread count into prompt
+# AFTER_AGENT:
+#   5. TriageRouterMiddleware - parses decision, executes routing
 triage_middleware = [
     triage_sandbox_middleware,
     TriageRulesMiddleware(),
+    TriageThreadsMiddleware(),
     TriageContextMiddleware(),
+    TriageRouterMiddleware(),
 ]
 
-# Build tools list - same as main agent
-tools = [http_request, fetch_url]
-if tavily_client is not None:
-    tools.append(web_search)
+# No HTTP tools needed - agent only uses file tools (provided by backend)
+# for searching through pre-loaded thread files
+tools = []
 
 # Create the triage agent with backend factory
 triage_agent = create_deep_agent(
-    model=gpt_5_mini,
+    model=gpt_4_1,
     system_prompt=TRIAGE_SYSTEM_PROMPT,
     tools=tools,
     middleware=triage_middleware,
     backend=create_backend_factory(),
+    response_format=TriageDecision,
 )

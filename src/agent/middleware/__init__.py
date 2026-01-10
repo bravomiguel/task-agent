@@ -10,7 +10,9 @@ from agent.middleware.volume_commit import VolumeCommitMiddleware
 from agent.middleware.tool_description import ToolDescriptionMiddleware
 from agent.middleware.skills import SkillsMiddleware
 from agent.middleware.triage_rules import TriageRulesMiddleware
+from agent.middleware.triage_threads import TriageThreadsMiddleware
 from agent.middleware.triage_context import TriageContextMiddleware
+from agent.middleware.triage_router import TriageRouterMiddleware
 
 __all__ = [
     "ModalSandboxMiddleware",
@@ -23,5 +25,7 @@ __all__ = [
     "ToolDescriptionMiddleware",
     "SkillsMiddleware",
     "TriageRulesMiddleware",
+    "TriageThreadsMiddleware",
     "TriageContextMiddleware",
+    "TriageRouterMiddleware",
 ]
