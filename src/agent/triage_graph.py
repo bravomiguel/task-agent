@@ -3,12 +3,12 @@
 from deepagents import create_deep_agent
 from deepagents_cli.tools import http_request, fetch_url, web_search, tavily_client
 from langchain_openai import ChatOpenAI
-from agent.middleware import ModalSandboxMiddleware
+from agent.middleware import ModalSandboxMiddleware, TriageRulesMiddleware, TriageContextMiddleware
 from agent.triage_prompt import TRIAGE_SYSTEM_PROMPT
 from agent.modal_backend import LazyModalBackend
 
 # Initialize model - GPT-5-mini for higher rate limits
-gpt_5_mini = ChatOpenAI(model="gpt-5-mini")
+gpt_5_mini = ChatOpenAI(model="gpt-5-mini", reasoning_effort="low")
 
 
 def create_backend_factory():
@@ -29,9 +29,14 @@ triage_sandbox_middleware = ModalSandboxMiddleware(
     skills_volume_name="skills",  # Still need skills volume for compatibility
 )
 
-# Minimal middleware - no file operations, no titles, no reviews
+# Triage middleware stack:
+# 1. ModalSandboxMiddleware - creates sandbox, mounts volumes
+# 2. TriageRulesMiddleware - reads /memories/triage.md into state
+# 3. TriageContextMiddleware - injects rules into system prompt
 triage_middleware = [
     triage_sandbox_middleware,
+    TriageRulesMiddleware(),
+    TriageContextMiddleware(),
 ]
 
 # Build tools list - same as main agent
