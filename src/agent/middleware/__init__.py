@@ -12,7 +12,6 @@ from agent.middleware.skills import SkillsMiddleware
 from agent.middleware.triage_rules import TriageRulesMiddleware
 from agent.middleware.triage_threads import TriageThreadsMiddleware
 from agent.middleware.triage_context import TriageContextMiddleware
-from agent.middleware.triage_router import TriageRouterMiddleware
 
 __all__ = [
     "ModalSandboxMiddleware",
@@ -27,5 +26,4 @@ __all__ = [
     "TriageRulesMiddleware",
     "TriageThreadsMiddleware",
     "TriageContextMiddleware",
-    "TriageRouterMiddleware",
 ]

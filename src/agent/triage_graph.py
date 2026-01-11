@@ -8,10 +8,9 @@ from agent.middleware import (
     TriageRulesMiddleware,
     TriageThreadsMiddleware,
     TriageContextMiddleware,
-    TriageRouterMiddleware,
 )
 from agent.triage_prompt import TRIAGE_SYSTEM_PROMPT
-from agent.triage_schema import TriageDecision
+from agent.tools import route_event
 from agent.modal_backend import LazyModalBackend
 
 # Initialize model
@@ -42,19 +41,16 @@ triage_sandbox_middleware = ModalSandboxMiddleware(
 #   2. TriageRulesMiddleware - reads /memories/triage.md into state
 #   3. TriageThreadsMiddleware - fetches threads, dumps active to sandbox
 #   4. TriageContextMiddleware - injects rules + thread count into prompt
-# AFTER_AGENT:
-#   5. TriageRouterMiddleware - parses decision, executes routing
 triage_middleware = [
     triage_sandbox_middleware,
     TriageRulesMiddleware(),
     TriageThreadsMiddleware(),
     TriageContextMiddleware(),
-    TriageRouterMiddleware(),
 ]
 
-# No HTTP tools needed - agent only uses file tools (provided by backend)
-# for searching through pre-loaded thread files
-tools = []
+# route_event tool uses InjectedState to access messages
+# Agent also gets file tools (provided by backend) for searching thread files
+tools = [route_event]
 
 # Create the triage agent with backend factory
 triage_agent = create_deep_agent(
@@ -63,5 +59,4 @@ triage_agent = create_deep_agent(
     tools=tools,
     middleware=triage_middleware,
     backend=create_backend_factory(),
-    response_format=TriageDecision,
 )
