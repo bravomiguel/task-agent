@@ -63,7 +63,46 @@ class LazyModalBackend(SandboxBackendProtocol):
         # Reload before searching in /threads/ or /memories/ to see all files
         if path and (path.startswith("/threads") or path.startswith("/memories")):
             self._reload_volumes()
-        return self._get_backend().grep_raw(pattern, path, glob)
+
+        # Custom grep with better flags (copied from BaseSandbox, modified)
+        search_path = path or "."
+
+        # Build grep command with enhanced flags:
+        # -r: recursive, -H: with filename, -n: with line number
+        # -E: extended regex (| works without escaping)
+        # -i: case insensitive
+        # -I: skip binary files
+        # -s: suppress error messages
+        grep_opts = "-rHnEiIs"
+
+        # Add glob pattern if specified
+        glob_pattern = ""
+        if glob:
+            glob_pattern = f"--include='{glob}'"
+
+        # Escape pattern for shell
+        pattern_escaped = pattern.replace("'", "'\\''")
+
+        cmd = f"grep {grep_opts} {glob_pattern} -e '{pattern_escaped}' '{search_path}' 2>/dev/null || true"
+        result = self._get_backend().execute(cmd)
+
+        output = result.output.rstrip()
+        if not output:
+            return []
+
+        # Parse grep output into GrepMatch objects
+        matches = []
+        for line in output.split("\n"):
+            # Format is: path:line_number:text
+            parts = line.split(":", 2)
+            if len(parts) >= 3:
+                matches.append({
+                    "path": parts[0],
+                    "line": int(parts[1]),
+                    "text": parts[2],
+                })
+
+        return matches
 
     def glob_info(self, pattern, path="/"):
         # Reload before globbing in /threads/ or /memories/ to see all files

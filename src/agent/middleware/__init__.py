@@ -9,7 +9,7 @@ from agent.middleware.review_message import ReviewMessageMiddleware
 from agent.middleware.volume_commit import VolumeCommitMiddleware
 from agent.middleware.tool_description import ToolDescriptionMiddleware
 from agent.middleware.skills import SkillsMiddleware
-from agent.middleware.triage_rules import TriageRulesMiddleware
+from agent.middleware.triage_filter import TriageFilterMiddleware
 from agent.middleware.triage_threads import TriageThreadsMiddleware
 from agent.middleware.triage_context import TriageContextMiddleware
 
@@ -23,7 +23,7 @@ __all__ = [
     "VolumeCommitMiddleware",
     "ToolDescriptionMiddleware",
     "SkillsMiddleware",
-    "TriageRulesMiddleware",
+    "TriageFilterMiddleware",
     "TriageThreadsMiddleware",
     "TriageContextMiddleware",
 ]

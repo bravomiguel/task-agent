@@ -1,5 +1,5 @@
 """
-Modal file service for thread-specific file operations.
+Modal file service for file operations across volumes.
 Provides functions to interact with files stored in Modal Volumes.
 """
 
@@ -12,8 +12,12 @@ image = modal.Image.debian_slim().pip_install("fastapi[standard]")
 # Create Modal app
 app = modal.App("file-service", image=image)
 
-# Create or reference the threads volume
-volume = modal.Volume.from_name("threads", create_if_missing=True, version=2)
+# Create or reference volumes
+threads_volume = modal.Volume.from_name("threads", create_if_missing=True, version=2)
+memories_volume = modal.Volume.from_name("memories", create_if_missing=True)
+
+# Keep 'volume' as alias for backwards compatibility
+volume = threads_volume
 
 
 @app.function(volumes={"/threads": volume})
@@ -245,3 +249,28 @@ def get_sandbox_files(session_id: str, sandbox_id: str) -> dict:
 def health():
     """Health check endpoint"""
     return {"status": "healthy", "service": "file-service"}
+
+
+# ==================== TRIAGE OPERATIONS ====================
+
+
+@app.function(volumes={"/memories": memories_volume})
+def read_triage_rules() -> str | None:
+    """
+    Read triage rules from the memories volume.
+
+    Returns:
+        Triage rules content as string, or None if file not found
+    """
+    try:
+        memories_volume.reload()
+
+        with open("/memories/triage.md", "r") as f:
+            return f.read()
+
+    except FileNotFoundError:
+        print("Triage rules file not found: /memories/triage.md")
+        return None
+    except Exception as e:
+        print(f"Error reading triage rules: {e}")
+        return None

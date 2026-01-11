@@ -5,7 +5,7 @@ from langchain_openai import ChatOpenAI
 
 from agent.middleware import (
     ModalSandboxMiddleware,
-    TriageRulesMiddleware,
+    TriageFilterMiddleware,
     TriageThreadsMiddleware,
     TriageContextMiddleware,
 )
@@ -37,13 +37,13 @@ triage_sandbox_middleware = ModalSandboxMiddleware(
 
 # Triage middleware stack:
 # BEFORE_AGENT:
-#   1. ModalSandboxMiddleware - creates sandbox, mounts volumes
-#   2. TriageRulesMiddleware - reads /memories/triage.md into state
+#   1. TriageFilterMiddleware - reads rules from volume, LLM filter decision, may end run
+#   2. ModalSandboxMiddleware - creates sandbox (only if not filtered out)
 #   3. TriageThreadsMiddleware - fetches threads, dumps active to sandbox
-#   4. TriageContextMiddleware - injects rules + thread count into prompt
+#   4. TriageContextMiddleware - injects thread count into prompt
 triage_middleware = [
+    TriageFilterMiddleware(),
     triage_sandbox_middleware,
-    TriageRulesMiddleware(),
     TriageThreadsMiddleware(),
     TriageContextMiddleware(),
 ]

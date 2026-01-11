@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import re
-from typing import Annotated, Literal
+from typing import Annotated
 
 import httpx
 from langchain_core.tools import tool
@@ -47,36 +47,25 @@ def _format_message_for_task_agent(event_content: str) -> str:
 
 @tool
 def route_event(
-    action: Literal["filter_out", "route"],
-    thread_id: str | None = None,
+    thread_id: str,
     state: Annotated[dict, InjectedState] = None,
 ) -> str:
-    """Route the incoming event based on your triage decision.
+    """Route the incoming event to a thread and start the task agent.
 
-    Call this tool when you have made your final decision about the event.
+    Call this tool when you have decided which thread to route the event to.
     The tool will execute the routing and return success or an error message.
     If you get an error, you may retry up to 2 more times.
 
     Args:
-        action: 'filter_out' to discard the event, 'route' to send to a thread
-        thread_id: Required if action is 'route'. Use 'new' for a new thread,
-                  or provide an existing thread UUID.
+        thread_id: Use 'new' for a new thread, or provide an existing thread UUID.
 
     Returns:
         Success message with details, or error message if something went wrong.
     """
     api_url = LANGGRAPH_API_URL
 
-    # Handle filter_out action
-    if action == "filter_out":
-        return "Success: Event filtered out. No further action needed."
-
-    # Validate route action
-    if action != "route":
-        return f"Error: Unknown action '{action}'. Use 'filter_out' or 'route'."
-
     if not thread_id:
-        return "Error: thread_id is required when action is 'route'. Use 'new' or an existing thread UUID."
+        return "Error: thread_id is required. Use 'new' or an existing thread UUID."
 
     # Extract event content from messages in state
     messages = state.get("messages", []) if state else []
