@@ -16,9 +16,7 @@ If there are **0 active threads**, skip to Step 2 and route to a new thread.
 
 Search for a relevant match:
 
-- Use `grep` to search for threads containing key terms from the event. Grep is case-insensitive and supports regex (`|` for OR, `.*` for wildcards). Extract 3-5 distinctive keywords and combine them. Examples:
-  - `grep("venezuela|report|q4", "/workspace/threads/")`
-  - `grep("invoice.*overdue|payment", "/workspace/threads/")`
+- Use `grep` to search for threads containing key content-specific words from the event. Grep is case-insensitive and supports regex (`|` for OR, `.*` for wildcards). 
 - For promising matches, use `read_file(path, limit=100)` to scan first
 - Use `read_file(path, offset=100, limit=100)` to continue reading if needed
 - Don't read every thread - search first, then read candidates

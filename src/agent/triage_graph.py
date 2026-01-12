@@ -14,7 +14,7 @@ from agent.tools import route_event
 from agent.modal_backend import LazyModalBackend
 
 # Initialize model
-gpt_4_1 = ChatOpenAI(model="gpt-4.1")
+gpt_5_mini = ChatOpenAI(model="gpt-5-mini")
 
 
 def create_backend_factory():
@@ -54,7 +54,7 @@ tools = [route_event]
 
 # Create the triage agent with backend factory
 triage_agent = create_deep_agent(
-    model=gpt_4_1,
+    model=gpt_5_mini,
     system_prompt=TRIAGE_SYSTEM_PROMPT,
     tools=tools,
     middleware=triage_middleware,
