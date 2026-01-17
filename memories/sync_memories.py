@@ -11,7 +11,7 @@ Or with modal run:
 import modal
 from pathlib import Path
 
-MEMORIES_DIR = Path(__file__).parent / "memories"
+MEMORIES_DIR = Path(__file__).parent
 VOLUME_NAME = "memories"
 
 app = modal.App("memories-sync")
@@ -61,8 +61,10 @@ def main():
     memories_data: dict[str, bytes] = {}
 
     for file_path in MEMORIES_DIR.rglob("*"):
-        # Skip __pycache__ directories
+        # Skip __pycache__ directories and .py files (sync script itself)
         if "__pycache__" in file_path.parts:
+            continue
+        if file_path.suffix == ".py":
             continue
 
         if file_path.is_file():

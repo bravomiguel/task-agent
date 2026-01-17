@@ -110,7 +110,7 @@ class TriageFilterMiddleware(AgentMiddleware[TriageFilterState, Any]):
             print("Warning: No triage rules found, continuing to agent")
             return None
 
-        # Extract event content from messages
+        # Get event content from messages
         messages = state.get("messages", [])
         event_content = self._extract_event_content(messages)
         if not event_content:

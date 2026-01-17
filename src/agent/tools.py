@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import re
 from typing import Annotated
 
 import httpx
@@ -14,8 +13,9 @@ from langgraph.prebuilt import InjectedState
 LANGGRAPH_API_URL = os.getenv("LANGGRAPH_API_URL", "http://localhost:2024")
 
 
-def _extract_event_content(messages: list) -> str | None:
-    """Extract the original event from the first user message."""
+def _extract_event_content(state: dict) -> str | None:
+    """Extract event content from the first user message."""
+    messages = state.get("messages", [])
     for msg in messages:
         msg_type = getattr(msg, "type", None) or (
             msg.get("type") if isinstance(msg, dict) else None
@@ -30,19 +30,6 @@ def _extract_event_content(messages: list) -> str | None:
             )
             return content
     return None
-
-
-def _format_message_for_task_agent(event_content: str) -> str:
-    """Format the event content for the task agent."""
-    from_match = re.search(r"<from>(.*?)</from>", event_content, re.DOTALL)
-    subject_match = re.search(r"<subject>(.*?)</subject>", event_content, re.DOTALL)
-    body_match = re.search(r"<body>(.*?)</body>", event_content, re.DOTALL)
-
-    from_addr = from_match.group(1).strip() if from_match else "Unknown"
-    subject = subject_match.group(1).strip() if subject_match else "No subject"
-    body = body_match.group(1).strip() if body_match else event_content
-
-    return f"New task from email:\n\nFrom: {from_addr}\nSubject: {subject}\n\n{body}"
 
 
 @tool
@@ -67,14 +54,10 @@ def route_event(
     if not thread_id:
         return "Error: thread_id is required. Use 'new' or an existing thread UUID."
 
-    # Extract event content from messages in state
-    messages = state.get("messages", []) if state else []
-    event_content = _extract_event_content(messages)
+    # Extract event content from messages (raw XML)
+    event_content = _extract_event_content(state) if state else None
     if not event_content:
         return "Error: Could not extract event content from messages."
-
-    # Format message for task agent
-    message_content = _format_message_for_task_agent(event_content)
 
     # Execute routing
     try:
@@ -91,13 +74,13 @@ def route_event(
             response.raise_for_status()
             target_thread_id = response.json()["thread_id"]
 
-        # Create run on thread
+        # Create run on thread with event content
         response = httpx.post(
             f"{api_url}/threads/{target_thread_id}/runs",
             headers={"Content-Type": "application/json"},
             json={
                 "assistant_id": "task_agent",
-                "input": {"messages": [{"role": "user", "content": message_content}]},
+                "input": {"messages": [{"role": "user", "content": event_content}]},
                 "stream_resumable": True,
             },
             timeout=30,
