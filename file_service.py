@@ -102,6 +102,47 @@ def read_file(session_id: str, file_path: str) -> dict:
 
 
 @app.function(volumes={"/threads": volume})
+def read_file_bytes(session_id: str, file_path: str) -> dict:
+    """
+    Read file content as base64-encoded bytes from a thread's folder.
+    Used for binary files like docx, xlsx, pptx, pdf.
+
+    Args:
+        session_id: Thread/session ID
+        file_path: Path to file relative to session folder
+
+    Returns:
+        Dictionary with 'content_b64' (base64 encoded content) and 'mime' (MIME type)
+    """
+    import base64
+    import mimetypes
+
+    try:
+        # Reload volume to get latest changes
+        volume.reload()
+
+        # Read the file as bytes
+        full_path = f"/{session_id}/{file_path}"
+        content_bytes = b"".join(volume.read_file(full_path))
+
+        # Encode as base64
+        content_b64 = base64.b64encode(content_bytes).decode('ascii')
+
+        # Determine MIME type
+        mime_type, _ = mimetypes.guess_type(file_path)
+        if mime_type is None:
+            mime_type = "application/octet-stream"
+
+        return {"content_b64": content_b64, "mime": mime_type}
+
+    except FileNotFoundError:
+        raise FileNotFoundError(f"File not found: {file_path}")
+    except Exception as e:
+        print(f"Error reading file bytes {file_path} for session {session_id}: {e}")
+        raise
+
+
+@app.function(volumes={"/threads": volume})
 def update_file(session_id: str, file_path: str, content: str) -> dict:
     """
     Update or create a file in a thread's folder.
