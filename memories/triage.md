@@ -18,7 +18,6 @@ Filter incoming events (emails and chat messages) to find actionable tasks.
 - Status updates with no action needed ("just FYI", "heads up")
 
 ### Meetings
-- Very short meetings (<1-2 minutes)
 - Solo recordings with no action items discussed
 - Meetings where you were just listening (no tasks assigned to you)
 - Casual catch-ups with no follow-ups or decisions
