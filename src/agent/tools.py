@@ -35,6 +35,7 @@ def _extract_event_content(state: dict) -> str | None:
 @tool
 def route_event(
     thread_id: str,
+    task_instruction: str = None,
     state: Annotated[dict, InjectedState] = None,
 ) -> str:
     """Route the incoming event to a thread and start the task agent.
@@ -45,6 +46,9 @@ def route_event(
 
     Args:
         thread_id: Use 'new' for a new thread, or provide an existing thread UUID.
+        task_instruction: Optional brief instruction for the task agent when you want
+            it to focus on a specific part of the event. Omit when the task agent
+            should process the entire event.
 
     Returns:
         Success message with details, or error message if something went wrong.
@@ -58,6 +62,12 @@ def route_event(
     event_content = _extract_event_content(state) if state else None
     if not event_content:
         return "Error: Could not extract event content from messages."
+
+    # Build user message: instruction (if provided) + event XML
+    if task_instruction:
+        user_message = f"{task_instruction}\n\n{event_content}"
+    else:
+        user_message = event_content
 
     # Execute routing
     try:
@@ -74,13 +84,13 @@ def route_event(
             response.raise_for_status()
             target_thread_id = response.json()["thread_id"]
 
-        # Create run on thread with event content
+        # Create run on thread with user message
         response = httpx.post(
             f"{api_url}/threads/{target_thread_id}/runs",
             headers={"Content-Type": "application/json"},
             json={
                 "assistant_id": "task_agent",
-                "input": {"messages": [{"role": "user", "content": event_content}]},
+                "input": {"messages": [{"role": "user", "content": user_message}]},
                 "stream_resumable": True,
             },
             timeout=30,
