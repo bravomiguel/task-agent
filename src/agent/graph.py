@@ -6,6 +6,7 @@ from langchain.chat_models import init_chat_model
 from langchain_openai import ChatOpenAI
 from agent.middleware import (
     ModalSandboxMiddleware,
+    MoveUploadsMiddleware,
     DynamicContextMiddleware,
     ReviewMessageMiddleware,
     ThreadTitleMiddleware,
@@ -40,6 +41,7 @@ modal_sandbox_middleware = ModalSandboxMiddleware()
 
 agent_middleware = [
     modal_sandbox_middleware,
+    MoveUploadsMiddleware(),  # Move temp uploads before agent runs
     DynamicContextMiddleware(),
     SkillsMiddleware(),
     ToolDescriptionMiddleware(),

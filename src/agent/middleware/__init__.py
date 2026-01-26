@@ -1,6 +1,7 @@
 """Middleware package for agent middleware components."""
 
 from agent.middleware.modal_sandbox import ModalSandboxMiddleware
+from agent.middleware.move_uploads import MoveUploadsMiddleware
 from agent.middleware.dynamic_context import DynamicContextMiddleware
 from agent.middleware.thread_title import ThreadTitleMiddleware
 from agent.middleware.is_done import IsDoneMiddleware
@@ -15,6 +16,7 @@ from agent.middleware.triage_context import TriageContextMiddleware
 
 __all__ = [
     "ModalSandboxMiddleware",
+    "MoveUploadsMiddleware",
     "DynamicContextMiddleware",
     "ThreadTitleMiddleware",
     "IsDoneMiddleware",

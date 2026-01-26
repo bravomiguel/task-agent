@@ -174,6 +174,99 @@ def update_file(session_id: str, file_path: str, content: str) -> dict:
 
 
 @app.function(volumes={"/threads": volume})
+def upload_file_bytes(session_id: str, filename: str, content_b64: str) -> dict:
+    """
+    Upload a binary file to a thread's uploads folder.
+
+    Args:
+        session_id: Thread/session ID
+        filename: Name of the file to create
+        content_b64: Base64-encoded file content
+
+    Returns:
+        Dictionary with 'success' boolean and file metadata
+    """
+    import base64
+    import io
+    import mimetypes
+
+    try:
+        # Decode base64 content
+        content_bytes = base64.b64decode(content_b64)
+
+        # Upload to uploads subfolder
+        full_path = f"/{session_id}/uploads/{filename}"
+        with volume.batch_upload(force=True) as batch:
+            batch.put_file(
+                io.BytesIO(content_bytes),
+                full_path
+            )
+
+        # Determine MIME type
+        mime_type, _ = mimetypes.guess_type(filename)
+        if mime_type is None:
+            mime_type = "application/octet-stream"
+
+        return {
+            "success": True,
+            "path": f"uploads/{filename}",
+            "size": len(content_bytes),
+            "mimeType": mime_type,
+        }
+
+    except Exception as e:
+        print(f"Error uploading file {filename} for session {session_id}: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@app.function(volumes={"/threads": volume})
+def upload_temp_file(temp_id: str, filename: str, content_b64: str) -> dict:
+    """
+    Upload a binary file to temporary uploads staging area.
+    Files here will be moved to the actual thread folder by middleware when the run starts.
+
+    Args:
+        temp_id: Temporary session ID (client-generated UUID)
+        filename: Name of the file to create
+        content_b64: Base64-encoded file content
+
+    Returns:
+        Dictionary with 'success' boolean and file metadata
+    """
+    import base64
+    import io
+    import mimetypes
+
+    try:
+        # Decode base64 content
+        content_bytes = base64.b64decode(content_b64)
+
+        # Upload to temp-uploads staging folder
+        full_path = f"/temp-uploads/{temp_id}/{filename}"
+        with volume.batch_upload(force=True) as batch:
+            batch.put_file(
+                io.BytesIO(content_bytes),
+                full_path
+            )
+
+        # Determine MIME type
+        mime_type, _ = mimetypes.guess_type(filename)
+        if mime_type is None:
+            mime_type = "application/octet-stream"
+
+        return {
+            "success": True,
+            "path": f"temp-uploads/{temp_id}/{filename}",
+            "size": len(content_bytes),
+            "mimeType": mime_type,
+        }
+
+    except Exception as e:
+        print(f"Error uploading temp file {filename} for temp_id {temp_id}: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@app.function(volumes={"/threads": volume})
 def delete_file(session_id: str, file_path: str, sandbox_id: str = None) -> dict:
     """
     Delete a file from a thread's folder.

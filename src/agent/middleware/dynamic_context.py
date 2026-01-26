@@ -31,7 +31,7 @@ class DynamicContextMiddleware(AgentMiddleware[ModalSandboxState, Any]):
             dynamic_context += (
                 f"\n\n### Current Thread\n"
                 f"Your thread ID is `{thread_id}`. "
-                f"Save user-requested files to `/threads/{thread_id}/`."
+                f"Save user-requested files to `/threads/{thread_id}/outputs/`."
             )
 
         # Add Google Drive access token if available
@@ -65,7 +65,7 @@ class DynamicContextMiddleware(AgentMiddleware[ModalSandboxState, Any]):
             dynamic_context += (
                 f"\n\n### Current Thread\n"
                 f"Your thread ID is `{thread_id}`. "
-                f"Save user-requested files to `/threads/{thread_id}/`."
+                f"Save user-requested files to `/threads/{thread_id}/outputs/`."
             )
 
         # Add Google Drive access token if available
