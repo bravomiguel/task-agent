@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import mimetypes
 import os
 from typing import Annotated
 
@@ -11,6 +12,37 @@ from langgraph.prebuilt import InjectedState
 
 
 LANGGRAPH_API_URL = os.getenv("LANGGRAPH_API_URL", "http://localhost:2024")
+
+
+def _get_mime_type(filepath: str) -> str:
+    """Get MIME type from file extension."""
+    mime_type, _ = mimetypes.guess_type(filepath)
+    return mime_type or "application/octet-stream"
+
+
+@tool
+def present_file(filepath: str) -> str:
+    """Present a file to the user in the document viewer.
+
+    Call this tool after creating or modifying a file that the user should see.
+    The file will automatically open in the user's document viewer.
+
+    Args:
+        filepath: Relative path to the file (e.g., "outputs/report.md").
+                  Must be a file in the outputs/ directory.
+
+    Returns:
+        XML with file metadata for frontend rendering.
+    """
+    # Extract filename from path
+    name = os.path.basename(filepath)
+    mime_type = _get_mime_type(filepath)
+
+    return f"""<presented_file>
+<file_path>{filepath}</file_path>
+<name>{name}</name>
+<mime_type>{mime_type}</mime_type>
+</presented_file>"""
 
 
 def _extract_event_content(state: dict) -> str | None:

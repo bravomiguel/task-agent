@@ -43,6 +43,11 @@ For LONGER tasks:
 - User explicitly asks to see or access a file
 - Any deliverable the user will want to reference later
 
+**CRITICAL - Presenting Files to Users:**
+After saving a file to `/threads/{thread_id}/outputs/`, you MUST call `present_file` with the relative path (e.g., `present_file(filepath="outputs/report.md")`). This opens the file in the user's document viewer. Without this step, users won't see the file you created.
+
+After calling `present_file`, give a brief summary (1-2 sentences) of what you created. Do NOT write lengthy explanations of what's in the document - the user can see it themselves.
+
 **When user attaches files:**
 - Files appear in `/threads/{thread_id}/uploads/`
 - Check `ls /threads/{thread_id}/uploads/` to see attached files
