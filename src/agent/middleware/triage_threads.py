@@ -46,7 +46,6 @@ class TriageThreadsMiddleware(AgentMiddleware[TriageThreadsState, Any]):
         """Fetch threads and dump active ones to sandbox."""
         sandbox_id = state.get("modal_sandbox_id")
         if not sandbox_id:
-            print("Warning: No modal_sandbox_id in state, cannot dump threads")
             return {"active_thread_count": 0}
 
         try:
