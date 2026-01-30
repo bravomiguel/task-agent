@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import mimetypes
 import os
-from typing import Annotated
+from typing import Annotated, Literal
 
 import httpx
 from langchain_core.tools import tool
 from langgraph.prebuilt import InjectedState
-
 
 LANGGRAPH_API_URL = os.getenv("LANGGRAPH_API_URL", "http://localhost:2024")
 
@@ -142,3 +141,82 @@ def route_event(
         return f"Error: API returned status {e.response.status_code}. Details: {e.response.text}"
     except Exception as e:
         return f"Error: Unexpected error during routing: {e}"
+
+
+NEXTJS_API_URL = os.getenv("NEXTJS_API_URL", "http://localhost:3000")
+
+
+@tool
+def view_image(
+    filepath: str,
+    detail: Literal["high", "low", "auto"] = "high",
+    state: Annotated[dict, InjectedState] = None,
+) -> list[dict]:
+    """View and analyze an image file.
+
+    Call this tool when you need to visually examine an image to understand its
+    contents, extract information, or answer questions about it. The image will
+    be processed and returned for your visual analysis.
+
+    Args:
+        filepath: Path to the image file (e.g., "uploads/screenshot.png").
+        detail: Level of detail for analysis. Use "high" for detailed analysis
+                of complex images, "low" for simple/quick viewing, "auto" to
+                let the system decide.
+
+    Returns:
+        Image content block that you can analyze visually.
+    """
+    if state is None:
+        return [{"type": "text", "text": "Error: Could not access state."}]
+
+    thread_id = state.get("thread_id")
+    if thread_id is None:
+        return [{"type": "text", "text": "Error: Thread ID not available."}]
+
+    # Normalize filepath to relative path (strip /threads/{id}/ prefix if present)
+    normalized_path = filepath
+    if filepath.startswith("/threads/"):
+        parts = filepath.split("/", 3)  # ['', 'threads', 'id', 'uploads/file.png']
+        if len(parts) >= 4:
+            normalized_path = parts[3]
+    elif filepath.startswith("threads/"):
+        parts = filepath.split("/", 2)  # ['threads', 'id', 'uploads/file.png']
+        if len(parts) >= 3:
+            normalized_path = parts[2]
+
+    try:
+        # Call the Next.js API to get image base64
+        response = httpx.get(
+            f"{NEXTJS_API_URL}/api/images/base64",
+            params={
+                "thread_id": thread_id,
+                "path": normalized_path,
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+
+        data = response.json()
+        b64_data = data.get("base64")
+        mime_type = data.get("mime", "image/png")
+
+        if not b64_data:
+            return [{"type": "text", "text": "Error: Failed to get image"}]
+
+        # Return in OpenAI vision format
+        return [
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{mime_type};base64,{b64_data}",
+                    "detail": detail,
+                },
+            }
+        ]
+
+    except httpx.HTTPStatusError as e:
+        error_detail = e.response.text
+        return [{"type": "text", "text": f"Error processing image: {error_detail}"}]
+    except Exception as e:
+        return [{"type": "text", "text": f"Error viewing image: {e}"}]

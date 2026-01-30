@@ -4,7 +4,7 @@ from deepagents import create_deep_agent
 from deepagents_cli.tools import http_request, fetch_url, web_search, tavily_client
 from langchain.chat_models import init_chat_model
 from langchain_openai import ChatOpenAI
-from agent.tools import present_file
+from agent.tools import present_file, view_image
 from agent.middleware import (
     ModalSandboxMiddleware,
     MoveUploadsMiddleware,
@@ -22,7 +22,12 @@ from agent.system_prompt import SYSTEM_PROMPT
 from agent.modal_backend import LazyModalBackend
 
 # Initialize models
-gpt_5_1 = ChatOpenAI(model="gpt-5.1", reasoning_effort="low")
+gpt_5_1 = ChatOpenAI(
+    model="gpt-5.1",
+    reasoning_effort="low",
+    use_responses_api=True,
+    output_version="responses/v1",
+)
 gpt_4_1_mini = init_chat_model(model="openai:gpt-4.1-mini", disable_streaming=True)
 
 
@@ -56,7 +61,7 @@ agent_middleware = [
 ]
 
 # Build tools list - conditionally include web_search if Tavily is available
-tools = [http_request, fetch_url, present_file]
+tools = [http_request, fetch_url, present_file, view_image]
 if tavily_client is not None:
     tools.append(web_search)
 
