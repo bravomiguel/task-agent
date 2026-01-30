@@ -1,4 +1,4 @@
-"""Volume commit middleware for persisting file changes."""
+"""Volume sync middleware for persisting and refreshing file changes."""
 
 from __future__ import annotations
 
@@ -9,12 +9,18 @@ from langchain.agents.middleware import AgentMiddleware
 
 from agent.middleware.modal_sandbox import ModalSandboxState
 
+# Tools that read from the filesystem
+READ_TOOLS = {"ls", "read_file", "view_image", "glob", "grep"}
 
-class VolumeCommitMiddleware(AgentMiddleware[ModalSandboxState, Any]):
-    """Middleware that commits Modal volume after file write operations.
+# Tools that write to the filesystem
+WRITE_TOOLS = {"write_file", "edit_file"}
 
-    Ensures files written by write_file, edit_file, or execute tools are
-    immediately persisted to the Modal Volume before returning to the agent.
+
+class VolumeSyncMiddleware(AgentMiddleware[ModalSandboxState, Any]):
+    """Middleware that syncs Modal volume before reads and after writes.
+
+    - Reloads volume before read operations to see files from other processes
+    - Commits volume after write operations to persist changes for other processes
     """
 
     state_schema = ModalSandboxState
@@ -23,23 +29,34 @@ class VolumeCommitMiddleware(AgentMiddleware[ModalSandboxState, Any]):
         super().__init__()
         self._volume_name = volume_name
 
+    def _get_volume(self) -> modal.Volume:
+        """Get the Modal volume instance."""
+        return modal.Volume.from_name(self._volume_name, version=2)
+
     def wrap_tool_call(
         self,
         request: Any,  # ToolCallRequest
         handler: Callable[[Any], Any],  # Callable[[ToolCallRequest], ToolCallResponse]
     ) -> Any:  # ToolCallResponse
-        """Commit volume after file write operations."""
-        # Execute the tool
-        response = handler(request)
-
-        # Get tool name and thread_id from request
+        """Sync volume before reads and after writes."""
         tool_name = request.tool.name if hasattr(request, 'tool') else None
         thread_id = request.state.get("thread_id") if hasattr(request, 'state') else None
 
-        # Commit volume if tool is file-related
-        if tool_name in ["write_file", "edit_file"]:
+        # PRE-TOOL: Reload before read operations
+        if tool_name in READ_TOOLS:
             try:
-                volume = modal.Volume.from_name(self._volume_name, version=2)
+                volume = self._get_volume()
+                volume.reload()
+            except Exception as e:
+                print(f"Warning: Failed to reload volume before {tool_name}: {e}")
+
+        # Execute the tool
+        response = handler(request)
+
+        # POST-TOOL: Commit after write operations
+        if tool_name in WRITE_TOOLS:
+            try:
+                volume = self._get_volume()
                 volume.commit()
             except Exception as e:
                 print(f"Warning: Failed to commit volume after {tool_name}: {e}")
@@ -51,7 +68,7 @@ class VolumeCommitMiddleware(AgentMiddleware[ModalSandboxState, Any]):
 
             if isinstance(command, str) and f"/threads/{thread_id}/" in command:
                 try:
-                    volume = modal.Volume.from_name(self._volume_name, version=2)
+                    volume = self._get_volume()
                     volume.commit()
                 except Exception as e:
                     print(f"Warning: Failed to commit volume after execute: {e}")
@@ -63,18 +80,25 @@ class VolumeCommitMiddleware(AgentMiddleware[ModalSandboxState, Any]):
         request: Any,  # ToolCallRequest
         handler: Callable[[Any], Awaitable[Any]],  # Callable[[ToolCallRequest], Awaitable[ToolCallResponse]]
     ) -> Any:  # ToolCallResponse
-        """Async version: Commit volume after file write operations."""
-        # Execute the tool
-        response = await handler(request)
-
-        # Get tool name and thread_id from request
+        """Async version: Sync volume before reads and after writes."""
         tool_name = request.tool.name if hasattr(request, 'tool') else None
         thread_id = request.state.get("thread_id") if hasattr(request, 'state') else None
 
-        # Commit volume if tool is file-related
-        if tool_name in ["write_file", "edit_file"]:
+        # PRE-TOOL: Reload before read operations
+        if tool_name in READ_TOOLS:
             try:
-                volume = modal.Volume.from_name(self._volume_name, version=2)
+                volume = self._get_volume()
+                volume.reload()
+            except Exception as e:
+                print(f"Warning: Failed to reload volume before {tool_name}: {e}")
+
+        # Execute the tool
+        response = await handler(request)
+
+        # POST-TOOL: Commit after write operations
+        if tool_name in WRITE_TOOLS:
+            try:
+                volume = self._get_volume()
                 volume.commit()
             except Exception as e:
                 print(f"Warning: Failed to commit volume after {tool_name}: {e}")
@@ -86,9 +110,11 @@ class VolumeCommitMiddleware(AgentMiddleware[ModalSandboxState, Any]):
 
             if isinstance(command, str) and f"/threads/{thread_id}/" in command:
                 try:
-                    volume = modal.Volume.from_name(self._volume_name, version=2)
+                    volume = self._get_volume()
                     volume.commit()
                 except Exception as e:
                     print(f"Warning: Failed to commit volume after execute: {e}")
 
         return response
+
+
