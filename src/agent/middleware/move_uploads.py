@@ -29,25 +29,16 @@ class MoveUploadsMiddleware(AgentMiddleware[ModalSandboxState, Any]):
 
         # Get temp_uploads_id from config
         config = var_child_runnable_config.get()
-        print(f"[MoveUploadsMiddleware] config: {config}")
-
         if not config:
-            print("[MoveUploadsMiddleware] No config found, skipping")
             return None
 
         configurable = config.get("configurable", {})
-        print(f"[MoveUploadsMiddleware] configurable: {configurable}")
-
         temp_uploads_id = configurable.get("temp_uploads_id")
-        print(f"[MoveUploadsMiddleware] temp_uploads_id: {temp_uploads_id}")
-
         if not temp_uploads_id:
-            print("[MoveUploadsMiddleware] No temp_uploads_id, skipping")
             return None  # No temp uploads to move
 
         thread_id = state.get("thread_id")
         sandbox_id = state.get("modal_sandbox_id")
-        print(f"[MoveUploadsMiddleware] thread_id: {thread_id}, sandbox_id: {sandbox_id}")
 
         if not thread_id or not sandbox_id:
             print("Warning: Cannot move uploads - missing thread_id or sandbox_id")
