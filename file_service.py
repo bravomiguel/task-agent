@@ -14,7 +14,7 @@ app = modal.App("file-service", image=image)
 
 # Create or reference volumes
 threads_volume = modal.Volume.from_name("threads", create_if_missing=True, version=2)
-memories_volume = modal.Volume.from_name("memories", create_if_missing=True)
+memories_volume = modal.Volume.from_name("memories", create_if_missing=True, version=2)
 
 # Keep 'volume' as alias for backwards compatibility
 volume = threads_volume
@@ -309,8 +309,9 @@ def delete_file(session_id: str, file_path: str, sandbox_id: str = None) -> dict
         process.wait()
 
         if process.returncode == 0:
-            # Commit the volume to persist deletion
-            volume.commit()
+            # Sync volume from within sandbox to persist deletion
+            sync_process = sb.exec("sync", "/threads", timeout=30)
+            sync_process.wait()
 
             # Terminate temporary sandbox if we created one
             if not sandbox_id:

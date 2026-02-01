@@ -8,7 +8,6 @@ from agent.middleware.thread_title import ThreadTitleMiddleware
 from agent.middleware.is_done import IsDoneMiddleware
 from agent.middleware.open_file_path import OpenFilePathMiddleware
 from agent.middleware.review_message import ReviewMessageMiddleware
-from agent.middleware.volume_sync import VolumeSyncMiddleware
 from agent.middleware.tool_description import ToolDescriptionMiddleware
 from agent.middleware.skills import SkillsMiddleware
 from agent.middleware.triage_filter import TriageFilterMiddleware
@@ -24,7 +23,6 @@ __all__ = [
     "IsDoneMiddleware",
     "OpenFilePathMiddleware",
     "ReviewMessageMiddleware",
-    "VolumeSyncMiddleware",
     "ToolDescriptionMiddleware",
     "SkillsMiddleware",
     "TriageFilterMiddleware",

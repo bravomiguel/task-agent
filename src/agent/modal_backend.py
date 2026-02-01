@@ -38,6 +38,15 @@ class LazyModalBackend(SandboxBackendProtocol):
         """Reload all mounted volumes in the sandbox to see latest changes."""
         self._get_sandbox().reload_volumes()
 
+    def _sync_volume(self, mount_path: str):
+        """Sync a volume to persist changes for other processes.
+
+        Uses the `sync` command inside the sandbox which forces an immediate
+        commit of all pending writes to the distributed storage.
+        """
+        process = self._get_sandbox().exec("sync", mount_path, timeout=30)
+        process.wait()
+
     # Implement SandboxBackendProtocol methods by delegation
     def ls_info(self, path):
         # Reload before listing /threads/ or /memories/ to see all files
@@ -52,12 +61,22 @@ class LazyModalBackend(SandboxBackendProtocol):
         return self._get_backend().read(file_path, offset, limit)
 
     def write(self, file_path, content):
-        # Modal runs background commits every few seconds automatically
-        return self._get_backend().write(file_path, content)
+        result = self._get_backend().write(file_path, content)
+        # Sync volume to persist changes immediately for other processes
+        if file_path.startswith("/threads"):
+            self._sync_volume("/threads")
+        elif file_path.startswith("/memories"):
+            self._sync_volume("/memories")
+        return result
 
     def edit(self, file_path, old_string, new_string, replace_all=False):
-        # Modal runs background commits every few seconds automatically
-        return self._get_backend().edit(file_path, old_string, new_string, replace_all)
+        result = self._get_backend().edit(file_path, old_string, new_string, replace_all)
+        # Sync volume to persist changes immediately for other processes
+        if file_path.startswith("/threads"):
+            self._sync_volume("/threads")
+        elif file_path.startswith("/memories"):
+            self._sync_volume("/memories")
+        return result
 
     def grep_raw(self, pattern, path=None, glob=None):
         # Reload before searching in /threads/ or /memories/ to see all files
@@ -111,7 +130,19 @@ class LazyModalBackend(SandboxBackendProtocol):
         return self._get_backend().glob_info(pattern, path)
 
     def execute(self, command):
-        return self._get_backend().execute(command)
+        # Reload volumes before execute if command references them (might read)
+        if "/threads" in command or "/memories" in command:
+            self._reload_volumes()
+
+        result = self._get_backend().execute(command)
+
+        # Sync volumes after execute if command references them (might write)
+        if "/threads" in command:
+            self._sync_volume("/threads")
+        if "/memories" in command:
+            self._sync_volume("/memories")
+
+        return result
 
     @property
     def id(self):

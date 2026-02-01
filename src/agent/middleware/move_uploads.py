@@ -82,9 +82,9 @@ class MoveUploadsMiddleware(AgentMiddleware[ModalSandboxState, Any]):
                 )
                 rmdir_process.wait()
 
-                # Commit volume to persist changes
-                thread_volume = modal.Volume.from_name("threads")
-                thread_volume.commit()
+                # Sync volume to persist changes for other processes
+                sync_process = sandbox.exec("sync", "/threads", timeout=30)
+                sync_process.wait()
 
                 print(f"Moved uploads from temp-uploads/{temp_uploads_id} to {thread_id}/uploads/")
             else:
