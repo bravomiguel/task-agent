@@ -192,6 +192,7 @@ def view_image(
             params={
                 "thread_id": thread_id,
                 "path": normalized_path,
+                "detail": detail,
             },
             timeout=30,
         )
