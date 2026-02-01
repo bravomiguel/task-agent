@@ -8,6 +8,26 @@ from langchain.agents.middleware import AgentMiddleware, AgentState
 from langgraph.runtime import Runtime
 
 
+def _sanitize_content(content: Any) -> str:
+    """Sanitize message content by redacting image data."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict):
+                if block.get("type") == "image_url":
+                    parts.append("[image]")
+                elif block.get("type") == "text":
+                    parts.append(block.get("text", ""))
+                else:
+                    parts.append(str(block))
+            else:
+                parts.append(str(block))
+        return " ".join(parts)
+    return str(content)
+
+
 class ReviewState(AgentState):
     review_message: NotRequired[str]
 
@@ -30,7 +50,7 @@ class ReviewMessageMiddleware(AgentMiddleware[ReviewState]):
         # Get last 5 messages for context
         recent_messages = messages[-5:]
         messages_text = "\n\n".join([
-            f"{msg.__class__.__name__}: {msg.content}"
+            f"{msg.__class__.__name__}: {_sanitize_content(msg.content)}"
             for msg in recent_messages
         ])
 
@@ -59,7 +79,7 @@ class ReviewMessageMiddleware(AgentMiddleware[ReviewState]):
         # Get last 5 messages for context
         recent_messages = messages[-5:]
         messages_text = "\n\n".join([
-            f"{msg.__class__.__name__}: {msg.content}"
+            f"{msg.__class__.__name__}: {_sanitize_content(msg.content)}"
             for msg in recent_messages
         ])
 
