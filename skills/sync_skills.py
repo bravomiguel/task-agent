@@ -12,15 +12,15 @@ import modal
 from pathlib import Path
 
 SKILLS_DIR = Path(__file__).parent
-VOLUME_NAME = "skills"
+VOLUME_NAME = "user-default-user"
 
 app = modal.App("skills-sync")
-skills_volume = modal.Volume.from_name(VOLUME_NAME, create_if_missing=True, version=2)
+user_volume = modal.Volume.from_name(VOLUME_NAME, create_if_missing=True, version=2)
 
 
 @app.function(
     image=modal.Image.debian_slim(),
-    volumes={"/skills": skills_volume},
+    volumes={"/default-user": user_volume},
     timeout=300,
 )
 def sync_skills(skills_data: dict[str, dict[str, bytes]]):
@@ -32,8 +32,12 @@ def sync_skills(skills_data: dict[str, dict[str, bytes]]):
     import os
     import shutil
 
+    # Ensure skills directory exists
+    skills_path = Path("/default-user/skills")
+    skills_path.mkdir(parents=True, exist_ok=True)
+
     # Clear existing skills
-    for item in Path("/skills").iterdir():
+    for item in skills_path.iterdir():
         if item.is_dir():
             shutil.rmtree(item)
         else:
@@ -41,17 +45,17 @@ def sync_skills(skills_data: dict[str, dict[str, bytes]]):
 
     # Write new skills
     for skill_name, files in skills_data.items():
-        skill_dir = Path("/skills") / skill_name
+        skill_dir = skills_path / skill_name
         skill_dir.mkdir(parents=True, exist_ok=True)
 
         for filename, content in files.items():
             file_path = skill_dir / filename
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_bytes(content)
-            print(f"  Wrote: /skills/{skill_name}/{filename}")
+            print(f"  Wrote: /default-user/skills/{skill_name}/{filename}")
 
     # Commit the volume
-    skills_volume.commit()
+    user_volume.commit()
     print(f"\nSynced {len(skills_data)} skills to volume '{VOLUME_NAME}'")
 
 
@@ -67,6 +71,10 @@ def main():
 
     for skill_dir in SKILLS_DIR.iterdir():
         if not skill_dir.is_dir():
+            continue
+
+        # Skip __pycache__ directories
+        if skill_dir.name == "__pycache__":
             continue
 
         skill_name = skill_dir.name

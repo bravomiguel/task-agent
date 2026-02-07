@@ -49,38 +49,34 @@ class LazyModalBackend(SandboxBackendProtocol):
 
     # Implement SandboxBackendProtocol methods by delegation
     def ls_info(self, path):
-        # Reload before listing /threads/ or /memories/ to see all files
-        if path.startswith("/threads") or path.startswith("/memories"):
+        # Reload before listing /default-user/ to see all files
+        if path.startswith("/default-user"):
             self._reload_volumes()
         return self._get_backend().ls_info(path)
 
     def read(self, file_path, offset=0, limit=2000):
-        # Reload before reading from /threads/ or /memories/ to get latest from other sandboxes
-        if file_path.startswith("/threads") or file_path.startswith("/memories"):
+        # Reload before reading from /default-user/ to get latest from other sandboxes
+        if file_path.startswith("/default-user"):
             self._reload_volumes()
         return self._get_backend().read(file_path, offset, limit)
 
     def write(self, file_path, content):
         result = self._get_backend().write(file_path, content)
         # Sync volume to persist changes immediately for other processes
-        if file_path.startswith("/threads"):
-            self._sync_volume("/threads")
-        elif file_path.startswith("/memories"):
-            self._sync_volume("/memories")
+        if file_path.startswith("/default-user"):
+            self._sync_volume("/default-user")
         return result
 
     def edit(self, file_path, old_string, new_string, replace_all=False):
         result = self._get_backend().edit(file_path, old_string, new_string, replace_all)
         # Sync volume to persist changes immediately for other processes
-        if file_path.startswith("/threads"):
-            self._sync_volume("/threads")
-        elif file_path.startswith("/memories"):
-            self._sync_volume("/memories")
+        if file_path.startswith("/default-user"):
+            self._sync_volume("/default-user")
         return result
 
     def grep_raw(self, pattern, path=None, glob=None):
-        # Reload before searching in /threads/ or /memories/ to see all files
-        if path and (path.startswith("/threads") or path.startswith("/memories")):
+        # Reload before searching in /default-user/ to see all files
+        if path and path.startswith("/default-user"):
             self._reload_volumes()
 
         # Custom grep with better flags (copied from BaseSandbox, modified)
@@ -124,23 +120,21 @@ class LazyModalBackend(SandboxBackendProtocol):
         return matches
 
     def glob_info(self, pattern, path="/"):
-        # Reload before globbing in /threads/ or /memories/ to see all files
-        if path.startswith("/threads") or path.startswith("/memories"):
+        # Reload before globbing in /default-user/ to see all files
+        if path.startswith("/default-user"):
             self._reload_volumes()
         return self._get_backend().glob_info(pattern, path)
 
     def execute(self, command):
         # Reload volumes before execute if command references them (might read)
-        if "/threads" in command or "/memories" in command:
+        if "/default-user" in command:
             self._reload_volumes()
 
         result = self._get_backend().execute(command)
 
         # Sync volumes after execute if command references them (might write)
-        if "/threads" in command:
-            self._sync_volume("/threads")
-        if "/memories" in command:
-            self._sync_volume("/memories")
+        if "/default-user" in command:
+            self._sync_volume("/default-user")
 
         return result
 

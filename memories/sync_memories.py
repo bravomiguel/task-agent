@@ -12,15 +12,15 @@ import modal
 from pathlib import Path
 
 MEMORIES_DIR = Path(__file__).parent
-VOLUME_NAME = "memories"
+VOLUME_NAME = "user-default-user"
 
 app = modal.App("memories-sync")
-memories_volume = modal.Volume.from_name(VOLUME_NAME, create_if_missing=True, version=2)
+user_volume = modal.Volume.from_name(VOLUME_NAME, create_if_missing=True, version=2)
 
 
 @app.function(
     image=modal.Image.debian_slim(),
-    volumes={"/memories": memories_volume},
+    volumes={"/default-user": user_volume},
     timeout=300,
 )
 def sync_memories(memories_data: dict[str, bytes]):
@@ -31,8 +31,12 @@ def sync_memories(memories_data: dict[str, bytes]):
     """
     import shutil
 
+    # Ensure memory directory exists
+    memory_path = Path("/default-user/memory")
+    memory_path.mkdir(parents=True, exist_ok=True)
+
     # Clear existing memories
-    for item in Path("/memories").iterdir():
+    for item in memory_path.iterdir():
         if item.is_dir():
             shutil.rmtree(item)
         else:
@@ -40,13 +44,13 @@ def sync_memories(memories_data: dict[str, bytes]):
 
     # Write new memories
     for filename, content in memories_data.items():
-        file_path = Path("/memories") / filename
+        file_path = memory_path / filename
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_bytes(content)
-        print(f"  Wrote: /memories/{filename}")
+        print(f"  Wrote: /default-user/memory/{filename}")
 
     # Commit the volume
-    memories_volume.commit()
+    user_volume.commit()
     print(f"\nSynced {len(memories_data)} files to volume '{VOLUME_NAME}'")
 
 

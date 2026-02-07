@@ -34,8 +34,8 @@ def create_backend_factory():
     """Create a backend factory that builds LazyModalBackend from runtime state."""
 
     def backend_factory(runtime):
-        # LazyModalBackend handles all paths: /threads, /memories, /workspace
-        # Volumes are mounted by ModalSandboxMiddleware
+        # LazyModalBackend handles all paths under /default-user/
+        # User volume is mounted by ModalSandboxMiddleware
         return LazyModalBackend(runtime)
 
     return backend_factory

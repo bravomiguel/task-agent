@@ -15,9 +15,9 @@ from agent.middleware.modal_sandbox import ModalSandboxState
 class MoveUploadsMiddleware(AgentMiddleware[ModalSandboxState, Any]):
     """Middleware that moves files from temp-uploads staging to thread uploads folder.
 
-    Files are uploaded to /threads/temp-uploads/{temp_id}/ before submission.
+    Files are uploaded to /default-user/.temp-uploads/{temp_id}/ before submission.
     This middleware moves only the files listed in attached_files to
-    /threads/{thread_id}/uploads/, discarding any removed attachments.
+    /default-user/thread-files/{thread_id}/uploads/, discarding any removed attachments.
     """
 
     state_schema = ModalSandboxState
@@ -49,8 +49,8 @@ class MoveUploadsMiddleware(AgentMiddleware[ModalSandboxState, Any]):
 
         try:
             sandbox = modal.Sandbox.from_id(sandbox_id)
-            temp_path = f"/threads/temp-uploads/{temp_uploads_id}"
-            dest_path = f"/threads/{thread_id}/uploads"
+            temp_path = f"/default-user/.temp-uploads/{temp_uploads_id}"
+            dest_path = f"/default-user/thread-files/{thread_id}/uploads"
 
             # Check if temp uploads folder exists
             check_process = sandbox.exec("ls", temp_path, timeout=10)
@@ -82,7 +82,7 @@ class MoveUploadsMiddleware(AgentMiddleware[ModalSandboxState, Any]):
             rmdir_process.wait()
 
             # Sync volume to persist changes for other processes
-            sync_process = sandbox.exec("sync", "/threads", timeout=30)
+            sync_process = sandbox.exec("sync", "/default-user", timeout=30)
             sync_process.wait()
 
             if attached_files:

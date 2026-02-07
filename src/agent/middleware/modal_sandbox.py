@@ -113,18 +113,14 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
         startup_timeout: int = 180,
         idle_timeout: int = 60 * 3,  # 3 minutes
         max_timeout: int = 60 * 60 * 24,   # 24 hours
-        volume_name: str = "threads",
-        memory_volume_name: str = "memories",
-        skills_volume_name: str = "skills",
+        user_volume_name: str = "user-default-user",
     ):
         super().__init__()
         self._workdir = workdir
         self._startup_timeout = startup_timeout
         self._idle_timeout = idle_timeout
         self._max_timeout = max_timeout
-        self._volume_name = volume_name
-        self._memory_volume_name = memory_volume_name
-        self._skills_volume_name = skills_volume_name
+        self._user_volume_name = user_volume_name
 
     def before_agent(
         self, state: ModalSandboxState, runtime: Runtime
@@ -162,21 +158,11 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
         if not thread_id:
             thread_id = str(uuid.uuid4())
 
-        # Get or create v2 volumes for persistent storage
-        thread_volume = modal.Volume.from_name(
-            self._volume_name,
+        # Get or create v2 user volume for persistent storage
+        user_volume = modal.Volume.from_name(
+            self._user_volume_name,
             create_if_missing=True,
             version=2
-        )
-        memory_volume = modal.Volume.from_name(
-            self._memory_volume_name,
-            create_if_missing=True,
-            version=2
-        )
-        skills_volume = modal.Volume.from_name(
-            self._skills_volume_name,
-            create_if_missing=True,
-            version=2,
         )
 
         # Check if we should restore from a snapshot
@@ -212,7 +198,7 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
             **gdrive_env,
         }
 
-        # Create new sandbox with volumes mounted and workdir set to workspace
+        # Create new sandbox with user volume mounted and workdir set to workspace
         app = modal.App.lookup("agent-sandbox", create_if_missing=True)
         sandbox = modal.Sandbox.create(
             app=app,
@@ -221,9 +207,7 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
             timeout=self._max_timeout,
             idle_timeout=self._idle_timeout,
             volumes={
-                "/threads": thread_volume,
-                "/memories": memory_volume,
-                "/skills": skills_volume,
+                "/default-user": user_volume,
             },
             env=sandbox_env,
             verbose=True,
@@ -246,11 +230,18 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
             raise RuntimeError(
                 f"Modal sandbox failed to start within {self._startup_timeout}s")
 
-        # Create thread subfolder if it doesn't exist (safety measure)
-        # The volume is mounted at /threads, so mkdir ensures the subdirectory exists
-        process = sandbox.exec(
-            "mkdir", "-p", f"/threads/{thread_id}", timeout=10)
-        process.wait()
+        # Create new directory structure in sandbox
+        # Thread-specific directories
+        sandbox.exec("mkdir", "-p", f"/default-user/thread-files/{thread_id}/workspace", timeout=10).wait()
+        sandbox.exec("mkdir", "-p", f"/default-user/thread-files/{thread_id}/uploads", timeout=10).wait()
+        sandbox.exec("mkdir", "-p", f"/default-user/thread-files/{thread_id}/outputs", timeout=10).wait()
+
+        # User-level directories
+        sandbox.exec("mkdir", "-p", "/default-user/memory", timeout=10).wait()
+        sandbox.exec("mkdir", "-p", "/default-user/skills", timeout=10).wait()
+        sandbox.exec("mkdir", "-p", "/default-user/prompts", timeout=10).wait()
+        sandbox.exec("mkdir", "-p", "/default-user/thread-chats", timeout=10).wait()
+        sandbox.exec("mkdir", "-p", "/default-user/.temp-uploads", timeout=10).wait()
 
         state_updates = {
             "modal_sandbox_id": sandbox.object_id,

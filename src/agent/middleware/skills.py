@@ -1,11 +1,11 @@
-"""Skills middleware for loading skills baked into Modal image.
+"""Skills middleware for loading skills from user volume.
 
 Implements Anthropic's progressive disclosure pattern for agent skills:
-1. Load skill metadata (name + description) from /skills directory at session start
+1. Load skill metadata (name + description) from /default-user/skills directory at session start
 2. Inject skills list into system prompt
 3. Agent reads full SKILL.md on-demand when relevant
 
-Skills are baked into the Modal image at build time from agent/skills/ directory.
+Skills are stored in the user volume at /default-user/skills/.
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ SKILLS_SYSTEM_PROMPT = """
 You have access to a skills library with specialized capabilities for document manipulation.
 These skills contain tested patterns from extensive trial and error that significantly improve output quality.
 
-**Skills Directory:** `/skills/`
+**Skills Directory:** `/default-user/skills/`
 
 {skills_list}
 
@@ -51,10 +51,10 @@ When a user's task matches a skill, your FIRST action must be to read the SKILL.
 Do NOT start writing code or creating files until you've read the relevant skill(s).
 
 **Task → Skill Mapping:**
-- "create/edit a Word document" → read `/skills/docx/SKILL.md`
-- "fill a PDF form" or "work with PDF" → read `/skills/pdf/SKILL.md`
-- "make a presentation" → read `/skills/pptx/SKILL.md`
-- "work with spreadsheet/Excel" → read `/skills/xlsx/SKILL.md`
+- "create/edit a Word document" → read `/default-user/skills/docx/SKILL.md`
+- "fill a PDF form" or "work with PDF" → read `/default-user/skills/pdf/SKILL.md`
+- "make a presentation" → read `/default-user/skills/pptx/SKILL.md`
+- "work with spreadsheet/Excel" → read `/default-user/skills/xlsx/SKILL.md`
 
 **Multiple Skills:**
 Complex tasks may require combining multiple skills. Don't limit yourself to one.
@@ -121,7 +121,7 @@ def _parse_skill_metadata(skill_md_path: Path, sandbox: modal.Sandbox) -> SkillM
         return None
 
 
-def _list_skills_from_sandbox(sandbox: modal.Sandbox, skills_dir: str = "/skills") -> list[SkillMetadata]:
+def _list_skills_from_sandbox(sandbox: modal.Sandbox, skills_dir: str = "/default-user/skills") -> list[SkillMetadata]:
     """List all skills from the sandbox's /skills directory.
 
     Args:
@@ -166,26 +166,26 @@ def _list_skills_from_sandbox(sandbox: modal.Sandbox, skills_dir: str = "/skills
 
 
 class SkillsMiddleware(AgentMiddleware[SkillsState, Any]):
-    """Middleware for loading and exposing agent skills from Modal image.
+    """Middleware for loading and exposing agent skills from user volume.
 
     Implements progressive disclosure:
     1. Parse YAML frontmatter from SKILL.md files at session start
     2. Inject skills metadata (name + description) into system prompt
     3. Agent reads full SKILL.md content when relevant to a task
 
-    Skills are baked into the Modal image at /skills/ directory.
+    Skills are stored in the user volume at /default-user/skills/.
     """
 
     state_schema = SkillsState
 
     def __init__(
         self,
-        skills_path: str = "/skills",
+        skills_path: str = "/default-user/skills",
     ) -> None:
         """Initialize the skills middleware.
 
         Args:
-            skills_path: Path to skills directory in sandbox (baked into image)
+            skills_path: Path to skills directory in sandbox (stored in user volume)
         """
         super().__init__()
         self.skills_path = skills_path
@@ -193,9 +193,9 @@ class SkillsMiddleware(AgentMiddleware[SkillsState, Any]):
     def before_agent(
         self, state: SkillsState, runtime: Any
     ) -> dict[str, Any] | None:
-        """Load skills metadata from the /skills directory.
+        """Load skills metadata from the skills directory.
 
-        Discovers available skills from the /skills directory at the start
+        Discovers available skills from the /default-user/skills/ directory at the start
         of each interaction.
         """
         sandbox_id = state.get("modal_sandbox_id")
@@ -221,7 +221,7 @@ class SkillsMiddleware(AgentMiddleware[SkillsState, Any]):
     def _format_skills_list(self, skills: list[SkillMetadata]) -> str:
         """Format skills metadata for display in system prompt."""
         if not skills:
-            return "(No skills available yet. Skills will appear in /skills/ when added.)"
+            return "(No skills available yet. Skills will appear in /default-user/skills/ when added.)"
 
         lines = ["**Available Skills:**", ""]
 

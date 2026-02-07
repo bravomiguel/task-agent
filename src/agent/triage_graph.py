@@ -21,18 +21,17 @@ def create_backend_factory():
     """Create a backend factory that builds LazyModalBackend from runtime state."""
 
     def backend_factory(runtime):
-        # LazyModalBackend handles all paths including /memories
+        # LazyModalBackend handles all paths under /default-user/
         return LazyModalBackend(runtime)
 
     return backend_factory
 
 
 # Create a single instance of ModalSandboxMiddleware for triage agent
-# Only mount memories volume, no threads or skills needed
+# Uses user volume with new structure
 triage_sandbox_middleware = ModalSandboxMiddleware(
     idle_timeout=60,  # 1 minute idle timeout for quick cleanup
-    memory_volume_name="memories",  # Only memories needed
-    skills_volume_name="skills",  # Still need skills volume for compatibility
+    user_volume_name="user-default-user",  # Uses new unified user volume
 )
 
 # Triage middleware stack:

@@ -12,15 +12,14 @@ image = modal.Image.debian_slim().pip_install("fastapi[standard]")
 # Create Modal app
 app = modal.App("file-service", image=image)
 
-# Create or reference volumes
-threads_volume = modal.Volume.from_name("threads", create_if_missing=True, version=2)
-memories_volume = modal.Volume.from_name("memories", create_if_missing=True, version=2)
+# Create or reference user volume
+user_volume = modal.Volume.from_name("user-default-user", create_if_missing=True, version=2)
 
 # Keep 'volume' as alias for backwards compatibility
-volume = threads_volume
+volume = user_volume
 
 
-@app.function(volumes={"/threads": volume})
+@app.function(volumes={"/default-user": volume})
 def list_files(session_id: str) -> dict:
     """
     List all files in a thread's folder.
@@ -35,19 +34,19 @@ def list_files(session_id: str) -> dict:
         # Reload volume to get latest changes
         volume.reload()
 
-        # List files in the session folder
-        path = f"/{session_id}"
+        # List files in the thread folder
+        path = f"/thread-files/{session_id}"
         files = volume.listdir(path, recursive=True)
 
         # Convert to serializable format
         file_list = []
         for f in files:
-            # Remove session prefix - handle both /session_id/ and session_id/
+            # Remove thread-files prefix - handle both /thread-files/session_id/ and thread-files/session_id/
             file_path = f.path
-            if file_path.startswith(f"/{session_id}/"):
-                file_path = file_path.replace(f"/{session_id}/", "", 1)
-            elif file_path.startswith(f"{session_id}/"):
-                file_path = file_path.replace(f"{session_id}/", "", 1)
+            if file_path.startswith(f"/thread-files/{session_id}/"):
+                file_path = file_path.replace(f"/thread-files/{session_id}/", "", 1)
+            elif file_path.startswith(f"thread-files/{session_id}/"):
+                file_path = file_path.replace(f"thread-files/{session_id}/", "", 1)
 
             file_list.append({
                 "path": file_path,
@@ -66,7 +65,7 @@ def list_files(session_id: str) -> dict:
         raise
 
 
-@app.function(volumes={"/threads": volume})
+@app.function(volumes={"/default-user": volume})
 def read_file(session_id: str, file_path: str) -> dict:
     """
     Read file content from a thread's folder.
@@ -83,7 +82,7 @@ def read_file(session_id: str, file_path: str) -> dict:
         volume.reload()
 
         # Read the file
-        full_path = f"/{session_id}/{file_path}"
+        full_path = f"/thread-files/{session_id}/{file_path}"
         content_bytes = b"".join(volume.read_file(full_path))
 
         # Decode with error handling for non-text files
@@ -101,7 +100,7 @@ def read_file(session_id: str, file_path: str) -> dict:
         raise
 
 
-@app.function(volumes={"/threads": volume})
+@app.function(volumes={"/default-user": volume})
 def read_file_bytes(session_id: str, file_path: str) -> dict:
     """
     Read file content as base64-encoded bytes from a thread's folder.
@@ -122,7 +121,7 @@ def read_file_bytes(session_id: str, file_path: str) -> dict:
         volume.reload()
 
         # Read the file as bytes
-        full_path = f"/{session_id}/{file_path}"
+        full_path = f"/thread-files/{session_id}/{file_path}"
         content_bytes = b"".join(volume.read_file(full_path))
 
         # Encode as base64
@@ -142,7 +141,7 @@ def read_file_bytes(session_id: str, file_path: str) -> dict:
         raise
 
 
-@app.function(volumes={"/threads": volume})
+@app.function(volumes={"/default-user": volume})
 def update_file(session_id: str, file_path: str, content: str) -> dict:
     """
     Update or create a file in a thread's folder.
@@ -159,7 +158,7 @@ def update_file(session_id: str, file_path: str, content: str) -> dict:
         import io
 
         # Upload the file
-        full_path = f"/{session_id}/{file_path}"
+        full_path = f"/thread-files/{session_id}/{file_path}"
         with volume.batch_upload(force=True) as batch:
             batch.put_file(
                 io.BytesIO(content.encode('utf-8')),
@@ -173,7 +172,7 @@ def update_file(session_id: str, file_path: str, content: str) -> dict:
         return {"success": False, "error": str(e)}
 
 
-@app.function(volumes={"/threads": volume})
+@app.function(volumes={"/default-user": volume})
 def upload_file_bytes(session_id: str, filename: str, content_b64: str) -> dict:
     """
     Upload a binary file to a thread's uploads folder.
@@ -195,7 +194,7 @@ def upload_file_bytes(session_id: str, filename: str, content_b64: str) -> dict:
         content_bytes = base64.b64decode(content_b64)
 
         # Upload to uploads subfolder
-        full_path = f"/{session_id}/uploads/{filename}"
+        full_path = f"/thread-files/{session_id}/uploads/{filename}"
         with volume.batch_upload(force=True) as batch:
             batch.put_file(
                 io.BytesIO(content_bytes),
@@ -219,7 +218,7 @@ def upload_file_bytes(session_id: str, filename: str, content_b64: str) -> dict:
         return {"success": False, "error": str(e)}
 
 
-@app.function(volumes={"/threads": volume})
+@app.function(volumes={"/default-user": volume})
 def upload_temp_file(temp_id: str, filename: str, content_b64: str) -> dict:
     """
     Upload a binary file to temporary uploads staging area.
@@ -242,7 +241,7 @@ def upload_temp_file(temp_id: str, filename: str, content_b64: str) -> dict:
         content_bytes = base64.b64decode(content_b64)
 
         # Upload to temp-uploads staging folder
-        full_path = f"/temp-uploads/{temp_id}/{filename}"
+        full_path = f"/.temp-uploads/{temp_id}/{filename}"
         with volume.batch_upload(force=True) as batch:
             batch.put_file(
                 io.BytesIO(content_bytes),
@@ -256,7 +255,7 @@ def upload_temp_file(temp_id: str, filename: str, content_b64: str) -> dict:
 
         return {
             "success": True,
-            "path": f"temp-uploads/{temp_id}/{filename}",
+            "path": f".temp-uploads/{temp_id}/{filename}",
             "size": len(content_bytes),
             "mimeType": mime_type,
         }
@@ -266,7 +265,7 @@ def upload_temp_file(temp_id: str, filename: str, content_b64: str) -> dict:
         return {"success": False, "error": str(e)}
 
 
-@app.function(volumes={"/threads": volume})
+@app.function(volumes={"/default-user": volume})
 def delete_file(session_id: str, file_path: str, sandbox_id: str = None) -> dict:
     """
     Delete a file from a thread's folder.
@@ -283,7 +282,7 @@ def delete_file(session_id: str, file_path: str, sandbox_id: str = None) -> dict
         Dictionary with 'success' boolean and optional 'error'
     """
     try:
-        full_path = f"/threads/{session_id}/{file_path}"
+        full_path = f"/default-user/thread-files/{session_id}/{file_path}"
 
         if sandbox_id:
             # Use existing sandbox
@@ -293,14 +292,14 @@ def delete_file(session_id: str, file_path: str, sandbox_id: str = None) -> dict
                 # If sandbox doesn't exist, create temporary one
                 sb = modal.Sandbox.create(
                     image=modal.Image.debian_slim(),
-                    volumes={"/threads": volume},
+                    volumes={"/default-user": volume},
                     timeout=60
                 )
         else:
             # Create temporary sandbox for deletion
             sb = modal.Sandbox.create(
                 image=modal.Image.debian_slim(),
-                volumes={"/threads": volume},
+                volumes={"/default-user": volume},
                 timeout=60
             )
 
@@ -310,7 +309,7 @@ def delete_file(session_id: str, file_path: str, sandbox_id: str = None) -> dict
 
         if process.returncode == 0:
             # Sync volume from within sandbox to persist deletion
-            sync_process = sb.exec("sync", "/threads", timeout=30)
+            sync_process = sb.exec("sync", "/default-user", timeout=30)
             sync_process.wait()
 
             # Terminate temporary sandbox if we created one
@@ -356,7 +355,7 @@ def get_sandbox_files(session_id: str, sandbox_id: str) -> dict:
         sb = modal.Sandbox.from_id(sandbox_id)
 
         # List files using sandbox ls command
-        process = sb.exec("ls", "-la", f"/threads/{session_id}", timeout=10)
+        process = sb.exec("ls", "-la", f"/default-user/thread-files/{session_id}", timeout=10)
         process.wait()
 
         if process.returncode == 0:
@@ -389,22 +388,22 @@ def health():
 # ==================== TRIAGE OPERATIONS ====================
 
 
-@app.function(volumes={"/memories": memories_volume})
+@app.function(volumes={"/default-user": volume})
 def read_triage_rules() -> str | None:
     """
-    Read triage rules from the memories volume.
+    Read triage rules from the user memory directory.
 
     Returns:
         Triage rules content as string, or None if file not found
     """
     try:
-        memories_volume.reload()
+        volume.reload()
 
-        with open("/memories/triage.md", "r") as f:
+        with open("/default-user/memory/triage.md", "r") as f:
             return f.read()
 
     except FileNotFoundError:
-        print("Triage rules file not found: /memories/triage.md")
+        print("Triage rules file not found: /default-user/memory/triage.md")
         return None
     except Exception as e:
         print(f"Error reading triage rules: {e}")

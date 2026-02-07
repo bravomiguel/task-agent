@@ -174,16 +174,16 @@ def view_image(
     if thread_id is None:
         return [{"type": "text", "text": "Error: Thread ID not available."}]
 
-    # Normalize filepath to relative path (strip /threads/{id}/ prefix if present)
+    # Normalize filepath to relative path (strip /default-user/thread-files/{id}/ prefix if present)
     normalized_path = filepath
-    if filepath.startswith("/threads/"):
-        parts = filepath.split("/", 3)  # ['', 'threads', 'id', 'uploads/file.png']
-        if len(parts) >= 4:
-            normalized_path = parts[3]
-    elif filepath.startswith("threads/"):
-        parts = filepath.split("/", 2)  # ['threads', 'id', 'uploads/file.png']
-        if len(parts) >= 3:
-            normalized_path = parts[2]
+    if filepath.startswith("/default-user/thread-files/"):
+        parts = filepath.split("/", 5)  # ['', 'default-user', 'thread-files', 'id', 'uploads', 'file.png']
+        if len(parts) >= 6:
+            normalized_path = "/".join(parts[4:])  # 'uploads/file.png'
+    elif filepath.startswith("default-user/thread-files/"):
+        parts = filepath.split("/", 4)  # ['default-user', 'thread-files', 'id', 'uploads', 'file.png']
+        if len(parts) >= 5:
+            normalized_path = "/".join(parts[3:])  # 'uploads/file.png'
 
     try:
         # Call the Next.js API to get image base64
