@@ -1,10 +1,13 @@
-.PHONY: all format lint test tests test_watch integration_tests docker_tests help extended_tests sync-memories
+.PHONY: all format lint test tests test_watch integration_tests docker_tests help extended_tests sync-memories sync-prompts
 
 # Default target executed when no arguments are given to make.
 all: help
 
 sync-memories:
 	modal run sync_memories.py
+
+sync-prompts:
+	modal run prompts/sync_prompts.py
 
 # Define a variable for the test file path.
 TEST_FILE ?= tests/unit_tests/

@@ -6,6 +6,8 @@ from langchain.chat_models import init_chat_model
 from langchain_openai import ChatOpenAI
 from agent.tools import present_file, view_image
 from agent.middleware import (
+    AgentsPromptMiddleware,
+    MemoryFlushMiddleware,
     ModalSandboxMiddleware,
     MoveUploadsMiddleware,
     EventDetectionMiddleware,
@@ -48,10 +50,12 @@ modal_sandbox_middleware = ModalSandboxMiddleware()
 agent_middleware = [
     modal_sandbox_middleware,
     MoveUploadsMiddleware(),  # Move temp uploads before agent runs
+    AgentsPromptMiddleware(),  # Load AGENTS.md from volume into prompt
     EventDetectionMiddleware(),  # Detect events in user messages
     DynamicContextMiddleware(),
     SkillsMiddleware(),
     ToolDescriptionMiddleware(),
+    MemoryFlushMiddleware(),  # Pre-compaction nudge to write daily log
     IsDoneMiddleware(),
     OpenFilePathMiddleware(),
     ThreadTitleMiddleware(llm=gpt_4_1_mini),
