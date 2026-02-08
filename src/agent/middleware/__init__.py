@@ -1,7 +1,7 @@
 """Middleware package for agent middleware components."""
 
 from agent.middleware.agents_prompt import AgentsPromptMiddleware
-from agent.middleware.memory_flush import MemoryFlushMiddleware
+from agent.middleware.memory import MemoryMiddleware
 from agent.middleware.modal_sandbox import ModalSandboxMiddleware
 from agent.middleware.move_uploads import MoveUploadsMiddleware
 from agent.middleware.event_detection import EventDetectionMiddleware
@@ -18,7 +18,7 @@ from agent.middleware.triage_context import TriageContextMiddleware
 
 __all__ = [
     "AgentsPromptMiddleware",
-    "MemoryFlushMiddleware",
+    "MemoryMiddleware",
     "ModalSandboxMiddleware",
     "MoveUploadsMiddleware",
     "EventDetectionMiddleware",

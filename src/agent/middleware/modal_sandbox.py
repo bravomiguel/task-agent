@@ -139,6 +139,7 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
                     process = sandbox.exec("echo", "alive", timeout=5)
                     process.wait()
                     if process.returncode == 0:
+                        sandbox.reload_volumes()
                         return None  # Reuse existing
                 except Exception:
                     pass
@@ -229,6 +230,9 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
             sandbox.terminate()
             raise RuntimeError(
                 f"Modal sandbox failed to start within {self._startup_timeout}s")
+
+        # Reload volumes to get latest committed state
+        sandbox.reload_volumes()
 
         # Create new directory structure in sandbox
         # Thread-specific directories

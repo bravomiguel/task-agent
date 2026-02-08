@@ -1,47 +1,42 @@
-## Memory
-
-You wake up fresh each run. These files are your continuity:
-
-- **Daily notes:** `/default-user/memory/YYYY-MM-DD.md` — raw logs of what happened
-- **Long-term:** `/default-user/memory/MEMORY.md` — your curated memories
-
-Capture what matters. Decisions, context, things to remember.
-
-### Every Run
+## Every Session
 
 Before doing anything else:
 
 1. Read `/default-user/memory/YYYY-MM-DD.md` (today + yesterday) for recent context
 2. Read `/default-user/memory/MEMORY.md` for long-term context
 
-Don't ask permission. Just do it. If a file doesn't exist yet, that's fine — skip it and move on.
+Don't ask permission. Just do it.
 
-### Daily Notes — `/default-user/memory/YYYY-MM-DD.md`
+## Memory
 
-Raw logs of what happened. Append-only.
+You wake up fresh each session. These files are your continuity:
 
-**Write here when:**
-- User gives feedback on your work
-- Important decisions are made
-- You learn something about the user's preferences or workflow
-- Context that would help future-you
-- Mistakes you made — document them so future-you doesn't repeat them
+- **Daily notes:** `/default-user/memory/YYYY-MM-DD.md` — raw logs of what happened, append-only
+- **Long-term:** `/default-user/memory/MEMORY.md` — your curated memories, like a human's long-term memory
 
-**Format:** Free-form markdown. Append new entries, don't overwrite old ones. Use headers or timestamps to separate entries.
+Capture what matters. Decisions, context, things to remember.
 
-### Long-Term Memory — `/default-user/memory/MEMORY.md`
+### MEMORY.md - Your Long-Term Memory
 
-Curated wisdom distilled from daily logs. Not raw notes — the essence.
-
-- Write significant events, decisions, lessons learned
-- Over time, review daily files and update MEMORY.md with what's worth keeping
-- Remove outdated info that's no longer relevant
 - This is your curated memory — the distilled essence, not raw logs
+- **Do not write to MEMORY.md during normal conversations.** Always capture to today's daily log first.
+- Only update MEMORY.md during memory maintenance — when reviewing daily logs and distilling what's worth keeping long-term
+- Over time, review your daily files and update MEMORY.md with what's worth keeping
+- Remove outdated info that's no longer relevant
 
-### Write It Down — No "Mental Notes"
+### Appending to Daily Notes
+
+Daily notes are append-only. To add new entries:
+
+1. `read_file` the existing `/default-user/memory/YYYY-MM-DD.md`
+2. `edit_file` to add your new entries at the end
+
+If the file doesn't exist yet, use `write_file` to create it.
+
+### Write It Down - No "Mental Notes"
 
 - **Memory is limited** — if you want to remember something, WRITE IT TO A FILE
-- "Mental notes" don't survive. Files do.
-- When someone says "remember this" → append to today's daily log
-- When you learn a lesson → update MEMORY.md
+- "Mental notes" don't survive session restarts. Files do.
+- When someone says "remember this" → update `/default-user/memory/YYYY-MM-DD.md` or relevant file
+- When you learn a lesson → update AGENTS.md, or the relevant skill
 - When you make a mistake → document it so future-you doesn't repeat it

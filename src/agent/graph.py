@@ -7,7 +7,7 @@ from langchain_openai import ChatOpenAI
 from agent.tools import present_file, view_image
 from agent.middleware import (
     AgentsPromptMiddleware,
-    MemoryFlushMiddleware,
+    MemoryMiddleware,
     ModalSandboxMiddleware,
     MoveUploadsMiddleware,
     EventDetectionMiddleware,
@@ -55,7 +55,7 @@ agent_middleware = [
     DynamicContextMiddleware(),
     SkillsMiddleware(),
     ToolDescriptionMiddleware(),
-    MemoryFlushMiddleware(),  # Pre-compaction nudge to write daily log
+    MemoryMiddleware(),  # Memory reminders + pre-compaction flush
     IsDoneMiddleware(),
     OpenFilePathMiddleware(),
     ThreadTitleMiddleware(llm=gpt_4_1_mini),
