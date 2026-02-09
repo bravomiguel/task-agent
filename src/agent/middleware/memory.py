@@ -75,10 +75,19 @@ class MemoryState(AgentState):
 # ---------------------------------------------------------------------------
 
 
+_SYSTEM_REMINDER_RE = re.compile(r"\s*<system-reminder[^>]*>.*?</system-reminder>", re.DOTALL)
+
+
+def _strip_system_reminders(text: str) -> str:
+    """Remove all <system-reminder> XML tags and their content."""
+    return _SYSTEM_REMINDER_RE.sub("", text).strip()
+
+
 def _extract_conversation_text(messages: list[dict], limit: int = 15) -> str | None:
     """Extract the last N user/assistant messages as plain text.
 
     Filters out tool calls, system messages, and commands.
+    Strips <system-reminder> tags from message content.
     Like OpenClaw, keeps only user and assistant text content.
     """
     filtered: list[str] = []
@@ -101,7 +110,8 @@ def _extract_conversation_text(messages: list[dict], limit: int = 15) -> str | N
             else:
                 continue
 
-        if not content or not content.strip():
+        content = _strip_system_reminders(content)
+        if not content:
             continue
 
         # Normalise role label
