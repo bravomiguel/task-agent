@@ -12,7 +12,6 @@ from agent.middleware import (
     MoveUploadsMiddleware,
     EventDetectionMiddleware,
     RuntimeContextMiddleware,
-
     ThreadTitleMiddleware,
     IsDoneMiddleware,
     OpenFilePathMiddleware,
@@ -55,7 +54,7 @@ agent_middleware = [
     RuntimeContextMiddleware(),
     SkillsMiddleware(),
     ToolDescriptionMiddleware(),
-    MemoryMiddleware(),  # Memory reminders + pre-compaction flush
+    MemoryMiddleware(llm=gpt_4_1_mini),  # Session archive + memory reminders + pre-compaction flush
     IsDoneMiddleware(),
     OpenFilePathMiddleware(),
     ThreadTitleMiddleware(llm=gpt_4_1_mini),
