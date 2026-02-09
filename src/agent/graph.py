@@ -12,7 +12,7 @@ from agent.middleware import (
     MoveUploadsMiddleware,
     EventDetectionMiddleware,
     RuntimeContextMiddleware,
-    ReviewMessageMiddleware,
+
     ThreadTitleMiddleware,
     IsDoneMiddleware,
     OpenFilePathMiddleware,
@@ -59,7 +59,6 @@ agent_middleware = [
     IsDoneMiddleware(),
     OpenFilePathMiddleware(),
     ThreadTitleMiddleware(llm=gpt_4_1_mini),
-    ReviewMessageMiddleware(llm=gpt_4_1_mini),
 ]
 
 # Build tools list - conditionally include web_search if Tavily is available
