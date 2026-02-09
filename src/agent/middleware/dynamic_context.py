@@ -74,15 +74,6 @@ class RuntimeContextMiddleware(AgentMiddleware[ModalSandboxState, Any]):
                 f"Save user-requested files to `/default-user/thread-files/{thread_id}/outputs/`."
             )
 
-        # Google Drive access token
-        gdrive_token = request.state.get("gdrive_access_token")
-        if gdrive_token:
-            context += (
-                f"\n\n### Google Drive Access Token\n"
-                f"For Google Drive API requests, use this access token:\n"
-                f"```\n{gdrive_token}\n```"
-            )
-
         if context:
             request.system_prompt = request.system_prompt + context
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import time
 import uuid
 from typing import Any, NotRequired
@@ -12,7 +11,6 @@ from langchain.agents.middleware import AgentMiddleware, AgentState
 from langchain_core.runnables.config import var_child_runnable_config
 from langgraph.runtime import Runtime
 
-from agent.utils import fetch_composio_gdrive_token
 
 modal.enable_output()
 
@@ -91,11 +89,10 @@ rclone_image = (
 
 
 class ModalSandboxState(AgentState):
-    """Extended state schema with Modal sandbox ID and Google Drive access."""
+    """Extended state schema with Modal sandbox ID."""
     modal_sandbox_id: NotRequired[str]
     thread_id: NotRequired[str]
     modal_snapshot_id: NotRequired[str]
-    gdrive_access_token: NotRequired[str]
 
 
 class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
@@ -180,23 +177,9 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
         if image is None:
             image = rclone_image
 
-        # Fetch Google Drive token from Composio
-        gdrive_access_token = None
-        try:
-            gdrive_env = fetch_composio_gdrive_token()
-            # Extract access token from the token JSON for API calls
-            token_json_str = gdrive_env.get("RCLONE_CONFIG_GDRIVE_TOKEN", "{}")
-            token_data = json.loads(token_json_str)
-            gdrive_access_token = token_data.get("access_token")
-        except Exception as e:
-            # Log error but continue without Google Drive access
-            print(f"Warning: Could not fetch Google Drive token: {e}")
-            gdrive_env = {}
-
         # Add NODE_PATH so Node.js can find globally installed npm packages
         sandbox_env = {
             "NODE_PATH": "/usr/local/lib/node_modules",
-            **gdrive_env,
         }
 
         # Create new sandbox with user volume mounted and workdir set to workspace
@@ -247,16 +230,10 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
         sandbox.exec("mkdir", "-p", "/default-user/thread-chats", timeout=10).wait()
         sandbox.exec("mkdir", "-p", "/default-user/.temp-uploads", timeout=10).wait()
 
-        state_updates = {
+        return {
             "modal_sandbox_id": sandbox.object_id,
             "thread_id": thread_id,
         }
-
-        # Add access token to state if available
-        if gdrive_access_token:
-            state_updates["gdrive_access_token"] = gdrive_access_token
-
-        return state_updates
 
     async def abefore_agent(
         self, state: ModalSandboxState, runtime: Runtime
