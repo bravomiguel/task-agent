@@ -5,7 +5,7 @@ from agent.middleware.memory import MemoryMiddleware
 from agent.middleware.modal_sandbox import ModalSandboxMiddleware
 from agent.middleware.move_uploads import MoveUploadsMiddleware
 from agent.middleware.event_detection import EventDetectionMiddleware
-from agent.middleware.dynamic_context import DynamicContextMiddleware
+from agent.middleware.dynamic_context import RuntimeContextMiddleware
 from agent.middleware.thread_title import ThreadTitleMiddleware
 from agent.middleware.is_done import IsDoneMiddleware
 from agent.middleware.open_file_path import OpenFilePathMiddleware
@@ -22,7 +22,7 @@ __all__ = [
     "ModalSandboxMiddleware",
     "MoveUploadsMiddleware",
     "EventDetectionMiddleware",
-    "DynamicContextMiddleware",
+    "RuntimeContextMiddleware",
     "ThreadTitleMiddleware",
     "IsDoneMiddleware",
     "OpenFilePathMiddleware",

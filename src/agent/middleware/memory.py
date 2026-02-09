@@ -6,7 +6,8 @@ Two responsibilities:
 2. Pre-compaction flush — when token count nears the summarization threshold,
    injects a directive to write durable memories before context is compressed.
 
-Both directives are ephemeral (wrap_model_call) — not persisted in state.
+Directives are injected via wrap_model_call by mutating message objects directly,
+so they persist across turns in the conversation history.
 """
 
 from __future__ import annotations
@@ -52,7 +53,7 @@ class MemoryMiddleware(AgentMiddleware[MemoryState, Any]):
     Conditional: when token count nears the summarization threshold, injects
     a flush directive to write durable memories before compaction.
 
-    Both directives are ephemeral (wrap_model_call) — not persisted in state.
+    Directives are injected via wrap_model_call and persist across turns.
     """
 
     state_schema = MemoryState
