@@ -10,7 +10,6 @@ from agent.middleware import (
     MemoryMiddleware,
     ModalSandboxMiddleware,
     MoveUploadsMiddleware,
-    EventDetectionMiddleware,
     RuntimeContextMiddleware,
     ThreadTitleMiddleware,
     IsDoneMiddleware,
@@ -50,7 +49,6 @@ agent_middleware = [
     modal_sandbox_middleware,
     MoveUploadsMiddleware(),  # Move temp uploads before agent runs
     AgentsPromptMiddleware(),  # Load AGENTS.md from volume into prompt
-    EventDetectionMiddleware(),  # Detect events in user messages
     RuntimeContextMiddleware(),
     SkillsMiddleware(),
     ToolDescriptionMiddleware(),

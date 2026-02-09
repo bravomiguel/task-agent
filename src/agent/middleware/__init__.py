@@ -4,7 +4,6 @@ from agent.middleware.agents_prompt import AgentsPromptMiddleware
 from agent.middleware.memory import MemoryMiddleware
 from agent.middleware.modal_sandbox import ModalSandboxMiddleware
 from agent.middleware.move_uploads import MoveUploadsMiddleware
-from agent.middleware.event_detection import EventDetectionMiddleware
 from agent.middleware.dynamic_context import RuntimeContextMiddleware
 from agent.middleware.thread_title import ThreadTitleMiddleware
 from agent.middleware.is_done import IsDoneMiddleware
@@ -20,7 +19,6 @@ __all__ = [
     "MemoryMiddleware",
     "ModalSandboxMiddleware",
     "MoveUploadsMiddleware",
-    "EventDetectionMiddleware",
     "RuntimeContextMiddleware",
     "ThreadTitleMiddleware",
     "IsDoneMiddleware",
