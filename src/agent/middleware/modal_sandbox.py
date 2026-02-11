@@ -63,6 +63,10 @@ rclone_image = (
         "six",
         # Text extraction from presentations
         "markitdown[pptx]",
+        # Memory index — LanceDB + embeddings
+        "lancedb",
+        "tantivy",
+        "openai",
     )
     # Node.js global packages for presentation/document creation
     .run_commands(

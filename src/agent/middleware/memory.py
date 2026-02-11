@@ -50,6 +50,7 @@ This is a silent system reminder. Action if appropriate, but do not acknowledge 
 </system-reminder>
 """.strip()
 
+
 SLUG_PROMPT = """Based on this conversation, generate a short 1-2 word filename slug (lowercase, hyphen-separated, no file extension).
 
 Conversation:
@@ -335,7 +336,7 @@ class MemoryMiddleware(AgentMiddleware[MemoryState, Any]):
     async def abefore_agent(
         self, state: MemoryState, runtime: Runtime
     ) -> dict[str, Any] | None:
-        """Default session_type and archive previous session."""
+        """Default session_type, archive previous session, and sync memory index."""
         updates: dict[str, Any] = {}
 
         if not state.get("session_type"):
@@ -345,6 +346,23 @@ class MemoryMiddleware(AgentMiddleware[MemoryState, Any]):
             await self._aarchive_previous_session(state)
         except Exception as e:
             logger.warning("[SessionArchive] unexpected error: %s", e)
+
+        # Blocking memory-index sync — ensures the just-archived session
+        # (and any other changed memory files) are searchable before the
+        # agent's first query.
+        sandbox_id = state.get("modal_sandbox_id")
+        if sandbox_id:
+            try:
+                import time as _time
+                from agent.memory.indexer import sync_memory_index
+
+                logger.info("[MemoryIndex] starting sync (sandbox=%s)", sandbox_id)
+                t0 = _time.monotonic()
+                sandbox = modal.Sandbox.from_id(sandbox_id)
+                sync_memory_index(sandbox)
+                logger.info("[MemoryIndex] sync completed in %.1fs", _time.monotonic() - t0)
+            except Exception as e:
+                logger.warning("[MemoryIndex] sync failed in abefore_agent: %s", e)
 
         return updates or None
 

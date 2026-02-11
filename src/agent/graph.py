@@ -5,6 +5,7 @@ from deepagents_cli.tools import http_request, fetch_url, web_search, tavily_cli
 from langchain.chat_models import init_chat_model
 from langchain_openai import ChatOpenAI
 from agent.tools import present_file, view_image
+from agent.memory.tools import memory_search
 from agent.middleware import (
     AgentsPromptMiddleware,
     MemoryMiddleware,
@@ -59,7 +60,7 @@ agent_middleware = [
 ]
 
 # Build tools list - conditionally include web_search if Tavily is available
-tools = [http_request, fetch_url, present_file, view_image]
+tools = [http_request, fetch_url, present_file, view_image, memory_search]
 if tavily_client is not None:
     tools.append(web_search)
 
