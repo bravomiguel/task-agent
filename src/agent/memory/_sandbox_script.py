@@ -277,7 +277,6 @@ def cmd_search(args: argparse.Namespace) -> None:
 
     # Try hybrid search (BM25 + vector), fall back to vector-only
     results_df = None
-    search_method = "none"
     try:
         from lancedb.rerankers import LinearCombinationReranker
 
@@ -288,30 +287,20 @@ def cmd_search(args: argparse.Namespace) -> None:
             .limit(max_results)
             .to_pandas()
         )
-        search_method = "hybrid"
-    except Exception as exc:
-        print(f"[search] hybrid failed: {exc}", file=sys.stderr)
+    except Exception:
         try:
             results_df = (
                 table.search(query)
                 .limit(max_results)
                 .to_pandas()
             )
-            search_method = "vector-only"
-        except Exception as exc2:
-            json.dump({"results": [], "error": str(exc2)}, sys.stdout)
+        except Exception as exc:
+            json.dump({"results": [], "error": str(exc)}, sys.stdout)
             return
 
     if results_df is None or results_df.empty:
         json.dump({"results": []}, sys.stdout)
         return
-
-    # Debug: dump raw columns and scores to stderr
-    score_cols = [c for c in results_df.columns if c.startswith("_")]
-    print(f"[search] method={search_method} rows={len(results_df)} score_cols={score_cols}", file=sys.stderr)
-    for i, (_, row) in enumerate(results_df.iterrows()):
-        debug_scores = {c: float(row[c]) if c in row else None for c in score_cols}
-        print(f"[search] row {i}: path={row['path']} scores={debug_scores}", file=sys.stderr)
 
     output: list[dict] = []
     for _, row in results_df.iterrows():

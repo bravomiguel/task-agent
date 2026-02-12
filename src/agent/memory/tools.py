@@ -80,9 +80,6 @@ def memory_search(
         stdout = process.stdout.read()
         stderr = process.stderr.read()
 
-        if stderr:
-            logger.info("[MemorySearch] stderr: %s", stderr[:1000])
-
         if process.returncode != 0:
             logger.warning("[MemorySearch] failed: %s", stderr[:500])
             return f"Error searching memory: {stderr[:200]}"
