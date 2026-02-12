@@ -68,6 +68,7 @@ class MemoryState(AgentState):
     _memory_flush_done: NotRequired[bool]
     _memory_flush_turn: NotRequired[bool]
     _session_archived: NotRequired[bool]
+    _memory_index_synced: NotRequired[bool]
     session_type: NotRequired[str]  # main | task | cron | heartbeat
 
 
@@ -336,7 +337,7 @@ class MemoryMiddleware(AgentMiddleware[MemoryState, Any]):
     async def abefore_agent(
         self, state: MemoryState, runtime: Runtime
     ) -> dict[str, Any] | None:
-        """Default session_type, archive previous session, and sync memory index."""
+        """Default session_type, archive previous session, and fire-and-forget memory index sync."""
         updates: dict[str, Any] = {}
 
         if not state.get("session_type"):
@@ -348,11 +349,9 @@ class MemoryMiddleware(AgentMiddleware[MemoryState, Any]):
             logger.warning("[SessionArchive] unexpected error: %s", e)
 
         # Fire-and-forget memory-index sync — runs in a background thread
-        # so it doesn't add ~10s latency to agent startup. If memory_search
-        # is called before sync finishes, it searches the stale index (which
-        # has everything from prior sessions, just not the just-archived one).
+        # so it doesn't add latency to agent startup. Gated to once per session.
         sandbox_id = state.get("modal_sandbox_id")
-        if sandbox_id:
+        if sandbox_id and not state.get("_memory_index_synced"):
             import threading
             from agent.memory.indexer import sync_memory_index
 
@@ -368,6 +367,7 @@ class MemoryMiddleware(AgentMiddleware[MemoryState, Any]):
                     logger.warning("[MemoryIndex] background sync failed: %s", e)
 
             threading.Thread(target=_bg_sync, daemon=True).start()
+            updates["_memory_index_synced"] = True
 
         return updates or None
 
