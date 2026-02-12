@@ -347,22 +347,27 @@ class MemoryMiddleware(AgentMiddleware[MemoryState, Any]):
         except Exception as e:
             logger.warning("[SessionArchive] unexpected error: %s", e)
 
-        # Blocking memory-index sync — ensures the just-archived session
-        # (and any other changed memory files) are searchable before the
-        # agent's first query.
+        # Fire-and-forget memory-index sync — runs in a background thread
+        # so it doesn't add ~10s latency to agent startup. If memory_search
+        # is called before sync finishes, it searches the stale index (which
+        # has everything from prior sessions, just not the just-archived one).
         sandbox_id = state.get("modal_sandbox_id")
         if sandbox_id:
-            try:
-                import time as _time
-                from agent.memory.indexer import sync_memory_index
+            import threading
+            from agent.memory.indexer import sync_memory_index
 
-                logger.info("[MemoryIndex] starting sync (sandbox=%s)", sandbox_id)
-                t0 = _time.monotonic()
-                sandbox = modal.Sandbox.from_id(sandbox_id)
-                sync_memory_index(sandbox)
-                logger.info("[MemoryIndex] sync completed in %.1fs", _time.monotonic() - t0)
-            except Exception as e:
-                logger.warning("[MemoryIndex] sync failed in abefore_agent: %s", e)
+            def _bg_sync():
+                try:
+                    import time as _time
+                    logger.info("[MemoryIndex] background sync starting (sandbox=%s)", sandbox_id)
+                    t0 = _time.monotonic()
+                    sb = modal.Sandbox.from_id(sandbox_id)
+                    sync_memory_index(sb)
+                    logger.info("[MemoryIndex] background sync completed in %.1fs", _time.monotonic() - t0)
+                except Exception as e:
+                    logger.warning("[MemoryIndex] background sync failed: %s", e)
+
+            threading.Thread(target=_bg_sync, daemon=True).start()
 
         return updates or None
 
