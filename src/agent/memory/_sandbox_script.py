@@ -17,7 +17,6 @@ import argparse
 import hashlib
 import json
 import os
-import re
 import sys
 from pathlib import Path
 
@@ -33,6 +32,12 @@ EMBEDDING_MODEL = "text-embedding-3-small"
 CHUNK_TOKENS = 400
 CHUNK_OVERLAP = 80
 CHARS_PER_TOKEN = 4  # rough approximation
+
+# Hybrid search defaults (mirroring OpenClaw)
+VECTOR_WEIGHT = 0.7
+TEXT_WEIGHT = 0.3
+CANDIDATE_MULTIPLIER = 4
+MIN_SCORE = 0.35
 
 
 # ---------------------------------------------------------------------------
@@ -248,6 +253,64 @@ def cmd_sync(args: argparse.Namespace) -> None:
 # search
 # ---------------------------------------------------------------------------
 
+def _bm25_to_score(raw: float) -> float:
+    """Normalize tantivy BM25 score [0, +inf) → [0, 1)."""
+    return raw / (1.0 + raw) if raw > 0 else 0.0
+
+
+def _merge_hybrid_results(
+    vector_rows: list[dict],
+    fts_rows: list[dict],
+    vector_weight: float = VECTOR_WEIGHT,
+    text_weight: float = TEXT_WEIGHT,
+) -> list[dict]:
+    """Merge vector and FTS results with linear combination scoring.
+
+    Mirrors OpenClaw's mergeHybridResults():
+    - Union by chunk_id
+    - Linear combination: vectorWeight * vectorScore + textWeight * textScore
+    - Missing modality gets score 0
+    """
+    # Normalize weights to sum to 1.0
+    total = vector_weight + text_weight
+    if total > 0:
+        vector_weight = vector_weight / total
+        text_weight = text_weight / total
+
+    by_id: dict[str, dict] = {}
+
+    for row in vector_rows:
+        cid = row["chunk_id"]
+        by_id[cid] = {
+            **row,
+            "vector_score": 1.0 - float(row.get("_distance", 1.0)),
+            "text_score": 0.0,
+        }
+
+    for row in fts_rows:
+        cid = row["chunk_id"]
+        text_score = _bm25_to_score(float(row.get("_score", 0.0)))
+        if cid in by_id:
+            by_id[cid]["text_score"] = text_score
+        else:
+            by_id[cid] = {
+                **row,
+                "vector_score": 0.0,
+                "text_score": text_score,
+            }
+
+    merged = []
+    for entry in by_id.values():
+        entry["score"] = (
+            vector_weight * entry["vector_score"]
+            + text_weight * entry["text_score"]
+        )
+        merged.append(entry)
+
+    merged.sort(key=lambda x: x["score"], reverse=True)
+    return merged
+
+
 def cmd_search(args: argparse.Namespace) -> None:
     api_key = args.api_key or os.environ.get("OPENAI_API_KEY", "")
     if api_key:
@@ -268,49 +331,67 @@ def cmd_search(args: argparse.Namespace) -> None:
     table = db.open_table(TABLE_NAME)
     query = args.query
     max_results = args.max_results
+    candidates = max_results * CANDIDATE_MULTIPLIER
 
-    # Try hybrid search (BM25 + vector), fall back to vector-only
-    results_df = None
+    # -- Vector search ----------------------------------------------------
+    vector_rows: list[dict] = []
     try:
-        from lancedb.rerankers import LinearCombinationReranker
-
-        reranker = LinearCombinationReranker(weight=0.7)
-        results_df = (
-            table.search(query, query_type="hybrid")
-            .rerank(reranker=reranker)
-            .limit(max_results)
+        vdf = (
+            table.search(query, query_type="vector")
+            .limit(candidates)
             .to_pandas()
         )
+        if not vdf.empty:
+            vector_rows = vdf.to_dict("records")
     except Exception:
-        try:
-            results_df = (
-                table.search(query)
-                .limit(max_results)
-                .to_pandas()
-            )
-        except Exception as exc:
-            json.dump({"results": [], "error": str(exc)}, sys.stdout)
-            return
+        pass
 
-    if results_df is None or results_df.empty:
+    # -- FTS search -------------------------------------------------------
+    fts_rows: list[dict] = []
+    try:
+        fdf = (
+            table.search(query, query_type="fts")
+            .limit(candidates)
+            .to_pandas()
+        )
+        if not fdf.empty:
+            fts_rows = fdf.to_dict("records")
+    except Exception:
+        pass  # FTS index may not exist — vector-only is fine
+
+    if not vector_rows and not fts_rows:
         json.dump({"results": []}, sys.stdout)
         return
 
-    output: list[dict] = []
-    for _, row in results_df.iterrows():
-        if "_relevance_score" in row:
-            score = float(row["_relevance_score"])
-        elif "_distance" in row:
-            score = round(1.0 / (1.0 + float(row["_distance"])), 4)
-        else:
-            score = 0.0
+    # -- Merge and rank ---------------------------------------------------
+    if vector_rows and fts_rows:
+        merged = _merge_hybrid_results(vector_rows, fts_rows)
+    elif vector_rows:
+        merged = [
+            {**r, "score": 1.0 - float(r.get("_distance", 1.0))}
+            for r in vector_rows
+        ]
+        merged.sort(key=lambda x: x["score"], reverse=True)
+    else:
+        merged = [
+            {**r, "score": _bm25_to_score(float(r.get("_score", 0.0)))}
+            for r in fts_rows
+        ]
+        merged.sort(key=lambda x: x["score"], reverse=True)
 
+    # -- Filter and format ------------------------------------------------
+    output: list[dict] = []
+    for entry in merged:
+        if entry["score"] < MIN_SCORE:
+            continue
+        if len(output) >= max_results:
+            break
         output.append({
-            "path": row["path"],
-            "start_line": int(row["start_line"]),
-            "end_line": int(row["end_line"]),
-            "score": round(score, 4),
-            "snippet": str(row["text"])[:500],
+            "path": entry["path"],
+            "start_line": int(entry["start_line"]),
+            "end_line": int(entry["end_line"]),
+            "score": round(entry["score"], 4),
+            "snippet": str(entry["text"])[:700],
         })
 
     json.dump({"results": output}, sys.stdout)

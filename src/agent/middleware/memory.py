@@ -156,7 +156,6 @@ def _generate_slug(llm: Any, conversation_text: str) -> str:
 
 def _build_archive_content(
     thread_id: str,
-    thread_title: str,
     conversation_text: str,
 ) -> str:
     """Build the archive markdown file content."""
@@ -164,7 +163,6 @@ def _build_archive_content(
     return f"""# Session: {now}
 
 - **Thread ID**: {thread_id}
-- **Title**: {thread_title}
 
 ## Conversation Summary
 
@@ -301,7 +299,6 @@ class MemoryMiddleware(AgentMiddleware[MemoryState, Any]):
 
         prev_thread_id = prev_thread["thread_id"]
         values = prev_thread.get("values") or {}
-        prev_title = values.get("thread_title", "Untitled")
         messages = values.get("messages", [])
 
         conversation_text = _extract_conversation_text(
@@ -315,7 +312,7 @@ class MemoryMiddleware(AgentMiddleware[MemoryState, Any]):
 
         date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         filename = f"{date_str}-{slug}.md"
-        content = _build_archive_content(prev_thread_id, prev_title, conversation_text)
+        content = _build_archive_content(prev_thread_id, conversation_text)
 
         try:
             sandbox = modal.Sandbox.from_id(sandbox_id)

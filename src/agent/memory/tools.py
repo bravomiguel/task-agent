@@ -92,7 +92,7 @@ def memory_search(
 
         lines = [f"Found {len(results)} result(s):\n"]
         for i, r in enumerate(results, 1):
-            snippet = r["snippet"][:200]
+            snippet = r["snippet"][:700]
             lines.append(
                 f'{i}. {r["path"]} (lines {r["start_line"]}-{r["end_line"]}, '
                 f'score: {r["score"]})\n   "{snippet}..."\n'
