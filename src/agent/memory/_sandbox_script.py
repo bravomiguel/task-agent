@@ -31,7 +31,7 @@ MEMORY_DIR = "/default-user/memory"
 EMBEDDING_MODEL = "text-embedding-3-small"
 
 CHUNK_TOKENS = 400
-CHUNK_OVERLAP = 50
+CHUNK_OVERLAP = 80
 CHARS_PER_TOKEN = 4  # rough approximation
 
 
@@ -100,13 +100,7 @@ def chunk_markdown(
 
 def _classify_source(filename: str) -> str:
     """Derive a source label from the filename."""
-    if filename == "MEMORY.md":
-        return "long-term"
-    if re.match(r"\d{4}-\d{2}-\d{2}\.md$", filename):
-        return "daily-log"
-    if re.match(r"\d{4}-\d{2}-\d{2}-.+\.md$", filename):
-        return "session-archive"
-    return "note"
+    return "memory"
 
 
 # ---------------------------------------------------------------------------
