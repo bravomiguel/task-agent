@@ -1,22 +1,16 @@
-"""Skills middleware for loading skills from user volume.
+"""Skills helpers for discovering skills from user volume.
 
-Implements Anthropic's progressive disclosure pattern for agent skills:
-1. Load skill metadata (name + description) from /default-user/skills directory at session start
-2. Inject skills list into system prompt
-3. Agent reads full SKILL.md on-demand when relevant
-
-Skills are stored in the user volume at /default-user/skills/.
+Provides module-level functions for parsing skill metadata from SKILL.md files
+in the sandbox. Used by ParallelSetupMiddleware for skill discovery.
 """
 
 from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any, Callable, Awaitable, NotRequired, TypedDict
+from typing import TypedDict
 
 import modal
-from langchain.agents.middleware import AgentMiddleware, AgentState
-from langchain.agents.middleware import ModelRequest, ModelResponse
 
 
 # Maximum size for SKILL.md files (10MB)
@@ -28,46 +22,6 @@ class SkillMetadata(TypedDict):
     name: str
     description: str
     path: str
-
-
-class SkillsState(AgentState):
-    """Extended state schema with skills metadata."""
-    skills_metadata: NotRequired[list[SkillMetadata]]
-
-
-SKILLS_SYSTEM_PROMPT = """
-## Skills System
-
-You have access to a skills library with specialized capabilities for document manipulation.
-These skills contain tested patterns from extensive trial and error that significantly improve output quality.
-
-**Skills Directory:** `/default-user/skills/`
-
-{skills_list}
-
-**CRITICAL - Read Skills BEFORE Acting:**
-
-When a user's task matches a skill, your FIRST action must be to read the SKILL.md file.
-Do NOT start writing code or creating files until you've read the relevant skill(s).
-
-**Task → Skill Mapping:**
-- "create/edit a Word document" → read `/default-user/skills/docx/SKILL.md`
-- "fill a PDF form" or "work with PDF" → read `/default-user/skills/pdf/SKILL.md`
-- "make a presentation" → read `/default-user/skills/pptx/SKILL.md`
-- "work with spreadsheet/Excel" → read `/default-user/skills/xlsx/SKILL.md`
-
-**Multiple Skills:**
-Complex tasks may require combining multiple skills. Don't limit yourself to one.
-Example: "Convert this spreadsheet data into a presentation" → read both xlsx AND pptx skills
-
-**Progressive Disclosure Pattern:**
-1. Recognize task matches a skill from the list above
-2. Read the SKILL.md file FIRST (use read_file tool)
-3. Follow the skill's workflows, patterns, and best practices
-4. Access supporting scripts/configs as directed by the skill
-
-The extra time to read skills before starting is worth it - they prevent common mistakes and produce better results.
-"""
 
 
 def _parse_skill_metadata(skill_md_path: Path, sandbox: modal.Sandbox) -> SkillMetadata | None:
@@ -163,113 +117,3 @@ def _list_skills_from_sandbox(sandbox: modal.Sandbox, skills_dir: str = "/defaul
         pass
 
     return skills
-
-
-class SkillsMiddleware(AgentMiddleware[SkillsState, Any]):
-    """Middleware for loading and exposing agent skills from user volume.
-
-    Implements progressive disclosure:
-    1. Parse YAML frontmatter from SKILL.md files at session start
-    2. Inject skills metadata (name + description) into system prompt
-    3. Agent reads full SKILL.md content when relevant to a task
-
-    Skills are stored in the user volume at /default-user/skills/.
-    """
-
-    state_schema = SkillsState
-
-    def __init__(
-        self,
-        skills_path: str = "/default-user/skills",
-    ) -> None:
-        """Initialize the skills middleware.
-
-        Args:
-            skills_path: Path to skills directory in sandbox (stored in user volume)
-        """
-        super().__init__()
-        self.skills_path = skills_path
-
-    def before_agent(
-        self, state: SkillsState, runtime: Any
-    ) -> dict[str, Any] | None:
-        """Load skills metadata from the skills directory.
-
-        Discovers available skills from the /default-user/skills/ directory at the start
-        of each interaction.
-        """
-        sandbox_id = state.get("modal_sandbox_id")
-        if not sandbox_id:
-            return None
-
-        try:
-            sandbox = modal.Sandbox.from_id(sandbox_id)
-
-            # Load skills metadata
-            skills = _list_skills_from_sandbox(sandbox, self.skills_path)
-
-            return {"skills_metadata": skills}
-        except Exception:
-            return None
-
-    async def abefore_agent(
-        self, state: SkillsState, runtime: Any
-    ) -> dict[str, Any] | None:
-        """Async version delegates to sync implementation."""
-        return self.before_agent(state, runtime)
-
-    def _format_skills_list(self, skills: list[SkillMetadata]) -> str:
-        """Format skills metadata for display in system prompt."""
-        if not skills:
-            return "(No skills available yet. Skills will appear in /default-user/skills/ when added.)"
-
-        lines = ["**Available Skills:**", ""]
-
-        for skill in skills:
-            lines.append(f"- **{skill['name']}**: {skill['description']}")
-            lines.append(f"  → Read `{skill['path']}` for full instructions")
-            lines.append("")
-
-        return "\n".join(lines)
-
-    def wrap_model_call(
-        self,
-        request: ModelRequest,
-        handler: Callable[[ModelRequest], ModelResponse],
-    ) -> ModelResponse:
-        """Inject skills documentation into the system prompt."""
-        skills_metadata = request.state.get("skills_metadata", [])
-
-        # Format skills list
-        skills_list = self._format_skills_list(skills_metadata)
-
-        # Format the skills documentation
-        skills_section = SKILLS_SYSTEM_PROMPT.format(skills_list=skills_list)
-
-        if request.system_prompt:
-            request.system_prompt = request.system_prompt + "\n\n" + skills_section
-        else:
-            request.system_prompt = skills_section
-
-        return handler(request)
-
-    async def awrap_model_call(
-        self,
-        request: ModelRequest,
-        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
-    ) -> ModelResponse:
-        """Async version of wrap_model_call."""
-        skills_metadata = request.state.get("skills_metadata", [])
-
-        # Format skills list
-        skills_list = self._format_skills_list(skills_metadata)
-
-        # Format the skills documentation
-        skills_section = SKILLS_SYSTEM_PROMPT.format(skills_list=skills_list)
-
-        if request.system_prompt:
-            request.system_prompt = request.system_prompt + "\n\n" + skills_section
-        else:
-            request.system_prompt = skills_section
-
-        return await handler(request)

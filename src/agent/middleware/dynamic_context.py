@@ -1,23 +1,71 @@
-"""Runtime context middleware for injecting runtime context into prompts and messages."""
+"""Runtime context middleware for assembling system prompt and injecting message context.
+
+Combines three concerns into a single wrap_model_call:
+1. Agents prompt — appends AGENTS.md content to system prompt
+2. Runtime context — appends datetime, thread ID; stamps human messages
+3. Skills — appends skills documentation to system prompt
+"""
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Callable, Awaitable
+from typing import Any, Callable, Awaitable, NotRequired
 
 from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
 
 from agent.middleware.modal_sandbox import ModalSandboxState
+from agent.middleware.skills import SkillMetadata
 
 
-class RuntimeContextMiddleware(AgentMiddleware[ModalSandboxState, Any]):
-    """Middleware that injects runtime context into system prompt and human messages.
+SKILLS_SYSTEM_PROMPT = """
+## Skills System
 
-    System prompt: thread ID, access tokens, current date/time.
+You have access to a skills library with specialized capabilities for document manipulation.
+These skills contain tested patterns from extensive trial and error that significantly improve output quality.
+
+**Skills Directory:** `/default-user/skills/`
+
+{skills_list}
+
+**CRITICAL - Read Skills BEFORE Acting:**
+
+When a user's task matches a skill, your FIRST action must be to read the SKILL.md file.
+Do NOT start writing code or creating files until you've read the relevant skill(s).
+
+**Task → Skill Mapping:**
+- "create/edit a Word document" → read `/default-user/skills/docx/SKILL.md`
+- "fill a PDF form" or "work with PDF" → read `/default-user/skills/pdf/SKILL.md`
+- "make a presentation" → read `/default-user/skills/pptx/SKILL.md`
+- "work with spreadsheet/Excel" → read `/default-user/skills/xlsx/SKILL.md`
+
+**Multiple Skills:**
+Complex tasks may require combining multiple skills. Don't limit yourself to one.
+Example: "Convert this spreadsheet data into a presentation" → read both xlsx AND pptx skills
+
+**Progressive Disclosure Pattern:**
+1. Recognize task matches a skill from the list above
+2. Read the SKILL.md file FIRST (use read_file tool)
+3. Follow the skill's workflows, patterns, and best practices
+4. Access supporting scripts/configs as directed by the skill
+
+The extra time to read skills before starting is worth it - they prevent common mistakes and produce better results.
+"""
+
+
+class RuntimeContextState(ModalSandboxState):
+    """Extended state with agents prompt and skills metadata."""
+    agents_prompt: NotRequired[str]
+    skills_metadata: NotRequired[list[SkillMetadata]]
+
+
+class RuntimeContextMiddleware(AgentMiddleware[RuntimeContextState, Any]):
+    """Middleware that assembles the system prompt and injects message context.
+
+    System prompt: agents prompt, datetime, thread ID, skills documentation.
     Human messages: stamps each with a <current-datetime> tag (persistent, once per message).
     """
 
-    state_schema = ModalSandboxState
+    state_schema = RuntimeContextState
 
     def _message_contains(self, msg: Any, marker: str) -> bool:
         """Check if a message's content already contains a marker string."""
@@ -77,14 +125,54 @@ class RuntimeContextMiddleware(AgentMiddleware[ModalSandboxState, Any]):
         if context:
             request.system_prompt = request.system_prompt + context
 
+    def _format_skills_list(self, skills: list[SkillMetadata]) -> str:
+        """Format skills metadata for display in system prompt."""
+        if not skills:
+            return "(No skills available yet. Skills will appear in /default-user/skills/ when added.)"
+
+        lines = ["**Available Skills:**", ""]
+
+        for skill in skills:
+            lines.append(f"- **{skill['name']}**: {skill['description']}")
+            lines.append(f"  → Read `{skill['path']}` for full instructions")
+            lines.append("")
+
+        return "\n".join(lines)
+
+    def _inject_skills(self, request: ModelRequest) -> None:
+        """Inject skills documentation into system prompt."""
+        skills_metadata = request.state.get("skills_metadata", [])
+        skills_list = self._format_skills_list(skills_metadata)
+        skills_section = SKILLS_SYSTEM_PROMPT.format(skills_list=skills_list)
+
+        if request.system_prompt:
+            request.system_prompt = request.system_prompt + "\n\n" + skills_section
+        else:
+            request.system_prompt = skills_section
+
+    def _inject_all(self, request: ModelRequest) -> None:
+        """Assemble all prompt components in order."""
+        # 1. Agents prompt (AGENTS.md content)
+        agents_prompt = request.state.get("agents_prompt")
+        if agents_prompt and request.system_prompt:
+            request.system_prompt = request.system_prompt + "\n\n" + agents_prompt
+
+        # 2. Runtime context (datetime + thread ID)
+        self._inject_system_prompt_context(request)
+
+        # 3. Datetime stamp on human messages
+        self._inject_datetime_tag(request.messages)
+
+        # 4. Skills documentation
+        self._inject_skills(request)
+
     def wrap_model_call(
         self,
         request: ModelRequest,
         handler: Callable[[ModelRequest], ModelResponse],
     ) -> ModelResponse:
-        """Inject runtime context into system prompt and stamp human messages."""
-        self._inject_system_prompt_context(request)
-        self._inject_datetime_tag(request.messages)
+        """Assemble system prompt and stamp human messages."""
+        self._inject_all(request)
         return handler(request)
 
     async def awrap_model_call(
@@ -92,7 +180,6 @@ class RuntimeContextMiddleware(AgentMiddleware[ModalSandboxState, Any]):
         request: ModelRequest,
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse:
-        """Async version: Inject runtime context into system prompt and stamp human messages."""
-        self._inject_system_prompt_context(request)
-        self._inject_datetime_tag(request.messages)
+        """Async version: Assemble system prompt and stamp human messages."""
+        self._inject_all(request)
         return await handler(request)

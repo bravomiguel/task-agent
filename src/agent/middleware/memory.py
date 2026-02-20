@@ -1,12 +1,12 @@
-"""Memory middleware for session archiving, daily log reminders, and pre-compaction flush.
+"""Memory middleware for daily log reminders and pre-compaction flush.
 
-Three responsibilities:
-1. Session archive — on new thread start, archives the previous thread's conversation
-   to /default-user/memory/YYYY-MM-DD-slug.md (like OpenClaw's session-memory hook).
-2. Always-on memory reminder — appended to every user message, nudging the
+Two responsibilities:
+1. Always-on memory reminder — appended to every user message, nudging the
    agent to follow Memory section instructions (read logs, write when appropriate).
-3. Pre-compaction flush — when token count nears the summarization threshold,
+2. Pre-compaction flush — when token count nears the summarization threshold,
    injects a directive to write durable memories before context is compressed.
+
+Session archiving and memory index sync are handled by ParallelSetupMiddleware.
 
 Directives are injected via wrap_model_call by mutating message objects directly,
 so they persist across turns in the conversation history.
@@ -253,120 +253,26 @@ def _write_archive_to_volume(
 
 
 class MemoryMiddleware(AgentMiddleware[MemoryState, Any]):
-    """Middleware for memory management — session archiving, reminders, and pre-compaction flush.
+    """Middleware for memory reminders and pre-compaction flush.
 
-    before_agent: Archives the previous thread's conversation to a dated markdown file.
     before_model: Tracks token count for pre-compaction flush.
     wrap_model_call: Injects memory reminder and flush directives into messages.
+
+    Session archiving and memory index sync are handled by ParallelSetupMiddleware.
     """
 
     state_schema = MemoryState
 
     def __init__(
         self,
-        llm: Any = None,
-        api_url: str | None = None,
         summarization_threshold: int = 170_000,
         soft_margin: int = 8_000,
-        archive_message_limit: int = 15,
     ):
         super().__init__()
-        self._llm = llm
-        self._api_url = api_url or LANGGRAPH_API_URL
         self._summarization_threshold = summarization_threshold
         self._soft_margin = soft_margin
         self._flush_threshold = summarization_threshold - soft_margin
         self._reset_threshold = summarization_threshold // 2
-        self._archive_message_limit = archive_message_limit
-
-    # ------------------------------------------------------------------
-    # Session archive (before_agent)
-    # ------------------------------------------------------------------
-
-    async def _aarchive_previous_session(self, state: MemoryState) -> None:
-        """Archive the previous main session's conversation if not yet archived."""
-        if state.get("session_type", "main") != "main":
-            return
-
-        current_thread_id = state.get("thread_id")
-        sandbox_id = state.get("modal_sandbox_id")
-        if not current_thread_id or not sandbox_id or not self._llm:
-            return
-
-        prev_thread = await _afind_previous_thread(current_thread_id, self._api_url)
-        if not prev_thread:
-            return
-
-        prev_thread_id = prev_thread["thread_id"]
-        values = prev_thread.get("values") or {}
-        messages = values.get("messages", [])
-
-        conversation_text = _extract_conversation_text(
-            messages, limit=self._archive_message_limit
-        )
-        if not conversation_text:
-            await _amark_thread_archived(prev_thread_id, self._api_url)
-            return
-
-        slug = _generate_slug(self._llm, conversation_text)
-
-        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        filename = f"{date_str}-{slug}.md"
-        content = _build_archive_content(prev_thread_id, conversation_text)
-
-        try:
-            sandbox = modal.Sandbox.from_id(sandbox_id)
-            _write_archive_to_volume(sandbox, filename, content)
-        except Exception as e:
-            logger.warning("[SessionArchive] failed to write archive: %s", e)
-            return
-
-        await _amark_thread_archived(prev_thread_id, self._api_url)
-
-    def before_agent(
-        self, state: MemoryState, runtime: Runtime
-    ) -> dict[str, Any] | None:
-        """Default session_type (sync path — archive requires async)."""
-        if not state.get("session_type"):
-            return {"session_type": "main"}
-        return None
-
-    async def abefore_agent(
-        self, state: MemoryState, runtime: Runtime
-    ) -> dict[str, Any] | None:
-        """Default session_type, archive previous session, and fire-and-forget memory index sync."""
-        updates: dict[str, Any] = {}
-
-        if not state.get("session_type"):
-            updates["session_type"] = "main"
-
-        try:
-            await self._aarchive_previous_session(state)
-        except Exception as e:
-            logger.warning("[SessionArchive] unexpected error: %s", e)
-
-        # Fire-and-forget memory-index sync — runs in a background thread
-        # so it doesn't add latency to agent startup. Gated to once per session.
-        sandbox_id = state.get("modal_sandbox_id")
-        if sandbox_id and not state.get("_memory_index_synced"):
-            import threading
-            from agent.memory.indexer import sync_memory_index
-
-            def _bg_sync():
-                try:
-                    import time as _time
-                    logger.info("[MemoryIndex] background sync starting (sandbox=%s)", sandbox_id)
-                    t0 = _time.monotonic()
-                    sb = modal.Sandbox.from_id(sandbox_id)
-                    sync_memory_index(sb)
-                    logger.info("[MemoryIndex] background sync completed in %.1fs", _time.monotonic() - t0)
-                except Exception as e:
-                    logger.warning("[MemoryIndex] background sync failed: %s", e)
-
-            threading.Thread(target=_bg_sync, daemon=True).start()
-            updates["_memory_index_synced"] = True
-
-        return updates or None
 
     # ------------------------------------------------------------------
     # Pre-compaction flush (before_model)

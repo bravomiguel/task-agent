@@ -7,16 +7,15 @@ from langchain_openai import ChatOpenAI
 from agent.tools import present_file, view_image
 from agent.memory.tools import memory_search
 from agent.middleware import (
-    AgentsPromptMiddleware,
     MemoryMiddleware,
     ModalSandboxMiddleware,
     MoveUploadsMiddleware,
+    ParallelSetupMiddleware,
     RuntimeContextMiddleware,
     ThreadTitleMiddleware,
     IsDoneMiddleware,
     OpenFilePathMiddleware,
     ToolDescriptionMiddleware,
-    SkillsMiddleware,
 )
 from agent.system_prompt import SYSTEM_PROMPT
 from agent.modal_backend import LazyModalBackend
@@ -48,12 +47,11 @@ modal_sandbox_middleware = ModalSandboxMiddleware()
 
 agent_middleware = [
     modal_sandbox_middleware,
-    MoveUploadsMiddleware(),  # Move temp uploads before agent runs
-    AgentsPromptMiddleware(),  # Load AGENTS.md from volume into prompt
-    RuntimeContextMiddleware(),
-    SkillsMiddleware(),
+    MoveUploadsMiddleware(),
+    ParallelSetupMiddleware(llm=gpt_4_1_mini),  # Parallel: agents prompt + skills + memory setup
+    RuntimeContextMiddleware(),  # Assemble system prompt: agents prompt + context + skills
     ToolDescriptionMiddleware(),
-    MemoryMiddleware(llm=gpt_4_1_mini),  # Session archive + memory reminders + pre-compaction flush
+    MemoryMiddleware(),  # Memory reminders + pre-compaction flush
     IsDoneMiddleware(),
     OpenFilePathMiddleware(),
     ThreadTitleMiddleware(llm=gpt_4_1_mini),
