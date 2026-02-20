@@ -8,7 +8,7 @@ from agent.middleware.thread_title import ThreadTitleMiddleware
 from agent.middleware.is_done import IsDoneMiddleware
 from agent.middleware.open_file_path import OpenFilePathMiddleware
 from agent.middleware.tool_description import ToolDescriptionMiddleware
-from agent.middleware.parallel_setup import ParallelSetupMiddleware
+from agent.middleware.session_setup import SessionSetupMiddleware
 from agent.middleware.triage_filter import TriageFilterMiddleware
 from agent.middleware.triage_threads import TriageThreadsMiddleware
 from agent.middleware.triage_context import TriageContextMiddleware
@@ -21,7 +21,7 @@ __all__ = [
     "ThreadTitleMiddleware",
     "IsDoneMiddleware",
     "OpenFilePathMiddleware",
-    "ParallelSetupMiddleware",
+    "SessionSetupMiddleware",
     "ToolDescriptionMiddleware",
     "TriageFilterMiddleware",
     "TriageThreadsMiddleware",

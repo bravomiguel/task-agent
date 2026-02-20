@@ -1,4 +1,4 @@
-"""Parallel setup middleware — runs agents prompt, skills, and memory setup concurrently.
+"""Session setup middleware — runs agents prompt, skills, and memory setup concurrently.
 
 Replaces the sequential before_agent hooks of AgentsPromptMiddleware,
 SkillsMiddleware, and MemoryMiddleware with a single hook that runs all
@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 _LOCAL_AGENTS_MD = Path(__file__).parent.parent.parent.parent / "prompts" / "AGENTS.md"
 
 
-class ParallelSetupMiddleware(AgentMiddleware[AgentState, Any]):
+class SessionSetupMiddleware(AgentMiddleware[AgentState, Any]):
     """Runs agents prompt loading, skills discovery, and memory setup in parallel.
 
     Replaces the before_agent hooks of AgentsPromptMiddleware,

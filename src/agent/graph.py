@@ -10,7 +10,7 @@ from agent.middleware import (
     MemoryMiddleware,
     ModalSandboxMiddleware,
     MoveUploadsMiddleware,
-    ParallelSetupMiddleware,
+    SessionSetupMiddleware,
     RuntimeContextMiddleware,
     ThreadTitleMiddleware,
     IsDoneMiddleware,
@@ -48,7 +48,7 @@ modal_sandbox_middleware = ModalSandboxMiddleware()
 agent_middleware = [
     modal_sandbox_middleware,
     MoveUploadsMiddleware(),
-    ParallelSetupMiddleware(llm=gpt_4_1_mini),  # Parallel: agents prompt + skills + memory setup
+    SessionSetupMiddleware(llm=gpt_4_1_mini),  # Parallel: agents prompt + skills + memory setup
     RuntimeContextMiddleware(),  # Assemble system prompt: agents prompt + context + skills
     ToolDescriptionMiddleware(),
     MemoryMiddleware(),  # Memory reminders + pre-compaction flush
