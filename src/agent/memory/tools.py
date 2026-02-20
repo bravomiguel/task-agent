@@ -1,12 +1,11 @@
 """Memory search tool for the agent.
 
 Executes a hybrid (BM25 + vector) search against the LanceDB memory index
-inside the Modal sandbox and returns formatted results.
+inside the Modal sandbox and returns raw JSON results.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 from pathlib import Path
@@ -35,17 +34,14 @@ def memory_search(
     max_results: int = 6,
     state: Annotated[dict, InjectedState] = None,
 ) -> str:
-    """Search your memory (daily logs and long-term notes) for relevant context.
-
-    Use this to recall information from previous sessions — past conversations,
-    decisions, user preferences, and anything captured in your memory files.
+    """Mandatory recall step: semantically search MEMORY.md + memory/*.md before answering questions about prior work, decisions, dates, people, preferences, or todos; returns top snippets with path + lines.
 
     Args:
         query: Natural language description of what you're looking for.
         max_results: Maximum number of results to return (default: 6).
 
     Returns:
-        Matching snippets with file paths and line numbers.
+        JSON with results array containing path, startLine, endLine, score, snippet, source.
         Use read_file to get full context for any relevant result.
     """
     if state is None:
@@ -84,21 +80,7 @@ def memory_search(
             logger.warning("[MemorySearch] failed: %s", stderr[:500])
             return f"Error searching memory: {stderr[:200]}"
 
-        data = json.loads(stdout)
-        results = data.get("results", [])
-
-        if not results:
-            return "No matching memories found."
-
-        lines = [f"Found {len(results)} result(s):\n"]
-        for i, r in enumerate(results, 1):
-            snippet = r["snippet"][:700]
-            lines.append(
-                f'{i}. {r["path"]} (lines {r["start_line"]}-{r["end_line"]}, '
-                f'score: {r["score"]})\n   "{snippet}..."\n'
-            )
-
-        return "\n".join(lines)
+        return stdout
 
     except Exception as exc:
         logger.warning("[MemorySearch] error: %s", exc)

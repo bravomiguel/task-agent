@@ -388,13 +388,18 @@ def cmd_search(args: argparse.Namespace) -> None:
             break
         output.append({
             "path": entry["path"],
-            "start_line": int(entry["start_line"]),
-            "end_line": int(entry["end_line"]),
+            "startLine": int(entry["start_line"]),
+            "endLine": int(entry["end_line"]),
             "score": round(entry["score"], 4),
             "snippet": str(entry["text"])[:700],
+            "source": entry.get("source", "memory"),
         })
 
-    json.dump({"results": output}, sys.stdout)
+    json.dump({
+        "results": output,
+        "provider": "openai",
+        "model": EMBEDDING_MODEL,
+    }, sys.stdout)
 
 
 # ---------------------------------------------------------------------------
