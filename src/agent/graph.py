@@ -3,7 +3,8 @@
 from deepagents import create_deep_agent
 from deepagents_cli.tools import http_request, fetch_url, web_search, tavily_client
 from langchain.chat_models import init_chat_model
-from langchain_openai import ChatOpenAI
+from langchain_anthropic import ChatAnthropic
+from agent.claude_auth import get_claude_code_token
 from agent.tools import present_file, view_image
 from agent.memory.tools import memory_search
 from agent.middleware import (
@@ -21,11 +22,10 @@ from agent.system_prompt import SYSTEM_PROMPT
 from agent.modal_backend import LazyModalBackend
 
 # Initialize models
-gpt_5_1 = ChatOpenAI(
-    model="gpt-5.1",
-    reasoning_effort="low",
-    use_responses_api=True,
-    output_version="responses/v1",
+_claude_token = get_claude_code_token()
+claude_opus = ChatAnthropic(
+    model="claude-opus-4-6",
+    default_headers={"Authorization": f"Bearer {_claude_token}"},
 )
 gpt_4_1_mini = init_chat_model(model="openai:gpt-4.1-mini", disable_streaming=True)
 
@@ -64,7 +64,7 @@ if tavily_client is not None:
 
 # Create the agent with backend factory
 agent = create_deep_agent(
-    model=gpt_5_1,
+    model=claude_opus,
     system_prompt=SYSTEM_PROMPT,
     tools=tools,
     middleware=agent_middleware,
