@@ -201,7 +201,7 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
             verbose=True,
         )
 
-        # Poll until ready
+        # Poll until sandbox is running
         for _ in range(self._startup_timeout // 2):
             if sandbox.poll() is not None:
                 raise RuntimeError("Modal sandbox terminated during startup")
@@ -218,21 +218,22 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
             raise RuntimeError(
                 f"Modal sandbox failed to start within {self._startup_timeout}s")
 
-        # Reload volumes to get latest committed state
+        # Create directory structure in a single exec call
+        sandbox.exec(
+            "mkdir", "-p",
+            f"/default-user/thread-files/{thread_id}/workspace",
+            f"/default-user/thread-files/{thread_id}/uploads",
+            f"/default-user/thread-files/{thread_id}/outputs",
+            "/default-user/memory",
+            "/default-user/skills",
+            "/default-user/prompts",
+            "/default-user/thread-chats",
+            "/default-user/.temp-uploads",
+            timeout=10,
+        ).wait()
+
+        # Reload volumes to see committed state after directory creation
         sandbox.reload_volumes()
-
-        # Create new directory structure in sandbox
-        # Thread-specific directories
-        sandbox.exec("mkdir", "-p", f"/default-user/thread-files/{thread_id}/workspace", timeout=10).wait()
-        sandbox.exec("mkdir", "-p", f"/default-user/thread-files/{thread_id}/uploads", timeout=10).wait()
-        sandbox.exec("mkdir", "-p", f"/default-user/thread-files/{thread_id}/outputs", timeout=10).wait()
-
-        # User-level directories
-        sandbox.exec("mkdir", "-p", "/default-user/memory", timeout=10).wait()
-        sandbox.exec("mkdir", "-p", "/default-user/skills", timeout=10).wait()
-        sandbox.exec("mkdir", "-p", "/default-user/prompts", timeout=10).wait()
-        sandbox.exec("mkdir", "-p", "/default-user/thread-chats", timeout=10).wait()
-        sandbox.exec("mkdir", "-p", "/default-user/.temp-uploads", timeout=10).wait()
 
         return {
             "modal_sandbox_id": sandbox.object_id,
