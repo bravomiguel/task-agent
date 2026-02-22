@@ -35,7 +35,16 @@ class LazyModalBackend(SandboxBackendProtocol):
         return self._backend
 
     def _reload_volumes(self):
-        """Reload all mounted volumes in the sandbox to see latest changes."""
+        """Reload all mounted volumes in the sandbox to see latest changes.
+
+        Skips reload when ``_skip_volume_reload`` is set in agent state.
+        This avoids a race condition on cold sandboxes where
+        reload_volumes() causes the volume to appear empty while the
+        remount propagates.  The flag is set by ModalSandboxMiddleware on
+        new sandbox creation and cleared after the first model turn.
+        """
+        if hasattr(self._runtime, 'state') and self._runtime.state.get("_skip_volume_reload"):
+            return
         self._get_sandbox().reload_volumes()
 
     def _sync_volume(self, mount_path: str):

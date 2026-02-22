@@ -97,6 +97,7 @@ class ModalSandboxState(AgentState):
     modal_sandbox_id: NotRequired[str]
     thread_id: NotRequired[str]
     modal_snapshot_id: NotRequired[str]
+    _skip_volume_reload: NotRequired[bool]
 
 
 class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
@@ -232,12 +233,18 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
             timeout=10,
         ).wait()
 
-        # Reload volumes to see committed state after directory creation
-        sandbox.reload_volumes()
+        # NOTE: intentionally not calling reload_volumes() here.
+        # The volume is already mounted with latest committed state at sandbox
+        # creation. Reloading after mkdir causes the volume to appear empty
+        # while the reload is in progress, leading to first-read failures.
 
         return {
             "modal_sandbox_id": sandbox.object_id,
             "thread_id": thread_id,
+            # Skip volume reloads during the first model turn to avoid a race
+            # condition where reload_volumes() causes the volume to appear empty
+            # on a cold sandbox. Cleared by after_model once the cache is warm.
+            "_skip_volume_reload": True,
         }
 
     async def abefore_agent(
@@ -245,6 +252,20 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
     ) -> dict[str, Any] | None:
         """Async version delegates to sync implementation."""
         return self.before_agent(state, runtime)
+
+    def after_model(
+        self, state: ModalSandboxState, runtime: Runtime
+    ) -> dict[str, Any] | None:
+        """Clear the skip-reload flag after the first model turn."""
+        if state.get("_skip_volume_reload"):
+            return {"_skip_volume_reload": False}
+        return None
+
+    async def aafter_model(
+        self, state: ModalSandboxState, runtime: Runtime
+    ) -> dict[str, Any] | None:
+        """Async version delegates to sync implementation."""
+        return self.after_model(state, runtime)
 
     def after_agent(
         self, state: ModalSandboxState, runtime: Runtime
