@@ -64,7 +64,6 @@ class LazyModalBackend(SandboxBackendProtocol):
         return self._get_backend().ls_info(path)
 
     def read(self, file_path, offset=0, limit=2000):
-        # Reload before reading from /default-user/ to get latest from other sandboxes
         if file_path.startswith("/default-user"):
             self._reload_volumes()
         return self._get_backend().read(file_path, offset, limit)

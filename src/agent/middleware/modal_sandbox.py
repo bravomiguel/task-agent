@@ -253,19 +253,30 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
         """Async version delegates to sync implementation."""
         return self.before_agent(state, runtime)
 
-    def after_model(
+    def before_model(
         self, state: ModalSandboxState, runtime: Runtime
     ) -> dict[str, Any] | None:
-        """Clear the skip-reload flag after the first model turn."""
+        """Clear the skip-reload flag on the second model call.
+
+        The first model call produces tool calls that should skip
+        reload_volumes(). By the second model call, those tools have
+        finished and the volume cache is warm, so we clear the flag.
+        We detect the second call by checking for tool result messages.
+        """
         if state.get("_skip_volume_reload"):
-            return {"_skip_volume_reload": False}
+            messages = state.get("messages", [])
+            has_tool_results = any(
+                getattr(m, "type", None) == "tool" for m in messages
+            )
+            if has_tool_results:
+                return {"_skip_volume_reload": False}
         return None
 
-    async def aafter_model(
+    async def abefore_model(
         self, state: ModalSandboxState, runtime: Runtime
     ) -> dict[str, Any] | None:
         """Async version delegates to sync implementation."""
-        return self.after_model(state, runtime)
+        return self.before_model(state, runtime)
 
     def after_agent(
         self, state: ModalSandboxState, runtime: Runtime
