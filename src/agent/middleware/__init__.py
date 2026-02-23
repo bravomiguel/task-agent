@@ -4,9 +4,7 @@ from agent.middleware.memory import MemoryMiddleware
 from agent.middleware.modal_sandbox import ModalSandboxMiddleware
 from agent.middleware.move_uploads import MoveUploadsMiddleware
 from agent.middleware.dynamic_context import RuntimeContextMiddleware
-from agent.middleware.thread_title import ThreadTitleMiddleware
-from agent.middleware.is_done import IsDoneMiddleware
-from agent.middleware.open_file_path import OpenFilePathMiddleware
+from agent.middleware.thread_metadata import ThreadMetadataMiddleware
 from agent.middleware.tool_description import ToolDescriptionMiddleware
 from agent.middleware.session_setup import SessionSetupMiddleware
 from agent.middleware.triage_filter import TriageFilterMiddleware
@@ -18,9 +16,7 @@ __all__ = [
     "ModalSandboxMiddleware",
     "MoveUploadsMiddleware",
     "RuntimeContextMiddleware",
-    "ThreadTitleMiddleware",
-    "IsDoneMiddleware",
-    "OpenFilePathMiddleware",
+    "ThreadMetadataMiddleware",
     "SessionSetupMiddleware",
     "ToolDescriptionMiddleware",
     "TriageFilterMiddleware",

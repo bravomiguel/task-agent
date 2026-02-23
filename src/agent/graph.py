@@ -13,9 +13,7 @@ from agent.middleware import (
     MoveUploadsMiddleware,
     SessionSetupMiddleware,
     RuntimeContextMiddleware,
-    ThreadTitleMiddleware,
-    IsDoneMiddleware,
-    OpenFilePathMiddleware,
+    ThreadMetadataMiddleware,
     ToolDescriptionMiddleware,
 )
 from agent.system_prompt import SYSTEM_PROMPT
@@ -52,9 +50,7 @@ agent_middleware = [
     RuntimeContextMiddleware(),  # Assemble system prompt: agents prompt + context + skills
     ToolDescriptionMiddleware(),
     MemoryMiddleware(),  # Memory reminders + pre-compaction flush
-    IsDoneMiddleware(),
-    OpenFilePathMiddleware(),
-    ThreadTitleMiddleware(llm=gpt_4_1_mini),
+    ThreadMetadataMiddleware(),
 ]
 
 # Build tools list - conditionally include web_search if Tavily is available

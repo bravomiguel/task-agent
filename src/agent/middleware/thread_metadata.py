@@ -1,4 +1,4 @@
-"""Is done middleware for tracking task completion state."""
+"""Thread metadata middleware — contributes thread_title and is_done state."""
 
 from __future__ import annotations
 
@@ -18,10 +18,16 @@ def is_done_reducer(left, right):
     return right
 
 
-class IsDoneState(AgentState):
+class ThreadMetadataState(AgentState):
+    thread_title: NotRequired[str]
     is_done: Annotated[NotRequired[bool], is_done_reducer]
 
 
-class IsDoneMiddleware(AgentMiddleware[IsDoneState]):
-    """Middleware that adds is_done boolean to agent state."""
-    state_schema = IsDoneState
+class ThreadMetadataMiddleware(AgentMiddleware[ThreadMetadataState]):
+    """Middleware that adds thread_title and is_done to agent state.
+
+    Both fields are set externally (by the frontend or agent output).
+    This middleware only contributes the state schema — no hooks.
+    """
+
+    state_schema = ThreadMetadataState
