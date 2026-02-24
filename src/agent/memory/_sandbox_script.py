@@ -331,6 +331,7 @@ def cmd_search(args: argparse.Namespace) -> None:
     table = db.open_table(TABLE_NAME)
     query = args.query
     max_results = args.max_results
+    min_score = args.min_score
     candidates = max_results * CANDIDATE_MULTIPLIER
 
     # -- Vector search ----------------------------------------------------
@@ -382,7 +383,7 @@ def cmd_search(args: argparse.Namespace) -> None:
     # -- Filter and format ------------------------------------------------
     output: list[dict] = []
     for entry in merged:
-        if entry["score"] < MIN_SCORE:
+        if entry["score"] < min_score:
             continue
         if len(output) >= max_results:
             break
@@ -416,6 +417,7 @@ def main() -> None:
     p_search = sub.add_parser("search", help="Hybrid search")
     p_search.add_argument("--query", required=True)
     p_search.add_argument("--max-results", type=int, default=6)
+    p_search.add_argument("--min-score", type=float, default=MIN_SCORE)
     p_search.add_argument("--api-key", default="")
 
     args = parser.parse_args()

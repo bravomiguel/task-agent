@@ -32,6 +32,7 @@ def _load_script() -> str:
 def memory_search(
     query: str,
     max_results: int = 6,
+    min_score: float = 0.35,
     state: Annotated[dict, InjectedState] = None,
 ) -> str:
     """Mandatory recall step: semantically search MEMORY.md + memory/*.md before answering questions about prior work, decisions, dates, people, preferences, or todos; returns top snippets with path + lines.
@@ -39,6 +40,7 @@ def memory_search(
     Args:
         query: Natural language description of what you're looking for.
         max_results: Maximum number of results to return (default: 6).
+        min_score: Minimum relevance score threshold 0-1 (default: 0.35).
 
     Returns:
         JSON with results array containing path, startLine, endLine, score, snippet, source.
@@ -65,6 +67,7 @@ def memory_search(
             "python3", "-", "search",
             "--query", query,
             "--max-results", str(max_results),
+            "--min-score", str(min_score),
             "--api-key", api_key,
             timeout=30,
         )
