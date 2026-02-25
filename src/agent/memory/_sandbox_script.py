@@ -39,7 +39,7 @@ CHARS_PER_TOKEN = 4  # rough approximation
 VECTOR_WEIGHT = 0.7
 TEXT_WEIGHT = 0.3
 CANDIDATE_MULTIPLIER = 4
-MIN_SCORE = 0.30
+MIN_SCORE = 0.35
 
 
 # ---------------------------------------------------------------------------

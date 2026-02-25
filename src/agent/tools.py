@@ -247,7 +247,7 @@ def _load_memory_script() -> str:
 def memory_search(
     query: str,
     max_results: int = 6,
-    min_score: float = 0.30,
+    min_score: float = 0.35,
     state: Annotated[dict, InjectedState] = None,
 ) -> str:
     """Mandatory recall step: semantically search MEMORY.md + memory/*.md before answering questions about prior work, decisions, dates, people, preferences, or todos; returns top snippets with path + lines.
