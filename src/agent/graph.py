@@ -19,11 +19,18 @@ from agent.middleware import (
 from agent.system_prompt import SYSTEM_PROMPT
 from agent.modal_backend import LazyModalBackend
 
-# Initialize models
+# Initialize models — use Claude Code OAuth token for auth.
+# Clear ANTHROPIC_API_KEY so the SDK doesn't send X-Api-Key alongside Bearer.
+# The oauth-2025-04-20 beta header is required for OAuth token auth.
+import os
+os.environ.pop("ANTHROPIC_API_KEY", None)
 _claude_token = get_claude_code_token()
 claude_opus = ChatAnthropic(
     model="claude-opus-4-6",
-    default_headers={"Authorization": f"Bearer {_claude_token}"},
+    default_headers={
+        "Authorization": f"Bearer {_claude_token}",
+        "anthropic-beta": "oauth-2025-04-20",
+    },
 )
 gpt_4_1_mini = init_chat_model(model="openai:gpt-4.1-mini", disable_streaming=True)
 
