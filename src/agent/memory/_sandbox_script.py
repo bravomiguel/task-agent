@@ -419,7 +419,7 @@ def cmd_search(args: argparse.Namespace) -> None:
             "startLine": int(entry["start_line"]),
             "endLine": int(entry["end_line"]),
             "score": round(entry["score"], 4),
-            "snippet": str(entry["text"])[:700],
+            "snippet": str(entry["text"]),
             "source": entry.get("source", "memory"),
         })
 
