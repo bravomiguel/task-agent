@@ -1,7 +1,7 @@
 """Skills helpers for discovering skills from user volume.
 
 Provides module-level functions for parsing skill metadata from SKILL.md files
-in the sandbox. Used by ParallelSetupMiddleware for skill discovery.
+in the sandbox. Used by SessionSetupMiddleware for skill discovery.
 """
 
 from __future__ import annotations

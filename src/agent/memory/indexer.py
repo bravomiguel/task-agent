@@ -90,6 +90,13 @@ def sync_memory_index(sandbox: modal.Sandbox) -> dict:
             logger.warning("[MemoryIndex] could not parse stdout: %s", stdout[:500])
             result = {"status": "ok", "raw": stdout[:500]}
 
+        # Commit LanceDB writes to the volume so subsequent reload_volumes()
+        # calls (e.g. from memory_search) don't wipe the index.
+        t4 = time.monotonic()
+        sync_proc = sandbox.exec("sync", "/default-user", timeout=30)
+        sync_proc.wait()
+        logger.info("[MemoryIndex] volume synced in %.1fs", time.monotonic() - t4)
+
         logger.info("[MemoryIndex] sync result: %s (total %.1fs)", result, time.monotonic() - t0)
         return result
 

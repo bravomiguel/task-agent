@@ -5,15 +5,14 @@ from deepagents_cli.tools import http_request, fetch_url, web_search, tavily_cli
 from langchain.chat_models import init_chat_model
 from langchain_anthropic import ChatAnthropic
 from agent.claude_auth import get_claude_code_token
-from agent.tools import present_file, view_image
-from agent.memory.tools import memory_search
+from agent.tools import present_file, view_image, memory_search
 from agent.middleware import (
     MemoryMiddleware,
     ModalSandboxMiddleware,
     MoveUploadsMiddleware,
     SessionSetupMiddleware,
     RuntimeContextMiddleware,
-    ThreadMetadataMiddleware,
+    SessionMetadataMiddleware,
     ToolDescriptionMiddleware,
 )
 from agent.system_prompt import SYSTEM_PROMPT
@@ -57,7 +56,7 @@ agent_middleware = [
     RuntimeContextMiddleware(),  # Assemble system prompt: agents prompt + context + skills
     ToolDescriptionMiddleware(),
     MemoryMiddleware(),  # Memory reminders + pre-compaction flush
-    ThreadMetadataMiddleware(),
+    SessionMetadataMiddleware(),
 ]
 
 # Build tools list - conditionally include web_search if Tavily is available

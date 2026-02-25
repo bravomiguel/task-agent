@@ -5,7 +5,7 @@ This script is piped to `python3 -` via sandbox.exec() from the LangGraph
 server.  It has two subcommands:
 
   sync   — Incremental index of /default-user/memory/*.md and
-           /default-user/thread-chats/*.md into LanceDB
+           /default-user/session-transcripts/*.md into LanceDB
   search — Hybrid BM25 + vector search against the index
 
 LanceDB stores its data as immutable Lance flat-files at
@@ -28,7 +28,7 @@ from pathlib import Path
 DB_PATH = "/default-user/memory/.lancedb"
 TABLE_NAME = "memory_chunks"
 MEMORY_DIR = "/default-user/memory"
-SESSIONS_DIR = "/default-user/thread-chats"
+SESSIONS_DIR = "/default-user/session-transcripts"
 EMBEDDING_MODEL = "text-embedding-3-small"
 
 CHUNK_TOKENS = 400
@@ -39,7 +39,7 @@ CHARS_PER_TOKEN = 4  # rough approximation
 VECTOR_WEIGHT = 0.7
 TEXT_WEIGHT = 0.3
 CANDIDATE_MULTIPLIER = 4
-MIN_SCORE = 0.35
+MIN_SCORE = 0.30
 
 
 # ---------------------------------------------------------------------------
@@ -259,6 +259,15 @@ def cmd_sync(args: argparse.Namespace) -> None:
 # search
 # ---------------------------------------------------------------------------
 
+def _distance_to_score(dist: float) -> float:
+    """Convert L2/cosine distance [0, +inf) → similarity (0, 1].
+
+    Uses ``1 / (1 + d)`` so the score is always positive and bounded,
+    unlike ``1 - d`` which goes negative for distances > 1.
+    """
+    return 1.0 / (1.0 + dist) if dist >= 0 else 0.0
+
+
 def _bm25_to_score(raw: float) -> float:
     """Normalize tantivy BM25 score [0, +inf) → [0, 1)."""
     return raw / (1.0 + raw) if raw > 0 else 0.0
@@ -289,7 +298,7 @@ def _merge_hybrid_results(
         cid = row["chunk_id"]
         by_id[cid] = {
             **row,
-            "vector_score": 1.0 - float(row.get("_distance", 1.0)),
+            "vector_score": _distance_to_score(float(row.get("_distance", 1.0))),
             "text_score": 0.0,
         }
 
@@ -353,8 +362,10 @@ def cmd_search(args: argparse.Namespace) -> None:
         vdf = q.to_pandas()
         if not vdf.empty:
             vector_rows = vdf.to_dict("records")
-    except Exception:
-        pass
+    except Exception as exc:
+        import traceback
+        print(f"[search] vector search failed: {exc}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
 
     # -- FTS search -------------------------------------------------------
     fts_rows: list[dict] = []
@@ -365,8 +376,10 @@ def cmd_search(args: argparse.Namespace) -> None:
         fdf = q.to_pandas()
         if not fdf.empty:
             fts_rows = fdf.to_dict("records")
-    except Exception:
-        pass  # FTS index may not exist — vector-only is fine
+    except Exception as exc:
+        import traceback
+        print(f"[search] FTS search failed: {exc}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
 
     if not vector_rows and not fts_rows:
         json.dump({"results": []}, sys.stdout)
@@ -377,7 +390,7 @@ def cmd_search(args: argparse.Namespace) -> None:
         merged = _merge_hybrid_results(vector_rows, fts_rows)
     elif vector_rows:
         merged = [
-            {**r, "score": 1.0 - float(r.get("_distance", 1.0))}
+            {**r, "score": _distance_to_score(float(r.get("_distance", 1.0)))}
             for r in vector_rows
         ]
         merged.sort(key=lambda x: x["score"], reverse=True)

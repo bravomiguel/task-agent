@@ -95,15 +95,15 @@ rclone_image = (
 class ModalSandboxState(AgentState):
     """Extended state schema with Modal sandbox ID."""
     modal_sandbox_id: NotRequired[str]
-    thread_id: NotRequired[str]
+    session_id: NotRequired[str]
     modal_snapshot_id: NotRequired[str]
     _skip_volume_reload: NotRequired[bool]
 
 
 class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
-    """Middleware that manages Modal sandbox lifecycle per thread.
+    """Middleware that manages Modal sandbox lifecycle per session.
 
-    Creates a new Modal sandbox when a thread starts and relies on Modal's
+    Creates a new Modal sandbox when a session starts and relies on Modal's
     idle_timeout to automatically terminate inactive sandboxes.
     """
 
@@ -127,7 +127,7 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
     def before_agent(
         self, state: ModalSandboxState, runtime: Runtime
     ) -> dict[str, Any] | None:
-        """Create or reconnect to Modal sandbox for this thread."""
+        """Create or reconnect to Modal sandbox for this session."""
         import modal
 
         existing_sandbox_id = state.get("modal_sandbox_id")
@@ -148,18 +148,18 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
             except Exception:
                 pass
 
-        # Get thread_id from config, state, or generate new
-        # Must determine thread_id BEFORE creating sandbox to set workdir
-        thread_id = state.get("thread_id")
-        if not thread_id:
-            # Try to get from RunnableConfig context var
+        # Get session_id from config, state, or generate new
+        # Must determine session_id BEFORE creating sandbox to set workdir
+        session_id = state.get("session_id")
+        if not session_id:
+            # Try to get from RunnableConfig context var (LangGraph uses "thread_id")
             config = var_child_runnable_config.get()
             if config:
-                thread_id = config.get("configurable", {}).get("thread_id")
-        if not thread_id and runtime.context and hasattr(runtime.context, 'thread_id'):
-            thread_id = runtime.context.thread_id
-        if not thread_id:
-            thread_id = str(uuid.uuid4())
+                session_id = config.get("configurable", {}).get("thread_id")
+        if not session_id and runtime.context and hasattr(runtime.context, 'thread_id'):
+            session_id = runtime.context.thread_id
+        if not session_id:
+            session_id = str(uuid.uuid4())
 
         # Get or create v2 user volume for persistent storage
         user_volume = modal.Volume.from_name(
@@ -222,13 +222,13 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
         # Create directory structure in a single exec call
         sandbox.exec(
             "mkdir", "-p",
-            f"/default-user/thread-files/{thread_id}/workspace",
-            f"/default-user/thread-files/{thread_id}/uploads",
-            f"/default-user/thread-files/{thread_id}/outputs",
+            f"/default-user/session-storage/{session_id}/workspace",
+            f"/default-user/session-storage/{session_id}/uploads",
+            f"/default-user/session-storage/{session_id}/outputs",
             "/default-user/memory",
             "/default-user/skills",
             "/default-user/prompts",
-            "/default-user/thread-chats",
+            "/default-user/session-transcripts",
             "/default-user/.temp-uploads",
             timeout=10,
         ).wait()
@@ -240,7 +240,7 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
 
         return {
             "modal_sandbox_id": sandbox.object_id,
-            "thread_id": thread_id,
+            "session_id": session_id,
             # Skip volume reloads during the first model turn to avoid a race
             # condition where reload_volumes() causes the volume to appear empty
             # on a cold sandbox. Cleared by after_model once the cache is warm.

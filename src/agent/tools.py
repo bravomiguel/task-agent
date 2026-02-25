@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import logging
 import mimetypes
 import os
+from pathlib import Path
 from typing import Annotated, Literal
 
 import httpx
+import modal
 from langchain_core.tools import tool
 from langgraph.prebuilt import InjectedState
+
+logger = logging.getLogger(__name__)
 
 LANGGRAPH_API_URL = os.getenv("LANGGRAPH_API_URL", "http://localhost:2024")
 
@@ -120,7 +125,7 @@ def route_event(
             f"{api_url}/threads/{target_thread_id}/runs",
             headers={"Content-Type": "application/json"},
             json={
-                "assistant_id": "task_agent",
+                "assistant_id": "agent",
                 "input": {"messages": [{"role": "user", "content": user_message}]},
                 "stream_resumable": True,
             },
@@ -170,18 +175,18 @@ def view_image(
     if state is None:
         return [{"type": "text", "text": "Error: Could not access state."}]
 
-    thread_id = state.get("thread_id")
-    if thread_id is None:
-        return [{"type": "text", "text": "Error: Thread ID not available."}]
+    session_id = state.get("session_id")
+    if session_id is None:
+        return [{"type": "text", "text": "Error: Session ID not available."}]
 
-    # Normalize filepath to relative path (strip /default-user/thread-files/{id}/ prefix if present)
+    # Normalize filepath to relative path (strip /default-user/session-storage/{id}/ prefix if present)
     normalized_path = filepath
-    if filepath.startswith("/default-user/thread-files/"):
-        parts = filepath.split("/", 5)  # ['', 'default-user', 'thread-files', 'id', 'uploads', 'file.png']
+    if filepath.startswith("/default-user/session-storage/"):
+        parts = filepath.split("/", 5)  # ['', 'default-user', 'session-storage', 'id', 'uploads', 'file.png']
         if len(parts) >= 6:
             normalized_path = "/".join(parts[4:])  # 'uploads/file.png'
-    elif filepath.startswith("default-user/thread-files/"):
-        parts = filepath.split("/", 4)  # ['default-user', 'thread-files', 'id', 'uploads', 'file.png']
+    elif filepath.startswith("default-user/session-storage/"):
+        parts = filepath.split("/", 4)  # ['default-user', 'session-storage', 'id', 'uploads', 'file.png']
         if len(parts) >= 5:
             normalized_path = "/".join(parts[3:])  # 'uploads/file.png'
 
@@ -190,7 +195,7 @@ def view_image(
         response = httpx.get(
             f"{NEXTJS_API_URL}/api/images/base64",
             params={
-                "thread_id": thread_id,
+                "thread_id": session_id,
                 "path": normalized_path,
                 "detail": detail,
             },
@@ -221,3 +226,82 @@ def view_image(
         return [{"type": "text", "text": f"Error processing image: {error_detail}"}]
     except Exception as e:
         return [{"type": "text", "text": f"Error viewing image: {e}"}]
+
+
+# ---------------------------------------------------------------------------
+# Memory search
+# ---------------------------------------------------------------------------
+
+_MEMORY_SCRIPT_PATH = Path(__file__).parent / "memory" / "_sandbox_script.py"
+_memory_script_cache: str | None = None
+
+
+def _load_memory_script() -> str:
+    global _memory_script_cache
+    if _memory_script_cache is None:
+        _memory_script_cache = _MEMORY_SCRIPT_PATH.read_text()
+    return _memory_script_cache
+
+
+@tool
+def memory_search(
+    query: str,
+    max_results: int = 6,
+    min_score: float = 0.30,
+    state: Annotated[dict, InjectedState] = None,
+) -> str:
+    """Mandatory recall step: semantically search MEMORY.md + memory/*.md before answering questions about prior work, decisions, dates, people, preferences, or todos; returns top snippets with path + lines.
+
+    Args:
+        query: Natural language description of what you're looking for.
+        max_results: Maximum number of results to return (default: 6).
+        min_score: Minimum relevance score threshold 0-1 (default: 0.35).
+
+    Returns:
+        JSON with results array containing path, startLine, endLine, score, snippet, source.
+        Use read_file to get full context for any relevant result.
+    """
+    if state is None:
+        return "Error: Could not access state."
+
+    sandbox_id = state.get("modal_sandbox_id")
+    if not sandbox_id:
+        return "Error: No sandbox available."
+
+    api_key = os.getenv("OPENAI_API_KEY", "")
+    if not api_key:
+        return "Error: No OpenAI API key available for embedding."
+
+    script = _load_memory_script()
+
+    try:
+        sandbox = modal.Sandbox.from_id(sandbox_id)
+
+        process = sandbox.exec(
+            "python3", "-", "search",
+            "--query", query,
+            "--max-results", str(max_results),
+            "--min-score", str(min_score),
+            "--api-key", api_key,
+            timeout=30,
+        )
+        process.stdin.write(script.encode())
+        process.stdin.write_eof()
+        process.stdin.drain()
+        process.wait()
+
+        stdout = process.stdout.read()
+        stderr = process.stderr.read()
+
+        if stderr:
+            logger.warning("[MemorySearch] stderr: %s", stderr[:500])
+
+        if process.returncode != 0:
+            logger.warning("[MemorySearch] failed (rc=%d): %s", process.returncode, stderr[:500])
+            return f"Error searching memory: {stderr[:200]}"
+
+        return stdout
+
+    except Exception as exc:
+        logger.warning("[MemorySearch] error: %s", exc)
+        return f"Error searching memory: {exc}"

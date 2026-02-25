@@ -6,9 +6,9 @@ Two responsibilities:
 2. Pre-compaction flush — when token count nears the summarization threshold,
    injects a directive to write durable memories before context is compressed.
 3. Transcript persistence — after each agent run, writes the full conversation
-   transcript to /default-user/thread-chats/{thread_id}.md for session indexing.
+   transcript to /default-user/session-transcripts/{session_id}.md for indexing.
 
-Session archiving and memory index sync are handled by ParallelSetupMiddleware.
+Session archiving and memory index sync are handled by SessionSetupMiddleware.
 
 Directives are injected via wrap_model_call by mutating message objects directly,
 so they persist across turns in the conversation history.
@@ -134,7 +134,7 @@ def _extract_full_conversation(messages: list) -> str | None:
     """Extract all user/assistant messages as plain text (no truncation).
 
     Like _extract_conversation_text but without message limit or per-message
-    truncation.  Used for writing full thread transcripts.
+    truncation.  Used for writing full session transcripts.
     Handles both LangChain message objects and plain dicts.
     """
     filtered: list[str] = []
@@ -193,7 +193,7 @@ def _first_human_timestamp(messages: list) -> str | None:
 
 
 def _build_transcript_content(
-    thread_id: str,
+    session_id: str,
     conversation_text: str,
     started: str | None,
 ) -> str:
@@ -202,7 +202,7 @@ def _build_transcript_content(
     started_line = f"- **Started**: {started}" if started else ""
     updated_line = f"- **Updated**: {now}"
     meta_lines = "\n".join(line for line in [started_line, updated_line] if line)
-    return f"""# Thread: {thread_id}
+    return f"""# Session: {session_id}
 {meta_lines}
 
 {conversation_text}
@@ -211,12 +211,12 @@ def _build_transcript_content(
 
 def _write_transcript_to_volume(
     sandbox: modal.Sandbox,
-    thread_id: str,
+    session_id: str,
     content: str,
 ) -> None:
-    """Write transcript file to /default-user/thread-chats/ via sandbox."""
-    dir_path = "/default-user/thread-chats"
-    filepath = f"{dir_path}/{thread_id}.md"
+    """Write transcript file to /default-user/session-transcripts/ via sandbox."""
+    dir_path = "/default-user/session-transcripts"
+    filepath = f"{dir_path}/{session_id}.md"
 
     cmd = f"mkdir -p '{dir_path}' && cat > '{filepath}' << 'TRANSCRIPT_EOF'\n{content}\nTRANSCRIPT_EOF"
 
@@ -259,14 +259,14 @@ def _generate_slug(llm: Any, conversation_text: str) -> str:
 
 
 def _build_archive_content(
-    thread_id: str,
+    session_id: str,
     conversation_text: str,
 ) -> str:
     """Build the archive markdown file content."""
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     return f"""# Session: {now}
 
-- **Thread ID**: {thread_id}
+- **Session ID**: {session_id}
 
 ## Conversation Summary
 
@@ -274,12 +274,12 @@ def _build_archive_content(
 """
 
 
-async def _afind_previous_thread(current_thread_id: str, api_url: str) -> dict | None:
-    """Find the most recent main session thread that isn't the current one and hasn't been archived."""
+async def _afind_previous_session(current_session_id: str, api_url: str) -> dict | None:
+    """Find the most recent main session that isn't the current one and hasn't been archived."""
     try:
-        url = f"{api_url}/threads/search"
+        url = f"{api_url}/threads/search"  # LangGraph API endpoint
         payload = {
-            "metadata": {"graph_id": "task_agent"},
+            "metadata": {"graph_id": "agent"},
             "limit": 5,
             "sort_by": "created_at",
             "sort_order": "desc",
@@ -292,40 +292,40 @@ async def _afind_previous_thread(current_thread_id: str, api_url: str) -> dict |
                 timeout=30,
             )
         response.raise_for_status()
-        threads = response.json()
+        sessions = response.json()
 
-        for thread in threads:
-            tid = thread.get("thread_id", "")
-            values = thread.get("values") or {}
+        for session in sessions:
+            sid = session.get("thread_id", "")  # LangGraph API key
+            values = session.get("values") or {}
 
-            if tid == current_thread_id:
+            if sid == current_session_id:
                 continue
             if values.get("_session_archived"):
                 continue
             if not values.get("messages"):
                 continue
 
-            return thread
+            return session
 
     except Exception as e:
-        logger.warning("[SessionArchive] failed to search threads: %s", e)
+        logger.warning("[SessionArchive] failed to search sessions: %s", e)
 
     return None
 
 
-async def _amark_thread_archived(thread_id: str, api_url: str) -> None:
-    """Set _session_archived=true on a thread via LangGraph API."""
+async def _amark_session_archived(session_id: str, api_url: str) -> None:
+    """Set _session_archived=true on a session via LangGraph API."""
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                f"{api_url}/threads/{thread_id}/state",
+                f"{api_url}/threads/{session_id}/state",  # LangGraph API endpoint
                 headers={"Content-Type": "application/json"},
                 json={"values": {"_session_archived": True}},
                 timeout=30,
             )
         response.raise_for_status()
     except Exception as e:
-        logger.warning("[SessionArchive] failed to mark thread %s archived: %s", thread_id, e)
+        logger.warning("[SessionArchive] failed to mark session %s archived: %s", session_id, e)
 
 
 def _write_archive_to_volume(
@@ -361,7 +361,7 @@ class MemoryMiddleware(AgentMiddleware[MemoryState, Any]):
     before_model: Tracks token count for pre-compaction flush.
     wrap_model_call: Injects memory reminder and flush directives into messages.
 
-    Session archiving and memory index sync are handled by ParallelSetupMiddleware.
+    Session archiving and memory index sync are handled by SessionSetupMiddleware.
     """
 
     state_schema = MemoryState
@@ -494,9 +494,9 @@ class MemoryMiddleware(AgentMiddleware[MemoryState, Any]):
             logger.debug("[Transcript] no sandbox available, skipping")
             return
 
-        thread_id = state.get("thread_id")
-        if not thread_id:
-            logger.debug("[Transcript] no thread_id, skipping")
+        session_id = state.get("session_id")
+        if not session_id:
+            logger.debug("[Transcript] no session_id, skipping")
             return
 
         messages = state.get("messages", [])
@@ -508,19 +508,19 @@ class MemoryMiddleware(AgentMiddleware[MemoryState, Any]):
             return
 
         started = _first_human_timestamp(messages)
-        content = _build_transcript_content(thread_id, conversation_text, started)
+        content = _build_transcript_content(session_id, conversation_text, started)
 
         try:
             sandbox = modal.Sandbox.from_id(sandbox_id)
-            _write_transcript_to_volume(sandbox, thread_id, content)
-            logger.info("[Transcript] wrote transcript for thread %s", thread_id)
+            _write_transcript_to_volume(sandbox, session_id, content)
+            logger.info("[Transcript] wrote transcript for session %s", session_id)
         except Exception as e:
-            logger.warning("[Transcript] failed for thread %s: %s", thread_id, e)
+            logger.warning("[Transcript] failed for session %s: %s", session_id, e)
 
     def after_agent(
         self, state: MemoryState, runtime: Runtime
     ) -> dict[str, Any] | None:
-        """Write thread transcript after agent completes."""
+        """Write session transcript after agent completes."""
         self._write_transcript(state, runtime)
         return None
 

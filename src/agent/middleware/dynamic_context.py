@@ -2,7 +2,7 @@
 
 Combines three concerns into a single wrap_model_call:
 1. Agents prompt — appends AGENTS.md content to system prompt
-2. Runtime context — appends datetime, thread ID; stamps human messages
+2. Runtime context — appends datetime, session ID; stamps human messages
 3. Skills — appends skills documentation to system prompt
 """
 
@@ -61,7 +61,7 @@ class RuntimeContextState(ModalSandboxState):
 class RuntimeContextMiddleware(AgentMiddleware[RuntimeContextState, Any]):
     """Middleware that assembles the system prompt and injects message context.
 
-    System prompt: agents prompt, datetime, thread ID, skills documentation.
+    System prompt: agents prompt, datetime, session ID, skills documentation.
     Human messages: stamps each with a <current-datetime> tag (persistent, once per message).
     """
 
@@ -113,13 +113,13 @@ class RuntimeContextMiddleware(AgentMiddleware[RuntimeContextState, Any]):
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         context += f"\n\n### Current Date & Time\n{now}"
 
-        # Thread context
-        thread_id = request.state.get("thread_id")
-        if thread_id:
+        # Session context
+        session_id = request.state.get("session_id")
+        if session_id:
             context += (
-                f"\n\n### Current Thread\n"
-                f"Your thread ID is `{thread_id}`. "
-                f"Save user-requested files to `/default-user/thread-files/{thread_id}/outputs/`."
+                f"\n\n### Current Session\n"
+                f"Your session ID is `{session_id}`. "
+                f"Save user-requested files to `/default-user/session-storage/{session_id}/outputs/`."
             )
 
         if context:
@@ -157,7 +157,7 @@ class RuntimeContextMiddleware(AgentMiddleware[RuntimeContextState, Any]):
         if agents_prompt and request.system_prompt:
             request.system_prompt = request.system_prompt + "\n\n" + agents_prompt
 
-        # 2. Runtime context (datetime + thread ID)
+        # 2. Runtime context (datetime + session ID)
         self._inject_system_prompt_context(request)
 
         # 3. Datetime stamp on human messages

@@ -1,4 +1,4 @@
-"""Thread metadata middleware — contributes thread_title and is_done state."""
+"""Session metadata middleware — contributes session_title and is_done state."""
 
 from __future__ import annotations
 
@@ -18,16 +18,16 @@ def is_done_reducer(left, right):
     return right
 
 
-class ThreadMetadataState(AgentState):
-    thread_title: NotRequired[str]
+class SessionMetadataState(AgentState):
+    session_title: NotRequired[str]
     is_done: Annotated[NotRequired[bool], is_done_reducer]
 
 
-class ThreadMetadataMiddleware(AgentMiddleware[ThreadMetadataState]):
-    """Middleware that adds thread_title and is_done to agent state.
+class SessionMetadataMiddleware(AgentMiddleware[SessionMetadataState]):
+    """Middleware that adds session_title and is_done to agent state.
 
     Both fields are set externally (by the frontend or agent output).
     This middleware only contributes the state schema — no hooks.
     """
 
-    state_schema = ThreadMetadataState
+    state_schema = SessionMetadataState

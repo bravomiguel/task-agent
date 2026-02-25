@@ -17,7 +17,7 @@ def inspect():
     TABLE_NAME = "memory_chunks"
 
     # Check dirs exist
-    for d in ("/default-user/memory", "/default-user/thread-chats"):
+    for d in ("/default-user/memory", "/default-user/session-transcripts"):
         p = Path(d)
         if p.is_dir():
             files = [f.name for f in sorted(p.iterdir()) if f.suffix == ".md"]

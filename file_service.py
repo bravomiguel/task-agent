@@ -22,10 +22,10 @@ volume = user_volume
 @app.function(volumes={"/default-user": volume})
 def list_files(session_id: str) -> dict:
     """
-    List all files in a thread's folder.
+    List all files in a session's folder.
 
     Args:
-        session_id: Thread/session ID
+        session_id: Session ID
 
     Returns:
         Dictionary with 'files' key containing list of file metadata
@@ -34,19 +34,19 @@ def list_files(session_id: str) -> dict:
         # Reload volume to get latest changes
         volume.reload()
 
-        # List files in the thread folder
-        path = f"/thread-files/{session_id}"
+        # List files in the session folder
+        path = f"/session-storage/{session_id}"
         files = volume.listdir(path, recursive=True)
 
         # Convert to serializable format
         file_list = []
         for f in files:
-            # Remove thread-files prefix - handle both /thread-files/session_id/ and thread-files/session_id/
+            # Remove session-storage prefix
             file_path = f.path
-            if file_path.startswith(f"/thread-files/{session_id}/"):
-                file_path = file_path.replace(f"/thread-files/{session_id}/", "", 1)
-            elif file_path.startswith(f"thread-files/{session_id}/"):
-                file_path = file_path.replace(f"thread-files/{session_id}/", "", 1)
+            if file_path.startswith(f"/session-storage/{session_id}/"):
+                file_path = file_path.replace(f"/session-storage/{session_id}/", "", 1)
+            elif file_path.startswith(f"session-storage/{session_id}/"):
+                file_path = file_path.replace(f"session-storage/{session_id}/", "", 1)
 
             file_list.append({
                 "path": file_path,
@@ -68,10 +68,10 @@ def list_files(session_id: str) -> dict:
 @app.function(volumes={"/default-user": volume})
 def read_file(session_id: str, file_path: str) -> dict:
     """
-    Read file content from a thread's folder.
+    Read file content from a session's folder.
 
     Args:
-        session_id: Thread/session ID
+        session_id: Session ID
         file_path: Path to file relative to session folder
 
     Returns:
@@ -82,7 +82,7 @@ def read_file(session_id: str, file_path: str) -> dict:
         volume.reload()
 
         # Read the file
-        full_path = f"/thread-files/{session_id}/{file_path}"
+        full_path = f"/session-storage/{session_id}/{file_path}"
         content_bytes = b"".join(volume.read_file(full_path))
 
         # Decode with error handling for non-text files
@@ -103,11 +103,11 @@ def read_file(session_id: str, file_path: str) -> dict:
 @app.function(volumes={"/default-user": volume})
 def read_file_bytes(session_id: str, file_path: str) -> dict:
     """
-    Read file content as base64-encoded bytes from a thread's folder.
+    Read file content as base64-encoded bytes from a session's folder.
     Used for binary files like docx, xlsx, pptx, pdf.
 
     Args:
-        session_id: Thread/session ID
+        session_id: Session ID
         file_path: Path to file relative to session folder
 
     Returns:
@@ -121,7 +121,7 @@ def read_file_bytes(session_id: str, file_path: str) -> dict:
         volume.reload()
 
         # Read the file as bytes
-        full_path = f"/thread-files/{session_id}/{file_path}"
+        full_path = f"/session-storage/{session_id}/{file_path}"
         content_bytes = b"".join(volume.read_file(full_path))
 
         # Encode as base64
@@ -144,10 +144,10 @@ def read_file_bytes(session_id: str, file_path: str) -> dict:
 @app.function(volumes={"/default-user": volume})
 def update_file(session_id: str, file_path: str, content: str) -> dict:
     """
-    Update or create a file in a thread's folder.
+    Update or create a file in a session's folder.
 
     Args:
-        session_id: Thread/session ID
+        session_id: Session ID
         file_path: Path to file relative to session folder
         content: File content as string
 
@@ -158,7 +158,7 @@ def update_file(session_id: str, file_path: str, content: str) -> dict:
         import io
 
         # Upload the file
-        full_path = f"/thread-files/{session_id}/{file_path}"
+        full_path = f"/session-storage/{session_id}/{file_path}"
         with volume.batch_upload(force=True) as batch:
             batch.put_file(
                 io.BytesIO(content.encode('utf-8')),
@@ -175,10 +175,10 @@ def update_file(session_id: str, file_path: str, content: str) -> dict:
 @app.function(volumes={"/default-user": volume})
 def upload_file_bytes(session_id: str, filename: str, content_b64: str) -> dict:
     """
-    Upload a binary file to a thread's uploads folder.
+    Upload a binary file to a session's uploads folder.
 
     Args:
-        session_id: Thread/session ID
+        session_id: Session ID
         filename: Name of the file to create
         content_b64: Base64-encoded file content
 
@@ -194,7 +194,7 @@ def upload_file_bytes(session_id: str, filename: str, content_b64: str) -> dict:
         content_bytes = base64.b64decode(content_b64)
 
         # Upload to uploads subfolder
-        full_path = f"/thread-files/{session_id}/uploads/{filename}"
+        full_path = f"/session-storage/{session_id}/uploads/{filename}"
         with volume.batch_upload(force=True) as batch:
             batch.put_file(
                 io.BytesIO(content_bytes),
@@ -222,7 +222,7 @@ def upload_file_bytes(session_id: str, filename: str, content_b64: str) -> dict:
 def upload_temp_file(temp_id: str, filename: str, content_b64: str) -> dict:
     """
     Upload a binary file to temporary uploads staging area.
-    Files here will be moved to the actual thread folder by middleware when the run starts.
+    Files here will be moved to the actual session folder by middleware when the run starts.
 
     Args:
         temp_id: Temporary session ID (client-generated UUID)
@@ -268,13 +268,13 @@ def upload_temp_file(temp_id: str, filename: str, content_b64: str) -> dict:
 @app.function(volumes={"/default-user": volume})
 def delete_file(session_id: str, file_path: str, sandbox_id: str = None) -> dict:
     """
-    Delete a file from a thread's folder.
+    Delete a file from a session's folder.
 
     Uses Modal Sandbox to delete the file since Volume API doesn't have native delete.
     If no sandbox_id is provided, creates a temporary sandbox for deletion.
 
     Args:
-        session_id: Thread/session ID
+        session_id: Session ID
         file_path: Path to file relative to session folder
         sandbox_id: Optional Modal sandbox ID to use for deletion
 
@@ -282,7 +282,7 @@ def delete_file(session_id: str, file_path: str, sandbox_id: str = None) -> dict
         Dictionary with 'success' boolean and optional 'error'
     """
     try:
-        full_path = f"/default-user/thread-files/{session_id}/{file_path}"
+        full_path = f"/default-user/session-storage/{session_id}/{file_path}"
 
         if sandbox_id:
             # Use existing sandbox
@@ -344,7 +344,7 @@ def get_sandbox_files(session_id: str, sandbox_id: str) -> dict:
     Get files from an active sandbox (alternative to Volume-based access).
 
     Args:
-        session_id: Thread/session ID
+        session_id: Session ID
         sandbox_id: Modal sandbox ID
 
     Returns:
@@ -355,7 +355,7 @@ def get_sandbox_files(session_id: str, sandbox_id: str) -> dict:
         sb = modal.Sandbox.from_id(sandbox_id)
 
         # List files using sandbox ls command
-        process = sb.exec("ls", "-la", f"/default-user/thread-files/{session_id}", timeout=10)
+        process = sb.exec("ls", "-la", f"/default-user/session-storage/{session_id}", timeout=10)
         process.wait()
 
         if process.returncode == 0:

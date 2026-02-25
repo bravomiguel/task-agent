@@ -21,8 +21,8 @@ from langgraph.runtime import Runtime
 
 from agent.middleware.memory import (
     LANGGRAPH_API_URL,
-    _afind_previous_thread,
-    _amark_thread_archived,
+    _afind_previous_session,
+    _amark_session_archived,
     _build_archive_content,
     _extract_conversation_text,
     _generate_slug,
@@ -117,40 +117,40 @@ class SessionSetupMiddleware(AgentMiddleware[AgentState, Any]):
     async def _archive_previous_session(
         self, state: dict, sandbox_id: str
     ) -> None:
-        current_thread_id = state.get("thread_id")
-        if not current_thread_id or not self._llm:
+        current_session_id = state.get("session_id")
+        if not current_session_id or not self._llm:
             return
 
-        prev_thread = await _afind_previous_thread(
-            current_thread_id, self._api_url
+        prev_session = await _afind_previous_session(
+            current_session_id, self._api_url
         )
-        if not prev_thread:
+        if not prev_session:
             return
 
-        prev_thread_id = prev_thread["thread_id"]
-        values = prev_thread.get("values") or {}
+        prev_session_id = prev_session["thread_id"]  # LangGraph API key
+        values = prev_session.get("values") or {}
         messages = values.get("messages", [])
 
         conversation_text = _extract_conversation_text(
             messages, limit=self._archive_message_limit
         )
         if not conversation_text:
-            await _amark_thread_archived(prev_thread_id, self._api_url)
+            await _amark_session_archived(prev_session_id, self._api_url)
             return
 
         slug = _generate_slug(self._llm, conversation_text)
         date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         filename = f"{date_str}-{slug}.md"
-        content = _build_archive_content(prev_thread_id, conversation_text)
+        content = _build_archive_content(prev_session_id, conversation_text)
 
         try:
             sandbox = modal.Sandbox.from_id(sandbox_id)
             _write_archive_to_volume(sandbox, filename, content)
         except Exception as e:
-            logger.warning("[ParallelSetup] failed to write archive: %s", e)
+            logger.warning("[SessionSetup] failed to write archive: %s", e)
             return
 
-        await _amark_thread_archived(prev_thread_id, self._api_url)
+        await _amark_session_archived(prev_session_id, self._api_url)
 
     async def _setup_memory(self, state: dict) -> dict[str, Any]:
         updates: dict[str, Any] = {}
@@ -160,7 +160,7 @@ class SessionSetupMiddleware(AgentMiddleware[AgentState, Any]):
             try:
                 await self._archive_previous_session(state, sandbox_id)
             except Exception as e:
-                logger.warning("[ParallelSetup] archive error: %s", e)
+                logger.warning("[SessionSetup] archive error: %s", e)
 
         if sandbox_id and not state.get("_memory_index_synced"):
             self._start_memory_index_sync(sandbox_id)
@@ -195,7 +195,7 @@ class SessionSetupMiddleware(AgentMiddleware[AgentState, Any]):
                     if result:
                         updates.update(result)
                 except Exception as e:
-                    logger.warning("[ParallelSetup] task failed: %s", e)
+                    logger.warning("[SessionSetup] task failed: %s", e)
 
         if not state.get("_memory_index_synced"):
             self._start_memory_index_sync(sandbox_id)
@@ -228,7 +228,7 @@ class SessionSetupMiddleware(AgentMiddleware[AgentState, Any]):
 
         for result in results:
             if isinstance(result, Exception):
-                logger.warning("[ParallelSetup] task failed: %s", result)
+                logger.warning("[SessionSetup] task failed: %s", result)
             elif isinstance(result, dict):
                 updates.update(result)
 
