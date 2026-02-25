@@ -276,6 +276,7 @@ def memory_search(
 
     try:
         sandbox = modal.Sandbox.from_id(sandbox_id)
+        sandbox.reload_volumes()
 
         process = sandbox.exec(
             "python3", "-", "search",
