@@ -4,7 +4,8 @@
 This script is piped to `python3 -` via sandbox.exec() from the LangGraph
 server.  It has two subcommands:
 
-  sync   — Incremental index of /default-user/memory/*.md into LanceDB
+  sync   — Incremental index of /default-user/memory/*.md and
+           /default-user/thread-chats/*.md into LanceDB
   search — Hybrid BM25 + vector search against the index
 
 LanceDB stores its data as immutable Lance flat-files at
@@ -27,6 +28,7 @@ from pathlib import Path
 DB_PATH = "/default-user/memory/.lancedb"
 TABLE_NAME = "memory_chunks"
 MEMORY_DIR = "/default-user/memory"
+SESSIONS_DIR = "/default-user/thread-chats"
 EMBEDDING_MODEL = "text-embedding-3-small"
 
 CHUNK_TOKENS = 400
@@ -103,8 +105,10 @@ def chunk_markdown(
     return chunks
 
 
-def _classify_source(filename: str) -> str:
-    """Derive a source label from the filename."""
+def _classify_source(path: str) -> str:
+    """Derive a source label from the file path."""
+    if path.startswith(SESSIONS_DIR):
+        return "sessions"
     return "memory"
 
 
@@ -149,18 +153,21 @@ def cmd_sync(args: argparse.Namespace) -> None:
     else:
         table = db.create_table(TABLE_NAME, schema=MemoryChunk)
 
-    # -- list memory files ------------------------------------------------
-    memory_path = Path(MEMORY_DIR)
+    # -- list memory and session files ------------------------------------
     current_files: dict[str, dict] = {}
-    for f in sorted(memory_path.iterdir()):
-        if f.name.startswith("."):
-            continue  # skip .lancedb/ and hidden files
-        if f.is_file() and f.suffix == ".md":
-            stat = f.stat()
-            current_files[str(f)] = {
-                "mtime": stat.st_mtime,
-                "size": stat.st_size,
-            }
+    for dir_path in (MEMORY_DIR, SESSIONS_DIR):
+        dp = Path(dir_path)
+        if not dp.is_dir():
+            continue
+        for f in sorted(dp.iterdir()):
+            if f.name.startswith("."):
+                continue  # skip .lancedb/ and hidden files
+            if f.is_file() and f.suffix == ".md":
+                stat = f.stat()
+                current_files[str(f)] = {
+                    "mtime": stat.st_mtime,
+                    "size": stat.st_size,
+                }
 
     if not current_files:
         json.dump({"status": "ok", "indexed": 0, "deleted": 0, "unchanged": 0}, sys.stdout)
@@ -217,8 +224,7 @@ def cmd_sync(args: argparse.Namespace) -> None:
         except Exception:
             pass
 
-        filename = Path(path).name
-        source = _classify_source(filename)
+        source = _classify_source(path)
         chunks = chunk_markdown(content, path)
 
         for i, chunk in enumerate(chunks):
@@ -332,16 +338,19 @@ def cmd_search(args: argparse.Namespace) -> None:
     query = args.query
     max_results = args.max_results
     min_score = args.min_score
+    source_filter = args.source
     candidates = max_results * CANDIDATE_MULTIPLIER
+
+    # Build optional where clause for source filtering
+    where_clause = f'source = "{source_filter}"' if source_filter else None
 
     # -- Vector search ----------------------------------------------------
     vector_rows: list[dict] = []
     try:
-        vdf = (
-            table.search(query, query_type="vector")
-            .limit(candidates)
-            .to_pandas()
-        )
+        q = table.search(query, query_type="vector").limit(candidates)
+        if where_clause:
+            q = q.where(where_clause)
+        vdf = q.to_pandas()
         if not vdf.empty:
             vector_rows = vdf.to_dict("records")
     except Exception:
@@ -350,11 +359,10 @@ def cmd_search(args: argparse.Namespace) -> None:
     # -- FTS search -------------------------------------------------------
     fts_rows: list[dict] = []
     try:
-        fdf = (
-            table.search(query, query_type="fts")
-            .limit(candidates)
-            .to_pandas()
-        )
+        q = table.search(query, query_type="fts").limit(candidates)
+        if where_clause:
+            q = q.where(where_clause)
+        fdf = q.to_pandas()
         if not fdf.empty:
             fts_rows = fdf.to_dict("records")
     except Exception:
@@ -418,6 +426,7 @@ def main() -> None:
     p_search.add_argument("--query", required=True)
     p_search.add_argument("--max-results", type=int, default=6)
     p_search.add_argument("--min-score", type=float, default=MIN_SCORE)
+    p_search.add_argument("--source", default="", help="Filter by source label (e.g. 'sessions', 'memory')")
     p_search.add_argument("--api-key", default="")
 
     args = parser.parse_args()

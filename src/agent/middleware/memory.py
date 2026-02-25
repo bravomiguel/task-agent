@@ -5,6 +5,8 @@ Two responsibilities:
    agent to follow Memory section instructions (read logs, write when appropriate).
 2. Pre-compaction flush — when token count nears the summarization threshold,
    injects a directive to write durable memories before context is compressed.
+3. Transcript persistence — after each agent run, writes the full conversation
+   transcript to /default-user/thread-chats/{thread_id}.md for session indexing.
 
 Session archiving and memory index sync are handled by ParallelSetupMiddleware.
 
@@ -128,6 +130,108 @@ def _extract_conversation_text(messages: list[dict], limit: int = 15) -> str | N
     return "\n".join(recent)
 
 
+def _extract_full_conversation(messages: list) -> str | None:
+    """Extract all user/assistant messages as plain text (no truncation).
+
+    Like _extract_conversation_text but without message limit or per-message
+    truncation.  Used for writing full thread transcripts.
+    Handles both LangChain message objects and plain dicts.
+    """
+    filtered: list[str] = []
+    for msg in messages:
+        # Support both message objects (pydantic) and dicts
+        if isinstance(msg, dict):
+            role = msg.get("type") or msg.get("role", "")
+            content = msg.get("content", "")
+        else:
+            role = getattr(msg, "type", "") or getattr(msg, "role", "")
+            content = getattr(msg, "content", "")
+
+        if role not in ("human", "ai", "user", "assistant"):
+            continue
+
+        if not isinstance(content, str):
+            if isinstance(content, list):
+                text_parts = []
+                for part in content:
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        text_parts.append(part.get("text", ""))
+                    elif isinstance(part, str):
+                        text_parts.append(part)
+                content = " ".join(text_parts)
+            else:
+                continue
+
+        content = _strip_system_reminders(content)
+        if not content:
+            continue
+
+        label = "User" if role in ("human", "user") else "Assistant"
+        filtered.append(f"{label}: {content}")
+
+    if not filtered:
+        return None
+
+    return "\n\n".join(filtered)
+
+
+def _first_human_timestamp(messages: list) -> str | None:
+    """Extract the timestamp from the first human message, if available."""
+    for msg in messages:
+        if isinstance(msg, dict):
+            role = msg.get("type") or msg.get("role", "")
+            ts = msg.get("created_at") or msg.get("timestamp")
+        else:
+            role = getattr(msg, "type", "") or getattr(msg, "role", "")
+            ts = getattr(msg, "created_at", None) or getattr(msg, "timestamp", None)
+
+        if role in ("human", "user"):
+            if ts:
+                return str(ts)
+            return None
+    return None
+
+
+def _build_transcript_content(
+    thread_id: str,
+    conversation_text: str,
+    started: str | None,
+) -> str:
+    """Build the transcript markdown file content."""
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    started_line = f"- **Started**: {started}" if started else ""
+    updated_line = f"- **Updated**: {now}"
+    meta_lines = "\n".join(line for line in [started_line, updated_line] if line)
+    return f"""# Thread: {thread_id}
+{meta_lines}
+
+{conversation_text}
+"""
+
+
+def _write_transcript_to_volume(
+    sandbox: modal.Sandbox,
+    thread_id: str,
+    content: str,
+) -> None:
+    """Write transcript file to /default-user/thread-chats/ via sandbox."""
+    dir_path = "/default-user/thread-chats"
+    filepath = f"{dir_path}/{thread_id}.md"
+
+    cmd = f"mkdir -p '{dir_path}' && cat > '{filepath}' << 'TRANSCRIPT_EOF'\n{content}\nTRANSCRIPT_EOF"
+
+    process = sandbox.exec("bash", "-c", cmd, timeout=30)
+    process.wait()
+
+    if process.returncode != 0:
+        stderr = process.stderr.read() if process.stderr else ""
+        logger.warning("[Transcript] failed to write %s: %s", filepath, stderr)
+        return
+
+    sync_process = sandbox.exec("sync", "/default-user", timeout=30)
+    sync_process.wait()
+
+
 def _generate_slug(llm: Any, conversation_text: str) -> str:
     """Generate a descriptive slug via LLM, with timestamp fallback."""
     try:
@@ -232,8 +336,7 @@ def _write_archive_to_volume(
     """Write archive file to /default-user/memory/ via sandbox."""
     filepath = f"/default-user/memory/{filename}"
 
-    safe_content = content.replace("\\", "\\\\").replace("'", "'\\''")
-    cmd = f"cat > '{filepath}' << 'ARCHIVE_EOF'\n{safe_content}\nARCHIVE_EOF"
+    cmd = f"cat > '{filepath}' << 'ARCHIVE_EOF'\n{content}\nARCHIVE_EOF"
 
     process = sandbox.exec("bash", "-c", cmd, timeout=30)
     process.wait()
@@ -379,3 +482,51 @@ class MemoryMiddleware(AgentMiddleware[MemoryState, Any]):
         """Async version: Inject memory directives before model call."""
         self._inject_directives(request.messages, request.state)
         return await handler(request)
+
+    # ------------------------------------------------------------------
+    # Transcript persistence (after_agent)
+    # ------------------------------------------------------------------
+
+    def _write_transcript(self, state: MemoryState, runtime: Runtime) -> None:
+        """Write full conversation transcript to volume."""
+        sandbox_id = state.get("modal_sandbox_id")
+        if not sandbox_id:
+            logger.debug("[Transcript] no sandbox available, skipping")
+            return
+
+        thread_id = state.get("thread_id")
+        if not thread_id:
+            logger.debug("[Transcript] no thread_id, skipping")
+            return
+
+        messages = state.get("messages", [])
+        if not messages:
+            return
+
+        conversation_text = _extract_full_conversation(messages)
+        if not conversation_text:
+            return
+
+        started = _first_human_timestamp(messages)
+        content = _build_transcript_content(thread_id, conversation_text, started)
+
+        try:
+            sandbox = modal.Sandbox.from_id(sandbox_id)
+            _write_transcript_to_volume(sandbox, thread_id, content)
+            logger.info("[Transcript] wrote transcript for thread %s", thread_id)
+        except Exception as e:
+            logger.warning("[Transcript] failed for thread %s: %s", thread_id, e)
+
+    def after_agent(
+        self, state: MemoryState, runtime: Runtime
+    ) -> dict[str, Any] | None:
+        """Write thread transcript after agent completes."""
+        self._write_transcript(state, runtime)
+        return None
+
+    async def aafter_agent(
+        self, state: MemoryState, runtime: Runtime
+    ) -> dict[str, Any] | None:
+        """Async version delegates to sync implementation."""
+        self._write_transcript(state, runtime)
+        return None
