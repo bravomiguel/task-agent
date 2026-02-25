@@ -259,18 +259,12 @@ def cmd_sync(args: argparse.Namespace) -> None:
 # search
 # ---------------------------------------------------------------------------
 
-def _distance_to_score(dist: float) -> float:
-    """Convert L2/cosine distance [0, +inf) → similarity (0, 1].
+def _bm25_rank_to_score(rank: int) -> float:
+    """Convert BM25 ordinal rank (0-based, lower=better) → (0, 1].
 
-    Uses ``1 / (1 + d)`` so the score is always positive and bounded,
-    unlike ``1 - d`` which goes negative for distances > 1.
+    Mirrors OpenClaw's ``bm25RankToScore``: ``1 / (1 + rank)``.
     """
-    return 1.0 / (1.0 + dist) if dist >= 0 else 0.0
-
-
-def _bm25_to_score(raw: float) -> float:
-    """Normalize tantivy BM25 score [0, +inf) → [0, 1)."""
-    return raw / (1.0 + raw) if raw > 0 else 0.0
+    return 1.0 / (1.0 + rank)
 
 
 def _merge_hybrid_results(
@@ -296,15 +290,16 @@ def _merge_hybrid_results(
 
     for row in vector_rows:
         cid = row["chunk_id"]
+        # With cosine distance_type, _distance = 1 - cos_sim ∈ [0, 2]
         by_id[cid] = {
             **row,
-            "vector_score": _distance_to_score(float(row.get("_distance", 1.0))),
+            "vector_score": 1.0 - float(row.get("_distance", 1.0)),
             "text_score": 0.0,
         }
 
     for row in fts_rows:
         cid = row["chunk_id"]
-        text_score = _bm25_to_score(float(row.get("_score", 0.0)))
+        text_score = float(row.get("_rank_score", 0.0))
         if cid in by_id:
             by_id[cid]["text_score"] = text_score
         else:
@@ -353,10 +348,14 @@ def cmd_search(args: argparse.Namespace) -> None:
     # Build optional where clause for source filtering
     where_clause = f'source = "{source_filter}"' if source_filter else None
 
-    # -- Vector search ----------------------------------------------------
+    # -- Vector search (cosine distance) -----------------------------------
     vector_rows: list[dict] = []
     try:
-        q = table.search(query, query_type="vector").limit(candidates)
+        q = (
+            table.search(query, query_type="vector")
+            .distance_type("cosine")
+            .limit(candidates)
+        )
         if where_clause:
             q = q.where(where_clause)
         vdf = q.to_pandas()
@@ -367,7 +366,7 @@ def cmd_search(args: argparse.Namespace) -> None:
         print(f"[search] vector search failed: {exc}", file=sys.stderr)
         traceback.print_exc(file=sys.stderr)
 
-    # -- FTS search -------------------------------------------------------
+    # -- FTS search (rank-based scoring) ----------------------------------
     fts_rows: list[dict] = []
     try:
         q = table.search(query, query_type="fts").limit(candidates)
@@ -375,7 +374,12 @@ def cmd_search(args: argparse.Namespace) -> None:
             q = q.where(where_clause)
         fdf = q.to_pandas()
         if not fdf.empty:
-            fts_rows = fdf.to_dict("records")
+            # FTS results are ordered by BM25 relevance (best first).
+            # Convert ordinal rank → score: 1/(1+rank), matching OpenClaw.
+            rows = fdf.to_dict("records")
+            for rank, row in enumerate(rows):
+                row["_rank_score"] = _bm25_rank_to_score(rank)
+            fts_rows = rows
     except Exception as exc:
         import traceback
         print(f"[search] FTS search failed: {exc}", file=sys.stderr)
@@ -389,14 +393,16 @@ def cmd_search(args: argparse.Namespace) -> None:
     if vector_rows and fts_rows:
         merged = _merge_hybrid_results(vector_rows, fts_rows)
     elif vector_rows:
+        # Cosine distance: score = 1 - distance = cosine similarity
         merged = [
-            {**r, "score": _distance_to_score(float(r.get("_distance", 1.0)))}
+            {**r, "score": 1.0 - float(r.get("_distance", 1.0))}
             for r in vector_rows
         ]
         merged.sort(key=lambda x: x["score"], reverse=True)
     else:
+        # Rank-based: _rank_score already computed above
         merged = [
-            {**r, "score": _bm25_to_score(float(r.get("_score", 0.0)))}
+            {**r, "score": float(r.get("_rank_score", 0.0))}
             for r in fts_rows
         ]
         merged.sort(key=lambda x: x["score"], reverse=True)

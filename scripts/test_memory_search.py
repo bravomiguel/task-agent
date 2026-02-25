@@ -23,39 +23,38 @@ import lancedb
 db = lancedb.connect(DB_PATH)
 table = db.open_table(TABLE_NAME)
 
-# Vector search — show raw distances
-print("=== VECTOR ===")
+# Vector search (cosine) — score = 1 - cosine_distance = cosine_similarity
+print("=== VECTOR (cosine) ===")
 try:
-    vdf = table.search(QUERY, query_type="vector").limit(10).to_pandas()
+    vdf = table.search(QUERY, query_type="vector").distance_type("cosine").limit(10).to_pandas()
     for _, r in vdf.iterrows():
         dist = r.get("_distance", 0)
-        score = 1.0 / (1.0 + float(dist)) if float(dist) >= 0 else 0.0
-        print(f"  dist={dist:.4f}  score={score:.4f}  src={r['source']}  {r['path'].split('/')[-1]}")
+        score = 1.0 - float(dist)
+        print(f"  cos_dist={dist:.4f}  cos_sim={score:.4f}  src={r['source']}  {r['path'].split('/')[-1]}")
 except Exception as e:
     print(f"  FAILED: {e}")
 
-# FTS search — show raw scores
-print("\\n=== FTS ===")
+# FTS search — rank-based scoring: 1/(1+rank)
+print("\\n=== FTS (rank-based) ===")
 try:
     fdf = table.search(QUERY, query_type="fts").limit(10).to_pandas()
-    for _, r in fdf.iterrows():
-        raw = float(r.get("_score", 0))
-        normalized = raw / (1.0 + raw) if raw > 0 else 0
-        print(f"  bm25={raw:.4f}  norm={normalized:.4f}  src={r['source']}  {r['path'].split('/')[-1]}")
+    for rank, (_, r) in enumerate(fdf.iterrows()):
+        rank_score = 1.0 / (1.0 + rank)
+        bm25_raw = float(r.get("_score", 0))
+        print(f"  rank={rank}  rank_score={rank_score:.4f}  bm25={bm25_raw:.4f}  src={r['source']}  {r['path'].split('/')[-1]}")
 except Exception as e:
     print(f"  FAILED: {e}")
 
-# Show what hybrid scores would be
+# Show hybrid scores
 print("\\n=== HYBRID (0.7 vec + 0.3 fts) ===")
 try:
     by_id = {}
     for _, r in vdf.iterrows():
         cid = r["chunk_id"]
-        d = float(r["_distance"])
-        by_id[cid] = {"vec": 1.0 / (1.0 + d) if d >= 0 else 0.0, "fts": 0.0, "path": r["path"].split("/")[-1]}
-    for _, r in fdf.iterrows():
+        by_id[cid] = {"vec": 1.0 - float(r["_distance"]), "fts": 0.0, "path": r["path"].split("/")[-1]}
+    for rank, (_, r) in enumerate(fdf.iterrows()):
         cid = r["chunk_id"]
-        fts = float(r["_score"]) / (1.0 + float(r["_score"]))
+        fts = 1.0 / (1.0 + rank)
         if cid in by_id:
             by_id[cid]["fts"] = fts
         else:
