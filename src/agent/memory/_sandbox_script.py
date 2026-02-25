@@ -419,7 +419,7 @@ def cmd_search(args: argparse.Namespace) -> None:
             "startLine": int(entry["start_line"]),
             "endLine": int(entry["end_line"]),
             "score": round(entry["score"], 4),
-            "snippet": str(entry["text"])[:700] + (" [truncated]" if len(str(entry["text"])) > 700 else ""),
+            "snippet": str(entry["text"])[:700] + (" [truncated — use read_file to see full content]" if len(str(entry["text"])) > 700 else ""),
             "source": entry.get("source", "memory"),
         })
 
