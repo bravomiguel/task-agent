@@ -63,12 +63,11 @@ class SessionSetupMiddleware(AgentMiddleware[AgentState, Any]):
                 '[ -f "$f" ] && echo "---FILE:$(basename $f)" && cat "$f"; '
                 'done; '
                 '[ -f /default-user/memory/MEMORY.md ] && '
-                'echo "---FILE:MEMORY.md" && cat /default-user/memory/MEMORY.md',
+                'echo "---FILE:MEMORY.md" && cat /default-user/memory/MEMORY.md; '
+                'true',
                 timeout=10,
             )
             process.wait()
-            if process.returncode != 0:
-                return {}
 
             stdout = process.stdout.read()
             prompt_files: dict[str, str] = {}
