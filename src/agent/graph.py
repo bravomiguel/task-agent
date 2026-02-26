@@ -6,7 +6,9 @@ from langchain.chat_models import init_chat_model
 from langchain_anthropic import ChatAnthropic
 from agent.claude_auth import get_claude_code_token
 from agent.tools import present_file, view_image, memory_search
+from agent.cron_tools import manage_crons
 from agent.middleware import (
+    HeartbeatMiddleware,
     MemoryMiddleware,
     ModalSandboxMiddleware,
     MoveUploadsMiddleware,
@@ -52,15 +54,16 @@ modal_sandbox_middleware = ModalSandboxMiddleware()
 agent_middleware = [
     modal_sandbox_middleware,
     MoveUploadsMiddleware(),
-    SessionSetupMiddleware(llm=gpt_4_1_mini),  # Parallel: agents prompt + skills + memory setup
-    RuntimeContextMiddleware(),  # Assemble system prompt: agents prompt + context + skills
+    HeartbeatMiddleware(),  # Heartbeat detection + early exit
+    SessionSetupMiddleware(llm=gpt_4_1_mini),  # Parallel: prompt files + skills + memory setup
+    RuntimeContextMiddleware(),  # Assemble system prompt: project context + runtime context + skills
     ToolDescriptionMiddleware(),
     MemoryMiddleware(),  # Memory reminders + pre-compaction flush
     SessionMetadataMiddleware(),
 ]
 
 # Build tools list - conditionally include web_search if Tavily is available
-tools = [http_request, fetch_url, present_file, view_image, memory_search]
+tools = [http_request, fetch_url, present_file, view_image, memory_search, manage_crons]
 if tavily_client is not None:
     tools.append(web_search)
 

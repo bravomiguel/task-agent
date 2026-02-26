@@ -456,6 +456,10 @@ class MemoryMiddleware(AgentMiddleware[MemoryState, Any]):
 
     def _inject_directives(self, messages: list, state: dict) -> None:
         """Inject memory directives into messages."""
+        # Skip memory reminders for heartbeat runs
+        if state.get("session_type") == "heartbeat":
+            return
+
         human_msg = self._find_last_human_message(messages)
         if human_msg and not self._message_contains(human_msg, "memory-reminder"):
             self._append_to_message(human_msg, MEMORY_REMINDER_DIRECTIVE)
@@ -487,8 +491,30 @@ class MemoryMiddleware(AgentMiddleware[MemoryState, Any]):
     # Transcript persistence (after_agent)
     # ------------------------------------------------------------------
 
+    def _is_silent_response(self, messages: list) -> bool:
+        """Check if the last AI message is HEARTBEAT_OK or NO_REPLY."""
+        for msg in reversed(messages):
+            msg_type = getattr(msg, "type", None) or (
+                msg.get("type") if isinstance(msg, dict) else None
+            )
+            if msg_type == "ai":
+                content = getattr(msg, "content", None) or (
+                    msg.get("content", "") if isinstance(msg, dict) else ""
+                )
+                if isinstance(content, str):
+                    stripped = content.strip()
+                    return stripped in ("HEARTBEAT_OK", "NO_REPLY")
+                return False
+        return False
+
     def _write_transcript(self, state: MemoryState, runtime: Runtime) -> None:
         """Write full conversation transcript to volume."""
+        # Skip transcript for silent responses (HEARTBEAT_OK, NO_REPLY)
+        messages = state.get("messages", [])
+        if self._is_silent_response(messages):
+            logger.debug("[Transcript] silent response, skipping")
+            return
+
         sandbox_id = state.get("modal_sandbox_id")
         if not sandbox_id:
             logger.debug("[Transcript] no sandbox available, skipping")
@@ -499,7 +525,6 @@ class MemoryMiddleware(AgentMiddleware[MemoryState, Any]):
             logger.debug("[Transcript] no session_id, skipping")
             return
 
-        messages = state.get("messages", [])
         if not messages:
             return
 

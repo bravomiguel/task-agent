@@ -12,7 +12,6 @@ import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 import modal
@@ -32,15 +31,11 @@ from agent.middleware.skills import _list_skills_from_sandbox
 
 logger = logging.getLogger(__name__)
 
-_LOCAL_AGENTS_MD = Path(__file__).parent.parent.parent.parent / "prompts" / "AGENTS.md"
-
-
 class SessionSetupMiddleware(AgentMiddleware[AgentState, Any]):
-    """Runs agents prompt loading, skills discovery, and memory setup in parallel.
+    """Runs prompt file loading, skills discovery, and memory setup in parallel.
 
-    Replaces the before_agent hooks of AgentsPromptMiddleware,
-    SkillsMiddleware, and MemoryMiddleware. Those middlewares retain their
-    wrap_model_call / before_model hooks.
+    Loads all .md files from /default-user/prompts/ plus /default-user/memory/MEMORY.md
+    as project context files (mirroring OpenClaw's bootstrap file pattern).
     """
 
     def __init__(
@@ -56,27 +51,49 @@ class SessionSetupMiddleware(AgentMiddleware[AgentState, Any]):
         self._skills_path = skills_path
         self._archive_message_limit = archive_message_limit
 
-    # -- Agents prompt (sync, runs in thread) --------------------------------
+    # -- Prompt files (sync, runs in thread) ---------------------------------
 
-    def _load_agents_prompt(self, sandbox_id: str) -> dict[str, Any]:
+    def _load_prompt_files(self, sandbox_id: str) -> dict[str, Any]:
+        """Read all .md files from /default-user/prompts/ + MEMORY.md in one sandbox call."""
         try:
             sandbox = modal.Sandbox.from_id(sandbox_id)
             process = sandbox.exec(
-                "cat", "/default-user/prompts/AGENTS.md", timeout=10
+                "bash", "-c",
+                'for f in /default-user/prompts/*.md; do '
+                '[ -f "$f" ] && echo "---FILE:$(basename $f)" && cat "$f"; '
+                'done; '
+                '[ -f /default-user/memory/MEMORY.md ] && '
+                'echo "---FILE:MEMORY.md" && cat /default-user/memory/MEMORY.md',
+                timeout=10,
             )
             process.wait()
-            if process.returncode == 0:
-                content = process.stdout.read()
-                if content.strip():
-                    return {"agents_prompt": content}
-        except Exception:
-            pass
-        return self._load_local_agents_prompt()
+            if process.returncode != 0:
+                return {}
 
-    def _load_local_agents_prompt(self) -> dict[str, Any]:
-        try:
-            return {"agents_prompt": _LOCAL_AGENTS_MD.read_text()}
-        except Exception:
+            stdout = process.stdout.read()
+            prompt_files: dict[str, str] = {}
+            current_name: str | None = None
+            current_lines: list[str] = []
+
+            for line in stdout.split("\n"):
+                if line.startswith("---FILE:"):
+                    if current_name and current_lines:
+                        content = "\n".join(current_lines).strip()
+                        if content:
+                            prompt_files[current_name] = content
+                    current_name = line[len("---FILE:"):]
+                    current_lines = []
+                else:
+                    current_lines.append(line)
+
+            if current_name and current_lines:
+                content = "\n".join(current_lines).strip()
+                if content:
+                    prompt_files[current_name] = content
+
+            return {"prompt_files": prompt_files}
+        except Exception as e:
+            logger.warning("[SessionSetup] failed to load prompt files: %s", e)
             return {}
 
     # -- Skills discovery (sync, runs in thread) -----------------------------
@@ -173,7 +190,7 @@ class SessionSetupMiddleware(AgentMiddleware[AgentState, Any]):
     def before_agent(
         self, state: AgentState, runtime: Runtime
     ) -> dict[str, Any] | None:
-        """Sync: agents prompt + skills in parallel. Archive skipped (needs async)."""
+        """Sync: prompt files + skills in parallel. Archive skipped (needs async)."""
         updates: dict[str, Any] = {}
 
         if not state.get("session_type"):
@@ -181,12 +198,11 @@ class SessionSetupMiddleware(AgentMiddleware[AgentState, Any]):
 
         sandbox_id = state.get("modal_sandbox_id")
         if not sandbox_id:
-            updates.update(self._load_local_agents_prompt())
             return updates or None
 
         with ThreadPoolExecutor(max_workers=2) as pool:
             futures = [
-                pool.submit(self._load_agents_prompt, sandbox_id),
+                pool.submit(self._load_prompt_files, sandbox_id),
                 pool.submit(self._load_skills, sandbox_id),
             ]
             for future in futures:
@@ -214,13 +230,12 @@ class SessionSetupMiddleware(AgentMiddleware[AgentState, Any]):
 
         sandbox_id = state.get("modal_sandbox_id")
         if not sandbox_id:
-            updates.update(self._load_local_agents_prompt())
             return updates or None
 
         loop = asyncio.get_running_loop()
 
         results = await asyncio.gather(
-            loop.run_in_executor(None, self._load_agents_prompt, sandbox_id),
+            loop.run_in_executor(None, self._load_prompt_files, sandbox_id),
             loop.run_in_executor(None, self._load_skills, sandbox_id),
             self._setup_memory(state),
             return_exceptions=True,

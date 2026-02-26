@@ -17,6 +17,7 @@ dependencies = [
     "langchain_openai>=1.0.1",
     "tavily-python>=0.7.12",
     "lancedb>=0.13.0",
+    "supabase>=2.0.0",
     ]
 
 [project.optional-dependencies]

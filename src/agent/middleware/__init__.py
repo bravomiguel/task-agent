@@ -1,5 +1,6 @@
 """Middleware package for agent middleware components."""
 
+from agent.middleware.heartbeat import HeartbeatMiddleware
 from agent.middleware.memory import MemoryMiddleware
 from agent.middleware.modal_sandbox import ModalSandboxMiddleware
 from agent.middleware.move_uploads import MoveUploadsMiddleware
@@ -12,6 +13,7 @@ from agent.middleware.triage_threads import TriageThreadsMiddleware
 from agent.middleware.triage_context import TriageContextMiddleware
 
 __all__ = [
+    "HeartbeatMiddleware",
     "MemoryMiddleware",
     "ModalSandboxMiddleware",
     "MoveUploadsMiddleware",

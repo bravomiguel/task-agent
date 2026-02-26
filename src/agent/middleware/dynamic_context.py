@@ -53,8 +53,8 @@ The extra time to read skills before starting is worth it - they prevent common 
 
 
 class RuntimeContextState(ModalSandboxState):
-    """Extended state with agents prompt and skills metadata."""
-    agents_prompt: NotRequired[str]
+    """Extended state with prompt files and skills metadata."""
+    prompt_files: NotRequired[dict[str, str]]
     skills_metadata: NotRequired[list[SkillMetadata]]
 
 
@@ -150,12 +150,28 @@ class RuntimeContextMiddleware(AgentMiddleware[RuntimeContextState, Any]):
         else:
             request.system_prompt = skills_section
 
+    def _inject_project_context(self, request: ModelRequest) -> None:
+        """Inject all prompt files as Project Context sections."""
+        prompt_files = request.state.get("prompt_files", {})
+        if not prompt_files or not request.system_prompt:
+            return
+
+        filenames = ", ".join(prompt_files.keys())
+        header = (
+            f"\n\n## Project Context\n\n"
+            f"The following project context files have been loaded: {filenames}\n\n"
+            f"If SOUL.md is present, embody its persona and tone."
+        )
+        request.system_prompt += header
+
+        for filename, content in prompt_files.items():
+            section_name = filename.replace(".md", "")
+            request.system_prompt += f"\n\n### {section_name}\n\n{content}"
+
     def _inject_all(self, request: ModelRequest) -> None:
         """Assemble all prompt components in order."""
-        # 1. Agents prompt (AGENTS.md content)
-        agents_prompt = request.state.get("agents_prompt")
-        if agents_prompt and request.system_prompt:
-            request.system_prompt = request.system_prompt + "\n\n" + agents_prompt
+        # 1. Project context files (AGENTS.md, HEARTBEAT.md, SOUL.md, MEMORY.md, etc.)
+        self._inject_project_context(request)
 
         # 2. Runtime context (datetime + session ID)
         self._inject_system_prompt_context(request)
