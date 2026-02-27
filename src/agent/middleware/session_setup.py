@@ -53,6 +53,49 @@ class SessionSetupMiddleware(AgentMiddleware[AgentState, Any]):
 
     # -- Prompt files (sync, runs in thread) ---------------------------------
 
+    MAX_FILE_CHARS = 20_000
+    HEAD_RATIO = 0.70
+    TAIL_RATIO = 0.20
+
+    @staticmethod
+    def _truncate_file(content: str, max_chars: int, head_ratio: float, tail_ratio: float) -> str:
+        """Truncate content preserving head and tail with a marker in the middle."""
+        if len(content) <= max_chars:
+            return content
+
+        lines = content.split("\n")
+        head_chars = int(max_chars * head_ratio)
+        tail_chars = int(max_chars * tail_ratio)
+
+        # Find head boundary (last full line within head_chars)
+        char_count = 0
+        head_end = 0
+        for i, line in enumerate(lines):
+            char_count += len(line) + 1  # +1 for newline
+            if char_count > head_chars:
+                break
+            head_end = i + 1
+
+        # Find tail boundary (first full line within tail_chars from end)
+        char_count = 0
+        tail_start = len(lines)
+        for i in range(len(lines) - 1, -1, -1):
+            char_count += len(lines[i]) + 1
+            if char_count > tail_chars:
+                break
+            tail_start = i
+
+        if tail_start <= head_end:
+            return content
+
+        head = "\n".join(lines[:head_end])
+        tail = "\n".join(lines[tail_start:])
+        marker = (
+            f"\n\n[... truncated lines {head_end + 1}-{tail_start} — "
+            f"read missing lines if relevant ...]\n\n"
+        )
+        return head + marker + tail
+
     def _load_prompt_files(self, sandbox_id: str) -> dict[str, Any]:
         """Read all .md files from /default-user/prompts/ + MEMORY.md in one sandbox call."""
         try:
@@ -79,7 +122,9 @@ class SessionSetupMiddleware(AgentMiddleware[AgentState, Any]):
                     if current_name and current_lines:
                         content = "\n".join(current_lines).strip()
                         if content:
-                            prompt_files[current_name] = content
+                            prompt_files[current_name] = self._truncate_file(
+                                content, self.MAX_FILE_CHARS, self.HEAD_RATIO, self.TAIL_RATIO,
+                            )
                     current_name = line[len("---FILE:"):]
                     current_lines = []
                 else:
@@ -88,7 +133,9 @@ class SessionSetupMiddleware(AgentMiddleware[AgentState, Any]):
             if current_name and current_lines:
                 content = "\n".join(current_lines).strip()
                 if content:
-                    prompt_files[current_name] = content
+                    prompt_files[current_name] = self._truncate_file(
+                        content, self.MAX_FILE_CHARS, self.HEAD_RATIO, self.TAIL_RATIO,
+                    )
 
             return {"prompt_files": prompt_files}
         except Exception as e:

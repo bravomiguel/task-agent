@@ -17,7 +17,7 @@ from agent.middleware import (
     SessionMetadataMiddleware,
     ToolDescriptionMiddleware,
 )
-from agent.system_prompt import SYSTEM_PROMPT
+from agent.system_prompt import STATIC_PART_01
 from agent.modal_backend import LazyModalBackend
 
 # Initialize models — use Claude Code OAuth token for auth.
@@ -56,7 +56,7 @@ agent_middleware = [
     MoveUploadsMiddleware(),
     HeartbeatMiddleware(),  # Heartbeat detection + early exit
     SessionSetupMiddleware(llm=gpt_4_1_mini),  # Parallel: prompt files + skills + memory setup
-    RuntimeContextMiddleware(),  # Assemble system prompt: project context + runtime context + skills
+    RuntimeContextMiddleware(),  # Assemble: STATIC_PART_01 → Skills → STATIC_PART_02 → Session → Project Context → STATIC_PART_03
     ToolDescriptionMiddleware(),
     MemoryMiddleware(),  # Memory reminders + pre-compaction flush
     SessionMetadataMiddleware(),
@@ -70,7 +70,7 @@ if tavily_client is not None:
 # Create the agent with backend factory
 agent = create_deep_agent(
     model=claude_opus,
-    system_prompt=SYSTEM_PROMPT,
+    system_prompt=STATIC_PART_01,
     tools=tools,
     middleware=agent_middleware,
     backend=create_backend_factory(),

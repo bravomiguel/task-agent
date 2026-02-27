@@ -12,11 +12,14 @@ MODAL="$PROJECT_DIR/.venv/bin/modal"
 
 echo "=== Factory Reset ==="
 
-echo "Wiping /default-user/memory/..."
-"$MODAL" volume rm user-default-user /default-user/memory/ -r 2>/dev/null || true
+echo "Wiping /memory/..."
+"$MODAL" volume rm user-default-user /memory/ -r 2>/dev/null || true
 
-echo "Wiping /default-user/session-storage/..."
-"$MODAL" volume rm user-default-user /default-user/session-storage/ -r 2>/dev/null || true
+echo "Wiping /session-storage/..."
+"$MODAL" volume rm user-default-user /session-storage/ -r 2>/dev/null || true
+
+echo "Wiping /session-transcripts/..."
+"$MODAL" volume rm user-default-user /session-transcripts/ -r 2>/dev/null || true
 
 echo "Restoring default prompts..."
 "$SCRIPT_DIR/reset_prompts.sh"

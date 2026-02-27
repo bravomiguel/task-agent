@@ -1,9 +1,9 @@
 """Runtime context middleware for assembling system prompt and injecting message context.
 
-Combines three concerns into a single wrap_model_call:
-1. Agents prompt — appends AGENTS.md content to system prompt
-2. Runtime context — appends datetime, session ID; stamps human messages
-3. Skills — appends skills documentation to system prompt
+Assembly order (mirrors OpenClaw):
+  STATIC_PART_01 → Skills → STATIC_PART_02 → Current Session → Project Context → STATIC_PART_03
+
+Also stamps human messages with a <current-datetime> tag.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResp
 
 from agent.middleware.modal_sandbox import ModalSandboxState
 from agent.middleware.skills import SkillMetadata
+from agent.system_prompt import STATIC_PART_02, STATIC_PART_03
 
 
 SKILLS_SYSTEM_PROMPT = """
@@ -107,22 +108,14 @@ class RuntimeContextMiddleware(AgentMiddleware[RuntimeContextState, Any]):
         if not request.system_prompt:
             return
 
-        context = ""
-
-        # Current date/time
-        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-        context += f"\n\n### Current Date & Time\n{now}"
-
-        # Session context
+        # Session context (static per run — no datetime to preserve prompt caching)
         session_id = request.state.get("session_id")
         if session_id:
-            context += (
+            context = (
                 f"\n\n### Current Session\n"
                 f"Your session ID is `{session_id}`. "
                 f"Save user-requested files to `/default-user/session-storage/{session_id}/outputs/`."
             )
-
-        if context:
             request.system_prompt = request.system_prompt + context
 
     def _format_skills_list(self, skills: list[SkillMetadata]) -> str:
@@ -181,18 +174,31 @@ class RuntimeContextMiddleware(AgentMiddleware[RuntimeContextState, Any]):
             request.system_prompt += f"\n\n### {section_name}\n\n{content}"
 
     def _inject_all(self, request: ModelRequest) -> None:
-        """Assemble all prompt components in order."""
-        # 1. Project context files (AGENTS.md, HEARTBEAT.md, SOUL.md, MEMORY.md, etc.)
-        self._inject_project_context(request)
+        """Assemble all prompt components in order.
 
-        # 2. Runtime context (datetime + session ID)
+        Final order: STATIC_PART_01 → Skills → STATIC_PART_02 → Current Session
+                     → Project Context → STATIC_PART_03
+        STATIC_PART_01 is already set as request.system_prompt by the graph.
+        """
+        # 1. Skills (after STATIC_PART_01)
+        self._inject_skills(request)
+
+        # 2. STATIC_PART_02 (Memory Recall, Workspace, HITL, File Reliability)
+        if request.system_prompt:
+            request.system_prompt += STATIC_PART_02
+
+        # 3. Current Session (session ID)
         self._inject_system_prompt_context(request)
 
-        # 3. Datetime stamp on human messages
-        self._inject_datetime_tag(request.messages)
+        # 4. Project Context (AGENTS.md, SOUL.md, MEMORY.md, etc.)
+        self._inject_project_context(request)
 
-        # 4. Skills documentation
-        self._inject_skills(request)
+        # 5. Protocol (Heartbeats + Silent Replies — last, matching OpenClaw)
+        if request.system_prompt:
+            request.system_prompt += STATIC_PART_03
+
+        # 6. Datetime stamp on human messages
+        self._inject_datetime_tag(request.messages)
 
     def wrap_model_call(
         self,

@@ -10,8 +10,6 @@ Before doing anything else:
 
 Don't ask permission. Just do it.
 
-Note: MEMORY.md is automatically loaded into your system prompt — you don't need to read it manually.
-
 ## Memory
 
 You wake up fresh each session. These files are your continuity:
@@ -24,7 +22,7 @@ Capture what matters. Decisions, context, things to remember.
 ### MEMORY.md - Your Long-Term Memory
 
 - This is your curated memory — the distilled essence, not raw logs
-- MEMORY.md is automatically injected into your system prompt as project context — you always have it
+- If MEMORY.md exists, it's already in your system prompt (Project Context) — no need to read it manually
 - **Do not write to MEMORY.md during normal conversations.** Always capture to today's daily log first.
 - Only update MEMORY.md during memory maintenance — when reviewing daily logs and distilling what's worth keeping long-term
 - Over time, review your daily files and update MEMORY.md with what's worth keeping
