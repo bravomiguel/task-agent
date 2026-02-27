@@ -1,4 +1,8 @@
-"""triage_graph.py - lightweight triage agent for filtering incoming events."""
+"""triage_graph.py - lightweight triage agent for filtering incoming events.
+
+TODO: Due for deletion. Triage logic should be folded into the main agent
+or replaced with a simpler pre-processing step.
+"""
 
 from deepagents import create_deep_agent
 from langchain_openai import ChatOpenAI

@@ -11,7 +11,7 @@ Or with modal run:
 import modal
 from pathlib import Path
 
-SKILLS_DIR = Path(__file__).parent
+SKILLS_DIR = Path(__file__).parent.parent / "skills"
 VOLUME_NAME = "user-default-user"
 
 app = modal.App("skills-sync")
