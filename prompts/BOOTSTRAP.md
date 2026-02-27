@@ -19,7 +19,8 @@ Offer suggestions if they're stuck. Have fun with it.
 
 ## After You Know Who You Are
 
-Update these files with what you learned (use `edit_file` with the paths shown):
+Rewrite these files with what you learned (use `write_file` with the paths shown).
+Keep the `# header` line, replace everything else — don't leave template instructions behind:
 - `/default-user/prompts/IDENTITY.md` — your name, vibe, emoji
 - `/default-user/prompts/USER.md` — their name, how to address them, timezone, notes
 
