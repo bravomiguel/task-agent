@@ -156,10 +156,22 @@ class RuntimeContextMiddleware(AgentMiddleware[RuntimeContextState, Any]):
         if not prompt_files or not request.system_prompt:
             return
 
-        filenames = ", ".join(prompt_files.keys())
+        # Build file listing with paths
+        PROMPT_DIR = "/default-user/prompts"
+        MEMORY_DIR = "/default-user/memory"
+        file_listing = []
+        for filename in prompt_files:
+            if filename == "MEMORY.md":
+                file_listing.append(f"- `{MEMORY_DIR}/{filename}`")
+            else:
+                file_listing.append(f"- `{PROMPT_DIR}/{filename}`")
+        files_block = "\n".join(file_listing)
+
         header = (
             f"\n\n## Project Context\n\n"
-            f"The following project context files have been loaded: {filenames}\n\n"
+            f"The following project context files have been loaded:\n{files_block}\n\n"
+            f"These are live files on disk. To edit them, use `edit_file` with the paths above. "
+            f"To delete a file, use `execute_bash` with `rm <path>`.\n\n"
             f"If SOUL.md is present, embody its persona and tone."
         )
         request.system_prompt += header
