@@ -54,8 +54,8 @@ modal_sandbox_middleware = ModalSandboxMiddleware()
 agent_middleware = [
     modal_sandbox_middleware,
     MoveUploadsMiddleware(),
-    HeartbeatMiddleware(),  # Heartbeat detection + early exit
     SessionSetupMiddleware(llm=gpt_4_1_mini),  # Parallel: prompt files + skills + memory setup
+    HeartbeatMiddleware(),  # Heartbeat detection + early exit (reads HEARTBEAT.md from state)
     RuntimeContextMiddleware(),  # Assemble: STATIC_PART_01 → Skills → STATIC_PART_02 → Session → Project Context → STATIC_PART_03
     ToolDescriptionMiddleware(),
     MemoryMiddleware(),  # Memory reminders + pre-compaction flush

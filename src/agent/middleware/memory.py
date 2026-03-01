@@ -460,9 +460,10 @@ class MemoryMiddleware(AgentMiddleware[MemoryState, Any]):
         if state.get("session_type") == "heartbeat":
             return
 
-        human_msg = self._find_last_human_message(messages)
-        if human_msg and not self._message_contains(human_msg, "memory-reminder"):
-            self._append_to_message(human_msg, MEMORY_REMINDER_DIRECTIVE)
+        # Memory reminder disabled — guards added to system prompt and AGENTS.md instead
+        # human_msg = self._find_last_human_message(messages)
+        # if human_msg and not self._message_contains(human_msg, "memory-reminder"):
+        #     self._append_to_message(human_msg, MEMORY_REMINDER_DIRECTIVE)
 
         if state.get("_memory_flush_turn") and messages:
             if not self._message_contains(messages[-1], "memory-flush"):

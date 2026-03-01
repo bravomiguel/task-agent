@@ -10,6 +10,8 @@ If BOOTSTRAP.md is present in your project context, that's your birth certificat
 
 Before doing anything else:
 
+> Skip steps 1 and 2 if BOOTSTRAP.md is present in Project Context — go there first.
+
 1. Review SOUL.md, USER.md, and MEMORY.md (if it exists) in your project context
 2. Read `/default-user/memory/YYYY-MM-DD.md` (today + yesterday) for recent context
 

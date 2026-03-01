@@ -44,7 +44,7 @@ STATIC_PART_02 = """
 
 ## Memory Recall
 
-Before answering anything about prior work, decisions, dates, people, preferences, or todos: use memory_search with a relevant query; then use read_file to pull full context for any matching results. If low confidence after search, say you checked.
+Before answering anything about prior work, decisions, dates, people, preferences, or todos: use memory_search with a relevant query; then use read_file to pull full context for any matching results. If low confidence after search, say you checked. Skip this step if BOOTSTRAP.md is present in Project Context.
 
 ## Workspace
 

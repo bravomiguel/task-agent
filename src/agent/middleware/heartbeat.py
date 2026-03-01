@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any, NotRequired
 
-import modal
 from langchain.agents.middleware import AgentMiddleware, AgentState
 from langchain.agents.middleware.types import hook_config
 from langgraph.runtime import Runtime
@@ -25,8 +23,10 @@ class HeartbeatState(AgentState):
 class HeartbeatMiddleware(AgentMiddleware[HeartbeatState, Any]):
     """Middleware that detects heartbeat runs and short-circuits if HEARTBEAT.md is empty.
 
-    Must run AFTER ModalSandboxMiddleware (needs sandbox) and BEFORE SessionSetupMiddleware
-    (sets session_type before archiving logic).
+    Must run AFTER SessionSetupMiddleware so that prompt_files are already loaded
+    into state. Reads HEARTBEAT.md from state instead of the sandbox directly,
+    avoiding a direct volume access that races with Modal's volume initialisation
+    on cold sandboxes.
     """
 
     state_schema = HeartbeatState
@@ -48,29 +48,21 @@ class HeartbeatMiddleware(AgentMiddleware[HeartbeatState, Any]):
                 return content if isinstance(content, str) else ""
         return None
 
-    def _is_heartbeat_empty(self, sandbox_id: str) -> bool:
-        """Quick check: is HEARTBEAT.md empty or missing?"""
-        try:
-            sandbox = modal.Sandbox.from_id(sandbox_id)
-            process = sandbox.exec(
-                "cat", "/default-user/prompts/HEARTBEAT.md", timeout=10
-            )
-            process.wait()
-            if process.returncode != 0:
-                return True
-            content = process.stdout.read().strip()
-            # Strip comments and headings — if only comments/headings remain, treat as empty
-            lines = [
-                line
-                for line in content.split("\n")
-                if line.strip()
-                and not line.strip().startswith("#")
-                and not line.strip().startswith("<!--")
-            ]
-            return len(lines) == 0
-        except Exception as e:
-            logger.warning("[Heartbeat] failed to read HEARTBEAT.md: %s", e)
+    def _is_heartbeat_empty(self, state: dict) -> bool:
+        """Check if HEARTBEAT.md is empty or missing using already-loaded prompt_files."""
+        prompt_files = state.get("prompt_files") or {}
+        content = prompt_files.get("HEARTBEAT.md", "").strip()
+        if not content:
             return True
+        # Strip comments and headings — if only comments/headings remain, treat as empty
+        lines = [
+            line
+            for line in content.split("\n")
+            if line.strip()
+            and not line.strip().startswith("#")
+            and not line.strip().startswith("<!--")
+        ]
+        return len(lines) == 0
 
     def _ensure_heartbeat_cron(self, session_id: str) -> None:
         """Auto-create heartbeat cron if none exists (first-run setup)."""
@@ -109,13 +101,8 @@ class HeartbeatMiddleware(AgentMiddleware[HeartbeatState, Any]):
 
         updates: dict[str, Any] = {"session_type": "heartbeat"}
 
-        sandbox_id = state.get("modal_sandbox_id")
-        if not sandbox_id:
-            logger.warning("[Heartbeat] no sandbox available, skipping")
-            return {"jump_to": "end", **updates}
-
         # Quick empty check — if HEARTBEAT.md is empty, exit early (zero cost)
-        if self._is_heartbeat_empty(sandbox_id):
+        if self._is_heartbeat_empty(state):
             logger.info("[Heartbeat] HEARTBEAT.md empty, early exit")
             return {"jump_to": "end", **updates}
 

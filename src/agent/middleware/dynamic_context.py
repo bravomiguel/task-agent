@@ -99,7 +99,7 @@ class RuntimeContextMiddleware(AgentMiddleware[RuntimeContextState, Any]):
             if getattr(msg, "type", None) == "human":
                 if not self._message_contains(msg, "current-datetime"):
                     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-                    tag = f'<system-reminder type="current-datetime">{now}</system-reminder>'
+                    tag = f'<system-reminder type="current-datetime">{now} — factor in the user\'s local timezone if known (check USER.md or memory)</system-reminder>'
                     self._append_to_message(msg, tag)
                 return
 
