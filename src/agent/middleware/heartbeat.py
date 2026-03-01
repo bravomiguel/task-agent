@@ -17,7 +17,7 @@ HEARTBEAT_MARKER = "[HEARTBEAT]"
 class HeartbeatState(AgentState):
     """State schema for heartbeat middleware."""
 
-    session_type: NotRequired[str]  # main | task | cron | heartbeat
+    session_type: NotRequired[str]  # main | task | cron | heartbeat | subagent
 
 
 class HeartbeatMiddleware(AgentMiddleware[HeartbeatState, Any]):

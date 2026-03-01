@@ -71,7 +71,7 @@ class MemoryState(AgentState):
     _memory_flush_turn: NotRequired[bool]
     _session_archived: NotRequired[bool]
     _memory_index_synced: NotRequired[bool]
-    session_type: NotRequired[str]  # main | task | cron | heartbeat
+    session_type: NotRequired[str]  # main | task | cron | heartbeat | subagent
 
 
 # ---------------------------------------------------------------------------
