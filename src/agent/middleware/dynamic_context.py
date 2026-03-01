@@ -77,7 +77,8 @@ class RuntimeContextMiddleware(AgentMiddleware[RuntimeContextState, Any]):
             return marker in content
         if isinstance(content, list):
             return any(
-                marker in (part.get("text", "") if isinstance(part, dict) else str(part))
+                marker in (part.get("text", "") if isinstance(
+                    part, dict) else str(part))
                 for part in content
             )
         return False
@@ -98,8 +99,9 @@ class RuntimeContextMiddleware(AgentMiddleware[RuntimeContextState, Any]):
         for msg in reversed(messages):
             if getattr(msg, "type", None) == "human":
                 if not self._message_contains(msg, "current-datetime"):
-                    now = datetime.now(timezone.utc).strftime("%A, %Y-%m-%d %H:%M UTC")
-                    tag = f'<system-reminder type="current-datetime">{now} — before mentioning any time or date in your reply, review USER.md in your system prompt for the user\'s timezone/location and convert accordingly. Do not reference time or date until you have checked USER.md.</system-reminder>'
+                    now = datetime.now(timezone.utc).strftime(
+                        "%A, %Y-%m-%d %H:%M UTC")
+                    tag = f'<system-reminder type="current-datetime">{now} — NOTE: when mentioning date or time in your reply, ALWAYS MAKE SURE it\'s in the user\'s local timezone. E.g. if it\'s 10pm UTC, do not instantly assume it\'s evening in the user\'s timezone. Review USER.md in your Project Context first for the user\'s timezone and convert accordingly.</system-reminder>'
                     self._append_to_message(msg, tag)
                 return
 
