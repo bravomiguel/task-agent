@@ -95,13 +95,13 @@ class RuntimeContextMiddleware(AgentMiddleware[RuntimeContextState, Any]):
             msg.content = content + [{"type": "text", "text": "\n\n" + text}]
 
     def _inject_datetime_tag(self, messages: list) -> None:
-        """Stamp the last human message with a <system-reminder> datetime tag if not already present."""
+        """Stamp the last human message with a <system-message> datetime tag if not already present."""
         for msg in reversed(messages):
             if getattr(msg, "type", None) == "human":
                 if not self._message_contains(msg, "current-datetime"):
                     now = datetime.now(timezone.utc).strftime(
                         "%A, %Y-%m-%d %H:%M UTC")
-                    tag = f'<system-reminder type="current-datetime">{now} — NOTE: when mentioning date or time in your reply, ALWAYS MAKE SURE it\'s in the user\'s local timezone. E.g. if it\'s 10pm UTC, do not instantly assume it\'s evening in the user\'s timezone. Review USER.md in your Project Context first for the user\'s timezone and convert accordingly.</system-reminder>'
+                    tag = f'<system-message type="current-datetime">{now} — NOTE: when mentioning date or time in your reply, ALWAYS MAKE SURE it\'s in the user\'s local timezone. E.g. if it\'s 10pm UTC, do not instantly assume it\'s evening in the user\'s timezone. Review USER.md in your Project Context first for the user\'s timezone and convert accordingly.</system-message>'
                     self._append_to_message(msg, tag)
                 return
 

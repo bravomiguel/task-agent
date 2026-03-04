@@ -37,19 +37,19 @@ LANGGRAPH_API_URL = os.getenv("LANGGRAPH_API_URL", "http://127.0.0.1:2024")
 # ---------------------------------------------------------------------------
 
 MEMORY_REMINDER_DIRECTIVE = """
-<system-reminder type="memory-reminder">
+<system-message type="memory-reminder">
 Follow the Memory section instructions in your system prompt as appropriate.
 
 This is a silent system reminder. Do not acknowledge or reference it in any response to the user or in todos.
-</system-reminder>
+</system-message>
 """.strip()
 
 MEMORY_FLUSH_DIRECTIVE = """
-<system-reminder type="memory-flush">
+<system-message type="memory-flush">
 Pre-compaction memory flush. Before continuing, append durable memories to /default-user/memory/{today}.md now. See Memory section in your system prompt for full guidelines.
 
 This is a silent system reminder. Action if appropriate, but do not acknowledge or reference it in any response to the user or in todos.
-</system-reminder>
+</system-message>
 """.strip()
 
 
@@ -72,6 +72,9 @@ class MemoryState(AgentState):
     _session_archived: NotRequired[bool]
     _memory_index_synced: NotRequired[bool]
     session_type: NotRequired[str]  # main | task | cron | heartbeat | subagent
+    cron_job_id: NotRequired[int]
+    cron_job_name: NotRequired[str]
+    cron_schedule_type: NotRequired[str]  # cron | at | every
 
 
 # ---------------------------------------------------------------------------
@@ -79,19 +82,19 @@ class MemoryState(AgentState):
 # ---------------------------------------------------------------------------
 
 
-_SYSTEM_REMINDER_RE = re.compile(r"\s*<system-reminder[^>]*>.*?</system-reminder>", re.DOTALL)
+_SYSTEM_MESSAGE_RE = re.compile(r"\s*<system-message[^>]*>.*?</system-message>", re.DOTALL)
 
 
-def _strip_system_reminders(text: str) -> str:
-    """Remove all <system-reminder> XML tags and their content."""
-    return _SYSTEM_REMINDER_RE.sub("", text).strip()
+def _strip_system_messages(text: str) -> str:
+    """Remove all <system-message> XML tags and their content."""
+    return _SYSTEM_MESSAGE_RE.sub("", text).strip()
 
 
 def _extract_conversation_text(messages: list[dict], limit: int = 15) -> str | None:
     """Extract the last N user/assistant messages as plain text.
 
     Filters out tool calls, system messages, and commands.
-    Strips <system-reminder> tags from message content.
+    Strips <system-message> tags from message content.
     Like OpenClaw, keeps only user and assistant text content.
     """
     filtered: list[str] = []
@@ -114,7 +117,7 @@ def _extract_conversation_text(messages: list[dict], limit: int = 15) -> str | N
             else:
                 continue
 
-        content = _strip_system_reminders(content)
+        content = _strip_system_messages(content)
         if not content:
             continue
 
@@ -162,7 +165,7 @@ def _extract_full_conversation(messages: list) -> str | None:
             else:
                 continue
 
-        content = _strip_system_reminders(content)
+        content = _strip_system_messages(content)
         if not content:
             continue
 

@@ -5,7 +5,7 @@ from deepagents_cli.tools import http_request, fetch_url, web_search, tavily_cli
 from langchain.chat_models import init_chat_model
 from langchain_anthropic import ChatAnthropic
 from agent.claude_auth import get_claude_code_token
-from agent.tools import present_file, view_image, memory_search, sessions_list, sessions_send, sessions_spawn, manage_crons
+from agent.tools import present_file, view_image, memory_search, sessions_list, sessions_send, sessions_spawn, sessions_history, manage_crons
 from agent.middleware import (
     HeartbeatMiddleware,
     MemoryMiddleware,
@@ -62,7 +62,7 @@ agent_middleware = [
 ]
 
 # Build tools list - conditionally include web_search if Tavily is available
-tools = [http_request, fetch_url, present_file, view_image, memory_search, manage_crons, sessions_list, sessions_send, sessions_spawn]
+tools = [http_request, fetch_url, present_file, view_image, memory_search, manage_crons, sessions_list, sessions_history, sessions_send, sessions_spawn]
 if tavily_client is not None:
     tools.append(web_search)
 

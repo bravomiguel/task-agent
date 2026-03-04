@@ -315,28 +315,106 @@ def memory_search(
 # Session tools
 # ---------------------------------------------------------------------------
 
+_SYSTEM_MESSAGE_RE = re.compile(r"\s*<system-message[^>]*>.*?</system-message>", re.DOTALL)
+_TEXT_MAX_CHARS = 4000
+
+
+def _sanitize_content(content) -> str | None:
+    """Sanitize message content: extract text, strip system-message tags, truncate, drop image data."""
+    if isinstance(content, str):
+        text = _SYSTEM_MESSAGE_RE.sub("", content).strip()
+        if len(text) > _TEXT_MAX_CHARS:
+            text = text[:_TEXT_MAX_CHARS] + "… [truncated]"
+        return text or None
+
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if not isinstance(block, dict):
+                if isinstance(block, str):
+                    parts.append(block)
+                continue
+            btype = block.get("type", "")
+            if btype == "text":
+                parts.append(block.get("text", ""))
+            elif btype in ("image", "image_url"):
+                parts.append("[image omitted]")
+            # skip tool_use, tool_result, etc.
+        text = " ".join(p for p in parts if p)
+        text = _SYSTEM_MESSAGE_RE.sub("", text).strip()
+        if len(text) > _TEXT_MAX_CHARS:
+            text = text[:_TEXT_MAX_CHARS] + "… [truncated]"
+        return text or None
+
+    return None
+
+
+def _extract_messages(
+    messages: list[dict], limit: int, include_tools: bool = False,
+) -> list[dict]:
+    """Extract messages, filtering tool messages and sanitizing content."""
+    filtered = []
+    for m in messages:
+        role = m.get("type") or m.get("role", "")
+        if not include_tools and role not in ("human", "ai", "user", "assistant"):
+            continue
+
+        content = _sanitize_content(m.get("content", ""))
+        if not content:
+            continue
+
+        if role in ("human", "user"):
+            label = "user"
+        elif role in ("ai", "assistant"):
+            label = "assistant"
+        else:
+            label = role
+
+        entry: dict = {"role": label, "content": content}
+        ts = m.get("created_at") or m.get("timestamp")
+        if ts:
+            entry["timestamp"] = str(ts)
+        filtered.append(entry)
+
+    return filtered[-limit:]
+
 
 @tool
-def sessions_list(limit: int = 20, offset: int = 0) -> str:
-    """List recent session threads. Use limit/offset to page through results.
-
-    Each result includes session_id, session_type, status (idle/busy/error),
-    and updated_at. Inspect session_type to find threads of a specific kind
-    (e.g. "main", "cron", "heartbeat"). Sort by updated_at to find the latest.
+def sessions_list(
+    limit: int = 20,
+    offset: int = 0,
+    session_type: str = None,
+    message_limit: int = 0,
+) -> str:
+    """List recent session threads with optional filters.
 
     Args:
         limit: Number of threads to return (default 20).
         offset: Pagination offset (default 0).
+        session_type: Filter by session type (e.g. "main", "cron", "heartbeat").
+            Omit to return all types.
+        message_limit: Include last N messages per session (default 0, max 20).
+            Useful to peek at recent conversation without a separate call.
 
     Returns:
-        JSON array of sessions, each with session_id, session_type, status, updated_at.
+        JSON array of sessions, each with session_id, session_type, status,
+        updated_at, and optionally last_messages.
     """
     api_url = LANGGRAPH_API_URL
     try:
+        payload: dict = {
+            "limit": limit,
+            "offset": offset,
+            "sort_by": "updated_at",
+            "sort_order": "desc",
+        }
+        if session_type:
+            payload["values"] = {"session_type": session_type}
+
         response = httpx.post(
             f"{api_url}/threads/search",
             headers={"Content-Type": "application/json"},
-            json={"limit": limit, "offset": offset},
+            json=payload,
             timeout=30,
         )
         response.raise_for_status()
@@ -344,87 +422,174 @@ def sessions_list(limit: int = 20, offset: int = 0) -> str:
         trimmed = []
         for t in threads:
             values = t.get("values") or {}
-            trimmed.append({
+            entry = {
                 "session_id": t.get("thread_id"),
                 "session_type": values.get("session_type"),
                 "status": t.get("status"),
                 "updated_at": t.get("updated_at"),
-            })
+            }
+            if message_limit > 0:
+                messages = values.get("messages", [])
+                entry["last_messages"] = _extract_messages(messages, min(message_limit, 20))
+            trimmed.append(entry)
         return _json.dumps(trimmed)
     except httpx.ConnectError as e:
-        return f"Error: Could not connect to LangGraph API at {api_url}. Details: {e}"
+        return _json.dumps({"status": "error", "error": f"Connection failed: {e}"})
     except httpx.TimeoutException:
-        return f"Error: Request timed out connecting to {api_url}."
+        return _json.dumps({"status": "error", "error": "Request timed out"})
     except httpx.HTTPStatusError as e:
-        return f"Error: API returned status {e.response.status_code}. Details: {e.response.text}"
+        return _json.dumps({"status": "error", "error": f"HTTP {e.response.status_code}: {e.response.text}"})
     except Exception as e:
-        return f"Error: {e}"
+        return _json.dumps({"status": "error", "error": str(e)})
+
+
+def _wrap_origin_message(tool_name: str, message: str, state: dict | None) -> str:
+    """Wrap message in a <system-message> tag with origin context from agent state.
+
+    The type attribute is the tool name (e.g. "sessions-send", "sessions-spawn").
+    Always includes session_id and session_type. Includes cron_job_id,
+    cron_job_name, and schedule_type only when present (cron/heartbeat sessions).
+    """
+    if not state:
+        return message
+    attrs = [
+        f'type="{tool_name}"',
+        f'session_id="{state.get("session_id", "")}"',
+        f'session_type="{state.get("session_type", "")}"',
+    ]
+    cron_job_id = state.get("cron_job_id")
+    if cron_job_id is not None:
+        attrs.append(f'cron_job_id="{cron_job_id}"')
+    cron_job_name = state.get("cron_job_name")
+    if cron_job_name is not None:
+        attrs.append(f'cron_job_name="{cron_job_name}"')
+    cron_schedule_type = state.get("cron_schedule_type")
+    if cron_schedule_type is not None:
+        attrs.append(f'schedule_type="{cron_schedule_type}"')
+    attr_str = " ".join(attrs)
+    return f"<system-message {attr_str}>\n{message}\n</system-message>"
+
+
+def _extract_last_ai_message(thread_id: str, api_url: str) -> str | None:
+    """Fetch the last AI message content from a thread's state."""
+    try:
+        r = httpx.get(
+            f"{api_url}/threads/{thread_id}/state",
+            headers={"Content-Type": "application/json"},
+            timeout=10,
+        )
+        r.raise_for_status()
+        messages = r.json().get("values", {}).get("messages", [])
+        for msg in reversed(messages):
+            if msg.get("type") == "ai":
+                content = msg.get("content", "")
+                if isinstance(content, str):
+                    return content
+                if isinstance(content, list):
+                    parts = [p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"]
+                    return " ".join(parts) if parts else None
+                return None
+    except Exception:
+        pass
+    return None
+
+
+def _wait_for_run(thread_id: str, run_id: str, timeout_seconds: int, api_url: str) -> dict:
+    """Wait for a run to complete and return the result with optional reply."""
+    try:
+        r = httpx.get(
+            f"{api_url}/threads/{thread_id}/runs/{run_id}/join",
+            timeout=timeout_seconds + 5,
+        )
+        r.raise_for_status()
+        reply = _extract_last_ai_message(thread_id, api_url)
+        result = {"status": "ok", "thread_id": thread_id, "run_id": run_id}
+        if reply:
+            result["reply"] = reply
+        return result
+    except httpx.TimeoutException:
+        return {"status": "timeout", "thread_id": thread_id, "run_id": run_id}
+    except Exception as e:
+        return {"status": "error", "thread_id": thread_id, "run_id": run_id, "error": str(e)}
 
 
 @tool
-def sessions_send(thread_id: str, message: str) -> str:
-    """Send a message into an existing session thread (fire-and-forget).
+def sessions_send(
+    thread_id: str,
+    message: str,
+    timeout_seconds: int = 0,
+    state: Annotated[dict, InjectedState] = None,
+) -> str:
+    """Send a message to another session.
 
-    Use sessions_list first to find the target thread_id. Returns immediately
-    after submitting — does not wait for the agent to respond. On error (e.g.
-    thread busy or not found), returns an error string so you can fall back to
-    sessions_spawn.
+    Use sessions_list first to find the target thread_id. By default fires and
+    forgets (timeout_seconds=0). Set timeout_seconds > 0 to wait for the
+    agent's reply.
 
     Args:
         thread_id: The session ID to send to (from sessions_list).
         message: The message content to deliver.
+        timeout_seconds: Seconds to wait for reply (0 = fire-and-forget).
 
     Returns:
-        JSON with status, thread_id, and run_id on success; error string on failure.
+        JSON with status (accepted/ok/timeout/error), thread_id, run_id,
+        and optionally reply.
     """
     api_url = LANGGRAPH_API_URL
+    full_message = _wrap_origin_message("sessions-send", message, state)
     try:
         response = httpx.post(
             f"{api_url}/threads/{thread_id}/runs",
             headers={"Content-Type": "application/json"},
             json={
                 "assistant_id": "agent",
-                "input": {"messages": [{"role": "user", "content": message}]},
+                "input": {"messages": [{"role": "user", "content": full_message}]},
                 "stream_resumable": True,
             },
             timeout=30,
         )
         response.raise_for_status()
         data = response.json()
-        return _json.dumps({
-            "status": "accepted",
-            "thread_id": thread_id,
-            "run_id": data.get("run_id"),
-        })
+        run_id = data.get("run_id")
+
+        if timeout_seconds > 0 and run_id:
+            return _json.dumps(_wait_for_run(thread_id, run_id, timeout_seconds, api_url))
+
+        return _json.dumps({"status": "accepted", "thread_id": thread_id, "run_id": run_id})
     except httpx.ConnectError as e:
-        return f"Error: Could not connect to LangGraph API at {api_url}. Details: {e}"
+        return _json.dumps({"status": "error", "error": f"Connection failed: {e}"})
     except httpx.TimeoutException:
-        return f"Error: Request timed out connecting to {api_url}."
+        return _json.dumps({"status": "error", "error": "Request timed out"})
     except httpx.HTTPStatusError as e:
-        return f"Error: API returned status {e.response.status_code}. Details: {e.response.text}"
+        return _json.dumps({"status": "error", "error": f"HTTP {e.response.status_code}: {e.response.text}"})
     except Exception as e:
-        return f"Error: {e}"
+        return _json.dumps({"status": "error", "error": str(e)})
 
 
 @tool
 def sessions_spawn(
     message: str,
     session_type: Literal["main", "task", "cron", "heartbeat", "subagent"] = "main",
+    timeout_seconds: int = 0,
+    state: Annotated[dict, InjectedState] = None,
 ) -> str:
-    """Create a new session thread and start a run (fire-and-forget).
+    """Spawn a new session.
 
-    Use this to start a fresh session, or as a fallback when sessions_send
-    fails (e.g. the target thread is busy). Creates the thread then immediately
-    starts a run with the given message and session_type.
+    Creates a fresh thread and starts a run. Use as a fallback when
+    sessions_send fails (e.g. thread busy). Set timeout_seconds > 0 to wait
+    for the agent's reply.
 
     Args:
         message: The message to send to the new session.
         session_type: Type of session to create (default "main").
+        timeout_seconds: Seconds to wait for reply (0 = fire-and-forget).
 
     Returns:
-        JSON with status, thread_id, and run_id on success; error string on failure.
+        JSON with status (accepted/ok/timeout/error), thread_id, run_id,
+        and optionally reply.
     """
     api_url = LANGGRAPH_API_URL
+    full_message = _wrap_origin_message("sessions-spawn", message, state)
     try:
         # Step 1: create thread
         r1 = httpx.post(
@@ -443,7 +608,7 @@ def sessions_spawn(
             json={
                 "assistant_id": "agent",
                 "input": {
-                    "messages": [{"role": "user", "content": message}],
+                    "messages": [{"role": "user", "content": full_message}],
                     "session_type": session_type,
                 },
                 "stream_resumable": True,
@@ -452,19 +617,71 @@ def sessions_spawn(
         )
         r2.raise_for_status()
         data = r2.json()
+        run_id = data.get("run_id")
+
+        if timeout_seconds > 0 and run_id:
+            return _json.dumps(_wait_for_run(thread_id, run_id, timeout_seconds, api_url))
+
+        return _json.dumps({"status": "accepted", "thread_id": thread_id, "run_id": run_id})
+    except httpx.ConnectError as e:
+        return _json.dumps({"status": "error", "error": f"Connection failed: {e}"})
+    except httpx.TimeoutException:
+        return _json.dumps({"status": "error", "error": "Request timed out"})
+    except httpx.HTTPStatusError as e:
+        return _json.dumps({"status": "error", "error": f"HTTP {e.response.status_code}: {e.response.text}"})
+    except Exception as e:
+        return _json.dumps({"status": "error", "error": str(e)})
+
+
+@tool
+def sessions_history(
+    session_id: str,
+    limit: int = 50,
+    include_tools: bool = False,
+) -> str:
+    """Fetch message history for a session.
+
+    Returns sanitized messages from the target session. Tool messages are
+    excluded by default. Image data is stripped. Long text is truncated to
+    4000 chars per message.
+
+    Args:
+        session_id: The session ID to fetch history for.
+        limit: Max messages to return (default 50).
+        include_tools: Include tool call/result messages (default False).
+
+    Returns:
+        JSON with session_id, messages array, and count.
+    """
+    api_url = LANGGRAPH_API_URL
+    try:
+        r = httpx.get(
+            f"{api_url}/threads/{session_id}/state",
+            headers={"Content-Type": "application/json"},
+            timeout=30,
+        )
+        r.raise_for_status()
+        state = r.json()
+        values = state.get("values") or {}
+        raw_messages = values.get("messages", [])
+
+        messages = _extract_messages(raw_messages, limit, include_tools=include_tools)
+
         return _json.dumps({
-            "status": "accepted",
-            "thread_id": thread_id,
-            "run_id": data.get("run_id"),
+            "session_id": session_id,
+            "session_type": values.get("session_type"),
+            "messages": messages,
+            "count": len(messages),
+            "truncated": len(raw_messages) > limit,
         })
     except httpx.ConnectError as e:
-        return f"Error: Could not connect to LangGraph API at {api_url}. Details: {e}"
+        return _json.dumps({"status": "error", "error": f"Connection failed: {e}"})
     except httpx.TimeoutException:
-        return f"Error: Request timed out connecting to {api_url}."
+        return _json.dumps({"status": "error", "error": "Request timed out"})
     except httpx.HTTPStatusError as e:
-        return f"Error: API returned status {e.response.status_code}. Details: {e.response.text}"
+        return _json.dumps({"status": "error", "error": f"HTTP {e.response.status_code}: {e.response.text}"})
     except Exception as e:
-        return f"Error: {e}"
+        return _json.dumps({"status": "error", "error": str(e)})
 
 
 # ---------------------------------------------------------------------------
@@ -536,7 +753,9 @@ def manage_crons(
     thread_id: str = None,
     input_message: str = None,
     active: bool = None,
-    include_disabled: bool = False,
+    active_filter: Literal["all", "active", "inactive"] = "active",
+    limit: int = 20,
+    offset: int = 0,
     text: str = None,
     state: Annotated[dict, InjectedState] = None,
 ) -> str:
@@ -552,13 +771,15 @@ def manage_crons(
         job_id: Job ID (required for update/run/runs).
         schedule: Schedule expression (required for add, optional for update).
             - schedule_type="cron": standard cron expression (e.g., "*/5 * * * *")
-            - schedule_type="at": UTC datetime ISO-8601 (e.g., "2026-03-03T17:30:00Z") — fires once then auto-deletes
+            - schedule_type="at": UTC datetime ISO-8601 (e.g., "2026-03-03T17:30:00Z") — fires once then deactivated
             - schedule_type="every": interval string (e.g., "5m", "2h", "1d")
         schedule_type: How to interpret 'schedule': "cron" (default), "at" (one-shot), or "every" (interval).
         thread_id: Thread ID for wake action (defaults to current session).
         input_message: Message sent to agent when cron fires (required for add).
         active: Enable/disable a job (for update).
-        include_disabled: Include disabled jobs in list (default: False).
+        active_filter: Filter list results: "active" (default), "inactive", or "all".
+        limit: Max number of jobs to return for list action (default 20).
+        offset: Pagination offset for list action (default 0).
         text: Message text for wake action (required for wake).
 
     Returns:
@@ -585,10 +806,15 @@ def manage_crons(
             return _json.dumps({"total_jobs": 0, "active_jobs": 0, "inactive_jobs": 0})
 
         elif action == "list":
-            result = sb.rpc("list_agent_crons").execute()
+            result = sb.rpc("list_agent_crons", {
+                "p_limit": limit,
+                "p_offset": offset,
+            }).execute()
             jobs = result.data or []
-            if not include_disabled:
+            if active_filter == "active":
                 jobs = [j for j in jobs if j.get("active", True)]
+            elif active_filter == "inactive":
+                jobs = [j for j in jobs if not j.get("active", True)]
             return _json.dumps(jobs, default=str)
 
         elif action == "add":
@@ -619,6 +845,7 @@ def manage_crons(
                 "schedule_expr": cron_expr,
                 "input_message": input_message,
                 "once": once,
+                "schedule_type": schedule_type,
             }).execute()
             response = {"job_id": result.data, "job_name": job_name, "schedule": cron_expr}
             if schedule_type != "cron":

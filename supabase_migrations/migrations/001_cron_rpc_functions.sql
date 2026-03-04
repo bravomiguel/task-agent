@@ -39,10 +39,17 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- List all cron jobs
-CREATE OR REPLACE FUNCTION list_agent_crons()
+-- List cron jobs (newest first, with pagination)
+DROP FUNCTION IF EXISTS list_agent_crons();
+CREATE OR REPLACE FUNCTION list_agent_crons(
+  p_limit int DEFAULT 20,
+  p_offset int DEFAULT 0
+)
 RETURNS TABLE(jobid bigint, jobname text, schedule text, active boolean, command text) AS $$
-  SELECT jobid, jobname, schedule, active, command FROM cron.job ORDER BY jobid;
+  SELECT jobid, jobname, schedule, active, command
+  FROM cron.job
+  ORDER BY jobid DESC
+  LIMIT p_limit OFFSET p_offset;
 $$ LANGUAGE sql SECURITY DEFINER;
 
 -- Update a cron job's schedule or active status

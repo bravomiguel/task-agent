@@ -7,7 +7,7 @@
  * instructions before starting the run.
  *
  * Expected POST body:
- *   { job_name: string, input_message: string, session_type?: string, once?: boolean }
+ *   { job_name: string, input_message: string, session_type?: string, once?: boolean, job_id?: number, schedule_type?: string }
  *
  * session_type defaults to "cron". Use "heartbeat" for heartbeat jobs.
  * once=true for one-shot jobs — auto-deletes the pg_cron job after firing.
@@ -23,28 +23,26 @@ const LANGGRAPH_API_URL = Deno.env.get("LANGGRAPH_API_URL") ?? "";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 
-function buildTag(sessionType: string, jobName: string): string {
-  return sessionType === "heartbeat" ? "[HEARTBEAT]" : `[CRON:${jobName}]`;
-}
-
 function buildInjectedMessage(
   sessionType: string,
   jobName: string,
   inputMessage: string,
+  jobId?: number,
+  scheduleType?: string,
 ): string {
-  const tag = buildTag(sessionType, jobName);
-  return (
-    `${tag}\n` +
-    `${inputMessage}\n\n` +
-    `---\n` +
-    `When your work is done: use sessions_list to find the latest main session ` +
-    `(look for session_type="main" in thread values), ` +
-    `then sessions_send to deliver your summary. ` +
-    `Start your summary message with ${tag} so it can be identified. ` +
-    `If the latest main session is busy, or if sessions_send fails for any other reason, ` +
-    `use sessions_spawn with session_type="main" instead. ` +
-    `If there is nothing to report, respond with NO_REPLY.`
-  );
+  // Build attributes for system-message tag
+  const attrs = [`type="${sessionType === "heartbeat" ? "heartbeat" : "cron-job"}"`];
+  attrs.push(`job_name="${jobName}"`);
+  if (jobId != null) attrs.push(`job_id="${jobId}"`);
+  if (scheduleType) attrs.push(`schedule_type="${scheduleType}"`);
+
+  const content = sessionType === "heartbeat" ? "[HEARTBEAT]" : inputMessage;
+
+  const delivery =
+    `If you have meaningful results or updates that the main session isn't aware of, ` +
+    `notify the latest main session with enough context for it to pick up next steps.`;
+
+  return `<system-message ${attrs.join(" ")}>\n${content}\n\n${delivery}\n</system-message>`;
 }
 
 serve(async (req: Request) => {
@@ -52,7 +50,7 @@ serve(async (req: Request) => {
     return new Response("Method Not Allowed", { status: 405 });
   }
 
-  let body: { job_name?: string; input_message?: string; session_type?: string; once?: boolean };
+  let body: { job_name?: string; input_message?: string; session_type?: string; once?: boolean; job_id?: number; schedule_type?: string };
   try {
     body = await req.json();
   } catch {
@@ -92,17 +90,27 @@ serve(async (req: Request) => {
   }
 
   // Step 2: start a run with the given session_type and injected message
-  const message = buildInjectedMessage(sessionType, job_name, input_message);
+  const message = buildInjectedMessage(sessionType, job_name, input_message, body.job_id, body.schedule_type);
+  const runInput: Record<string, unknown> = {
+    messages: [{ role: "user", content: message }],
+    session_type: sessionType,
+  };
+  if (body.job_id != null) {
+    runInput.cron_job_id = body.job_id;
+  }
+  if (body.job_name) {
+    runInput.cron_job_name = body.job_name;
+  }
+  if (body.schedule_type) {
+    runInput.cron_schedule_type = body.schedule_type;
+  }
   try {
     const r2 = await fetch(`${LANGGRAPH_API_URL}/threads/${threadId}/runs`, {
       method: "POST",
       headers,
       body: JSON.stringify({
         assistant_id: "agent",
-        input: {
-          messages: [{ role: "user", content: message }],
-          session_type: sessionType,
-        },
+        input: runInput,
         stream_resumable: true,
       }),
     });
@@ -116,11 +124,11 @@ serve(async (req: Request) => {
     return new Response(`Start run error: ${err}`, { status: 502 });
   }
 
-  // Step 3: self-cleanup for one-shot jobs
-  if (body.once && SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
+  // Step 3: deactivate one-shot jobs (keep for history, prevent re-firing)
+  if (body.once && body.job_id != null && SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
     try {
-      const cleanupResp = await fetch(
-        `${SUPABASE_URL}/rest/v1/rpc/delete_agent_cron`,
+      const deactivateResp = await fetch(
+        `${SUPABASE_URL}/rest/v1/rpc/update_agent_cron`,
         {
           method: "POST",
           headers: {
@@ -128,17 +136,17 @@ serve(async (req: Request) => {
             "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
             "apikey": SUPABASE_SERVICE_ROLE_KEY,
           },
-          body: JSON.stringify({ job_name }),
+          body: JSON.stringify({ job_id: body.job_id, new_active: false }),
         },
       );
-      if (!cleanupResp.ok) {
-        const text = await cleanupResp.text();
-        console.error(`[cron-launcher] cleanup failed for ${job_name}: ${cleanupResp.status} ${text}`);
+      if (!deactivateResp.ok) {
+        const text = await deactivateResp.text();
+        console.error(`[cron-launcher] deactivate failed for ${job_name}: ${deactivateResp.status} ${text}`);
       } else {
-        console.log(`[cron-launcher] one-shot job ${job_name} cleaned up`);
+        console.log(`[cron-launcher] one-shot job ${job_name} deactivated`);
       }
     } catch (err) {
-      console.error(`[cron-launcher] cleanup error for ${job_name}:`, err);
+      console.error(`[cron-launcher] deactivate error for ${job_name}:`, err);
     }
   }
 
