@@ -238,6 +238,22 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
         # creation. Reloading after mkdir causes the volume to appear empty
         # while the reload is in progress, leading to first-read failures.
 
+        # Wait for volume data to be accessible before proceeding.
+        # On cold starts the mount point exists immediately but pre-existing
+        # files may not have materialized from remote storage yet.
+        for _ in range(10):
+            try:
+                probe = sandbox.exec(
+                    "test", "-f", "/default-user/prompts/AGENTS.md",
+                    timeout=5,
+                )
+                probe.wait()
+                if probe.returncode == 0:
+                    break
+            except Exception:
+                pass
+            time.sleep(0.5)
+
         return {
             "modal_sandbox_id": sandbox.object_id,
             "session_id": session_id,
