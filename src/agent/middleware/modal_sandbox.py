@@ -241,14 +241,15 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
         # Wait for volume data to be accessible before proceeding.
         # On cold starts the mount point exists immediately but pre-existing
         # files may not have materialized from remote storage yet.
+        # Check that AGENTS.md has content (not just exists) to catch partial syncs.
         for _ in range(10):
             try:
                 probe = sandbox.exec(
-                    "test", "-f", "/default-user/prompts/AGENTS.md",
+                    "head", "-c", "1", "/default-user/prompts/AGENTS.md",
                     timeout=5,
                 )
                 probe.wait()
-                if probe.returncode == 0:
+                if probe.returncode == 0 and probe.stdout.read().strip():
                     break
             except Exception:
                 pass

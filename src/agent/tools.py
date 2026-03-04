@@ -392,7 +392,7 @@ def sessions_list(
         limit: Number of threads to return (default 20).
         offset: Pagination offset (default 0).
         session_type: Filter by session type (e.g. "main", "cron", "heartbeat").
-            Omit to return all types.
+            Filters client-side. Omit to return all types.
         message_limit: Include last N messages per session (default 0, max 20).
             Useful to peek at recent conversation without a separate call.
 
@@ -402,14 +402,14 @@ def sessions_list(
     """
     api_url = LANGGRAPH_API_URL
     try:
+        # Fetch more threads when filtering client-side to ensure enough results
+        fetch_limit = limit * 3 if session_type else limit
         payload: dict = {
-            "limit": limit,
+            "limit": fetch_limit,
             "offset": offset,
             "sort_by": "updated_at",
             "sort_order": "desc",
         }
-        if session_type:
-            payload["values"] = {"session_type": session_type}
 
         response = httpx.post(
             f"{api_url}/threads/search",
@@ -422,9 +422,12 @@ def sessions_list(
         trimmed = []
         for t in threads:
             values = t.get("values") or {}
+            thread_type = values.get("session_type")
+            if session_type and thread_type != session_type:
+                continue
             entry = {
                 "session_id": t.get("thread_id"),
-                "session_type": values.get("session_type"),
+                "session_type": thread_type,
                 "status": t.get("status"),
                 "updated_at": t.get("updated_at"),
             }
@@ -432,6 +435,8 @@ def sessions_list(
                 messages = values.get("messages", [])
                 entry["last_messages"] = _extract_messages(messages, min(message_limit, 20))
             trimmed.append(entry)
+            if len(trimmed) >= limit:
+                break
         return _json.dumps(trimmed)
     except httpx.ConnectError as e:
         return _json.dumps({"status": "error", "error": f"Connection failed: {e}"})
@@ -750,20 +755,19 @@ def manage_crons(
     job_id: int = None,
     schedule: str = None,
     schedule_type: Literal["cron", "at", "every"] = "cron",
-    thread_id: str = None,
     input_message: str = None,
     active: bool = None,
     active_filter: Literal["all", "active", "inactive"] = "active",
     limit: int = 20,
     offset: int = 0,
-    text: str = None,
     state: Annotated[dict, InjectedState] = None,
 ) -> str:
     """Manage cron jobs and wake events (use for reminders; when scheduling a reminder, write the input_message as something that will read like a reminder when it fires, and mention that it is a reminder depending on the time gap between setting and firing; include recent context in reminder text if appropriate).
 
     add: Creates an isolated cron session — a fresh thread fires each time the
-    schedule triggers. The cron agent receives the input_message with [CRON:job_name]
-    tagging and instructions to deliver a summary back to the main session when done.
+    schedule triggers. The cron agent receives the input_message and delivers
+    a summary back to the main session when done.
+    wake: Trigger an immediate heartbeat session. Use when user asks to run a heartbeat.
 
     Args:
         action: One of: status, list, add, update, remove, run, runs, wake.
@@ -774,13 +778,11 @@ def manage_crons(
             - schedule_type="at": UTC datetime ISO-8601 (e.g., "2026-03-03T17:30:00Z") — fires once then deactivated
             - schedule_type="every": interval string (e.g., "5m", "2h", "1d")
         schedule_type: How to interpret 'schedule': "cron" (default), "at" (one-shot), or "every" (interval).
-        thread_id: Thread ID for wake action (defaults to current session).
         input_message: Message sent to agent when cron fires (required for add).
         active: Enable/disable a job (for update).
         active_filter: Filter list results: "active" (default), "inactive", or "all".
         limit: Max number of jobs to return for list action (default 20).
         offset: Pagination offset for list action (default 0).
-        text: Message text for wake action (required for wake).
 
     Returns:
         JSON result or error message.
@@ -883,16 +885,8 @@ def manage_crons(
             return _json.dumps(result.data or [], default=str)
 
         elif action == "wake":
-            if not text:
-                return "Error: text is required for wake."
-            tid = thread_id or default_thread_id
-            if not tid:
-                return "Error: thread_id is required (no default session available)."
-            result = sb.rpc("wake_agent", {
-                "thread_id": tid,
-                "wake_text": text,
-            }).execute()
-            return _json.dumps({"request_id": result.data, "thread_id": tid})
+            result = sb.rpc("wake_agent", {}).execute()
+            return _json.dumps({"triggered": True, "request_id": result.data})
 
         else:
             return f"Error: Unknown action '{action}'."

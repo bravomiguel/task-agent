@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any
@@ -96,61 +97,70 @@ class SessionSetupMiddleware(AgentMiddleware[AgentState, Any]):
         )
         return head + marker + tail
 
-    def _load_prompt_files(self, sandbox_id: str) -> dict[str, Any]:
+    def _load_prompt_files(self, sandbox_id: str, _retries: int = 3) -> dict[str, Any]:
         """Read all .md files from /default-user/prompts/ + MEMORY.md in one sandbox call."""
-        try:
-            sandbox = modal.Sandbox.from_id(sandbox_id)
-            process = sandbox.exec(
-                "bash", "-c",
-                'for f in /default-user/prompts/*.md; do '
-                '[ -f "$f" ] && echo "---FILE:$(basename $f)" && cat "$f"; '
-                'done; '
-                '[ -f /default-user/memory/MEMORY.md ] && '
-                'echo "---FILE:MEMORY.md" && cat /default-user/memory/MEMORY.md; '
-                'true',
-                timeout=10,
-            )
-            process.wait()
+        for attempt in range(_retries):
+            try:
+                sandbox = modal.Sandbox.from_id(sandbox_id)
+                process = sandbox.exec(
+                    "bash", "-c",
+                    'for f in /default-user/prompts/*.md; do '
+                    '[ -f "$f" ] && echo "---FILE:$(basename $f)" && cat "$f"; '
+                    'done; '
+                    '[ -f /default-user/memory/MEMORY.md ] && '
+                    'echo "---FILE:MEMORY.md" && cat /default-user/memory/MEMORY.md; '
+                    'true',
+                    timeout=10,
+                )
+                process.wait()
 
-            stdout = process.stdout.read()
-            prompt_files: dict[str, str] = {}
-            current_name: str | None = None
-            current_lines: list[str] = []
+                stdout = process.stdout.read()
+                prompt_files: dict[str, str] = {}
+                current_name: str | None = None
+                current_lines: list[str] = []
 
-            for line in stdout.split("\n"):
-                if line.startswith("---FILE:"):
-                    if current_name and current_lines:
-                        content = "\n".join(current_lines).strip()
-                        if content:
-                            prompt_files[current_name] = self._truncate_file(
-                                content, self.MAX_FILE_CHARS, self.HEAD_RATIO, self.TAIL_RATIO,
-                            )
-                    current_name = line[len("---FILE:"):]
-                    current_lines = []
-                else:
-                    current_lines.append(line)
+                for line in stdout.split("\n"):
+                    if line.startswith("---FILE:"):
+                        if current_name and current_lines:
+                            content = "\n".join(current_lines).strip()
+                            if content:
+                                prompt_files[current_name] = self._truncate_file(
+                                    content, self.MAX_FILE_CHARS, self.HEAD_RATIO, self.TAIL_RATIO,
+                                )
+                        current_name = line[len("---FILE:"):]
+                        current_lines = []
+                    else:
+                        current_lines.append(line)
 
-            if current_name and current_lines:
-                content = "\n".join(current_lines).strip()
-                if content:
-                    prompt_files[current_name] = self._truncate_file(
-                        content, self.MAX_FILE_CHARS, self.HEAD_RATIO, self.TAIL_RATIO,
-                    )
+                if current_name and current_lines:
+                    content = "\n".join(current_lines).strip()
+                    if content:
+                        prompt_files[current_name] = self._truncate_file(
+                            content, self.MAX_FILE_CHARS, self.HEAD_RATIO, self.TAIL_RATIO,
+                        )
 
-            return {"prompt_files": prompt_files}
-        except Exception as e:
-            logger.warning("[SessionSetup] failed to load prompt files: %s", e)
-            return {}
+                if prompt_files:
+                    return {"prompt_files": prompt_files}
+                logger.warning("[SessionSetup] prompt files empty, retry %d/%d", attempt + 1, _retries)
+            except Exception as e:
+                logger.warning("[SessionSetup] failed to load prompt files (retry %d/%d): %s", attempt + 1, _retries, e)
+            time.sleep(0.5)
+        return {}
 
     # -- Skills discovery (sync, runs in thread) -----------------------------
 
-    def _load_skills(self, sandbox_id: str) -> dict[str, Any]:
-        try:
-            sandbox = modal.Sandbox.from_id(sandbox_id)
-            skills = _list_skills_from_sandbox(sandbox, self._skills_path)
-            return {"skills_metadata": skills}
-        except Exception:
-            return {}
+    def _load_skills(self, sandbox_id: str, _retries: int = 3) -> dict[str, Any]:
+        for attempt in range(_retries):
+            try:
+                sandbox = modal.Sandbox.from_id(sandbox_id)
+                skills = _list_skills_from_sandbox(sandbox, self._skills_path)
+                if skills:
+                    return {"skills_metadata": skills}
+                logger.warning("[SessionSetup] skills empty, retry %d/%d", attempt + 1, _retries)
+            except Exception as e:
+                logger.warning("[SessionSetup] failed to load skills (retry %d/%d): %s", attempt + 1, _retries, e)
+            time.sleep(0.5)
+        return {}
 
     # -- Memory setup --------------------------------------------------------
 

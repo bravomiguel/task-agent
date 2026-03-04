@@ -39,8 +39,11 @@ function buildInjectedMessage(
   const content = sessionType === "heartbeat" ? "[HEARTBEAT]" : inputMessage;
 
   const delivery =
-    `If you have meaningful results or updates that the main session isn't aware of, ` +
-    `notify the latest main session with enough context for it to pick up next steps.`;
+    `Focus only on the task above. When done, report back to the latest main session with: ` +
+    `what you did, any outputs or content produced (include links where appropriate), ` +
+    `and anything that needs follow-up. Give enough context that the main session can act ` +
+    `on it — whether that's updating the user, doing follow-on work, or just filing it away. ` +
+    `If rejected (e.g. session is busy), send to a new main session instead.`;
 
   return `<system-message ${attrs.join(" ")}>\n${content}\n\n${delivery}\n</system-message>`;
 }

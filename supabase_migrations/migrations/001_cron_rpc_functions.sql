@@ -118,33 +118,32 @@ RETURNS TABLE(total_jobs bigint, active_jobs bigint, inactive_jobs bigint) AS $$
   FROM cron.job;
 $$ LANGUAGE sql SECURITY DEFINER;
 
--- Wake: trigger an immediate agent run with custom text (for heartbeat-now)
-CREATE OR REPLACE FUNCTION wake_agent(
-  thread_id text,
-  wake_text text
-) RETURNS bigint AS $$
+-- Wake: trigger an immediate heartbeat run via cron-launcher
+DROP FUNCTION IF EXISTS wake_agent(text, text);
+CREATE OR REPLACE FUNCTION wake_agent() RETURNS bigint AS $$
 DECLARE
-  api_url text;
-  run_url text;
+  launcher_url text;
+  service_key text;
   body jsonb;
   request_id bigint;
 BEGIN
-  api_url := (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'langgraph_api_url');
-  run_url := api_url || '/threads/' || thread_id || '/runs';
+  launcher_url := (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'cron_launcher_url');
+  service_key  := (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'supabase_service_key');
+
   body := jsonb_build_object(
-    'assistant_id', 'agent',
-    'input', jsonb_build_object(
-      'messages', jsonb_build_array(
-        jsonb_build_object('role', 'user', 'content', wake_text)
-      )
-    )
+    'job_name',      'wake',
+    'input_message', '[HEARTBEAT]',
+    'session_type',  'heartbeat'
   );
 
   SELECT net.http_post(
-    url := run_url,
-    body := body,
-    headers := '{"Content-Type":"application/json"}'::jsonb,
-    timeout_milliseconds := 10000
+    url     := launcher_url,
+    body    := body,
+    headers := jsonb_build_object(
+      'Content-Type',  'application/json',
+      'Authorization', 'Bearer ' || service_key
+    ),
+    timeout_milliseconds := 15000
   ) INTO request_id;
 
   RETURN request_id;
