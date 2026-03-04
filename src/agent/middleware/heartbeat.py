@@ -1,4 +1,4 @@
-"""Heartbeat middleware — detect heartbeat runs, early exit if empty, auto-create cron."""
+"""Heartbeat middleware — detect heartbeat sessions, early exit if empty, auto-create cron."""
 
 from __future__ import annotations
 
@@ -11,7 +11,10 @@ from langgraph.runtime import Runtime
 
 logger = logging.getLogger(__name__)
 
-HEARTBEAT_MARKER = "[HEARTBEAT]"
+HEARTBEAT_INPUT_MESSAGE = (
+    "Read HEARTBEAT.md from your project context and execute any tasks listed. "
+    "Do not infer or repeat old tasks from prior sessions."
+)
 
 
 class HeartbeatState(AgentState):
@@ -21,32 +24,17 @@ class HeartbeatState(AgentState):
 
 
 class HeartbeatMiddleware(AgentMiddleware[HeartbeatState, Any]):
-    """Middleware that detects heartbeat runs and short-circuits if HEARTBEAT.md is empty.
+    """Middleware that handles heartbeat sessions.
 
-    Must run AFTER SessionSetupMiddleware so that prompt_files are already loaded
-    into state. Reads HEARTBEAT.md from state instead of the sandbox directly,
-    avoiding a direct volume access that races with Modal's volume initialisation
-    on cold sandboxes.
+    - On heartbeat sessions (session_type="heartbeat"): checks if HEARTBEAT.md is
+      empty and early-exits if so (zero cost). Otherwise lets the agent run — the
+      Edge Function already injected delivery instructions into the message.
+    - On first main session: auto-creates the heartbeat cron job if none exists.
+
+    Must run AFTER SessionSetupMiddleware so that prompt_files are already loaded.
     """
 
     state_schema = HeartbeatState
-
-    def _get_last_human_content(self, messages: list) -> str | None:
-        """Extract the content of the last human message."""
-        for msg in reversed(messages):
-            msg_type = getattr(msg, "type", None) or (
-                msg.get("type") if isinstance(msg, dict) else None
-            )
-            msg_role = getattr(msg, "role", None) or (
-                msg.get("role") if isinstance(msg, dict) else None
-            )
-
-            if msg_type == "human" or msg_role == "user":
-                content = getattr(msg, "content", None) or (
-                    msg.get("content", "") if isinstance(msg, dict) else ""
-                )
-                return content if isinstance(content, str) else ""
-        return None
 
     def _is_heartbeat_empty(self, state: dict) -> bool:
         """Check if HEARTBEAT.md is empty or missing using already-loaded prompt_files."""
@@ -64,10 +52,10 @@ class HeartbeatMiddleware(AgentMiddleware[HeartbeatState, Any]):
         ]
         return len(lines) == 0
 
-    def _ensure_heartbeat_cron(self, session_id: str) -> None:
+    def _ensure_heartbeat_cron(self) -> None:
         """Auto-create heartbeat cron if none exists (first-run setup)."""
         try:
-            from agent.cron_tools import _get_supabase
+            from agent.tools import _get_supabase
 
             sb = _get_supabase()
             result = sb.rpc("list_agent_crons").execute()
@@ -77,11 +65,11 @@ class HeartbeatMiddleware(AgentMiddleware[HeartbeatState, Any]):
                 if "heartbeat" in (job.get("jobname") or "").lower():
                     return  # Already exists
 
-            sb.rpc("create_agent_cron", {
+            sb.rpc("create_cron_session_job", {
                 "job_name": "heartbeat",
                 "schedule_expr": "*/30 * * * *",
-                "thread_id": session_id,
-                "user_message": HEARTBEAT_MARKER,
+                "input_message": HEARTBEAT_INPUT_MESSAGE,
+                "session_type": "heartbeat",
             }).execute()
             logger.info("[Heartbeat] auto-created heartbeat cron (*/30 * * * *)")
 
@@ -92,26 +80,24 @@ class HeartbeatMiddleware(AgentMiddleware[HeartbeatState, Any]):
     def before_agent(
         self, state: HeartbeatState, runtime: Runtime
     ) -> dict[str, Any] | None:
-        """Detect heartbeat runs and early-exit if HEARTBEAT.md is empty."""
-        messages = state.get("messages", [])
-        content = self._get_last_human_content(messages)
+        """Handle heartbeat sessions and auto-create cron on main sessions."""
+        session_type = state.get("session_type")
 
-        if not content or HEARTBEAT_MARKER not in content:
-            return None  # Not a heartbeat run, pass through
+        # On main sessions: ensure heartbeat cron exists (auto-create if missing)
+        if session_type in (None, "main"):
+            self._ensure_heartbeat_cron()
+            return None
 
-        updates: dict[str, Any] = {"session_type": "heartbeat"}
+        if session_type != "heartbeat":
+            return None  # Not a heartbeat session, pass through
 
-        # Quick empty check — if HEARTBEAT.md is empty, exit early (zero cost)
+        # Heartbeat session: early-exit if HEARTBEAT.md is empty (zero cost)
         if self._is_heartbeat_empty(state):
             logger.info("[Heartbeat] HEARTBEAT.md empty, early exit")
-            return {"jump_to": "end", **updates}
+            return {"jump_to": "end"}
 
-        # Auto-create heartbeat cron if none exists
-        session_id = state.get("session_id")
-        if session_id:
-            self._ensure_heartbeat_cron(session_id)
-
-        return updates
+        # HEARTBEAT.md has content — let the agent run with the injected message
+        return None
 
     @hook_config(can_jump_to=["end"])
     async def abefore_agent(
