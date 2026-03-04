@@ -52,105 +52,6 @@ def present_file(filepath: str) -> str:
 </presented_file>"""
 
 
-def _extract_event_content(state: dict) -> str | None:
-    """Extract event content from the first user message."""
-    messages = state.get("messages", [])
-    for msg in messages:
-        msg_type = getattr(msg, "type", None) or (
-            msg.get("type") if isinstance(msg, dict) else None
-        )
-        msg_role = getattr(msg, "role", None) or (
-            msg.get("role") if isinstance(msg, dict) else None
-        )
-
-        if msg_type == "human" or msg_role == "user":
-            content = getattr(msg, "content", None) or (
-                msg.get("content", "") if isinstance(msg, dict) else ""
-            )
-            return content
-    return None
-
-
-@tool
-def route_event(
-    thread_id: str,
-    task_instruction: str = None,
-    state: Annotated[dict, InjectedState] = None,
-) -> str:
-    """Route the incoming event to a thread and start the task agent.
-
-    Call this tool when you have decided which thread to route the event to.
-    The tool will execute the routing and return success or an error message.
-    If you get an error, you may retry up to 2 more times.
-
-    Args:
-        thread_id: Use 'new' for a new thread, or provide an existing thread UUID.
-        task_instruction: Optional brief instruction for the task agent when you want
-            it to focus on a specific part of the event. Omit when the task agent
-            should process the entire event.
-
-    Returns:
-        Success message with details, or error message if something went wrong.
-    """
-    api_url = LANGGRAPH_API_URL
-
-    if not thread_id:
-        return "Error: thread_id is required. Use 'new' or an existing thread UUID."
-
-    # Extract event content from messages (raw XML)
-    event_content = _extract_event_content(state) if state else None
-    if not event_content:
-        return "Error: Could not extract event content from messages."
-
-    # Build user message: instruction (if provided) + event XML
-    if task_instruction:
-        user_message = f"{task_instruction}\n\n{event_content}"
-    else:
-        user_message = event_content
-
-    # Execute routing
-    try:
-        target_thread_id = thread_id
-
-        if thread_id == "new":
-            # Create new thread
-            response = httpx.post(
-                f"{api_url}/threads",
-                headers={"Content-Type": "application/json"},
-                json={},
-                timeout=30,
-            )
-            response.raise_for_status()
-            target_thread_id = response.json()["thread_id"]
-
-        # Create run on thread with user message
-        response = httpx.post(
-            f"{api_url}/threads/{target_thread_id}/runs",
-            headers={"Content-Type": "application/json"},
-            json={
-                "assistant_id": "agent",
-                "input": {"messages": [{"role": "user", "content": user_message}]},
-                "stream_resumable": True,
-            },
-            timeout=30,
-        )
-        response.raise_for_status()
-
-        if thread_id == "new":
-            return f"Success: Created new thread {target_thread_id} and started task agent."
-        else:
-            return f"Success: Routed to existing thread {target_thread_id} and started task agent."
-
-    except httpx.ConnectError as e:
-        return f"Error: Could not connect to LangGraph API at {api_url}. Details: {e}"
-    except httpx.TimeoutException:
-        return f"Error: Request timed out. The API at {api_url} may be slow or unavailable."
-    except httpx.HTTPStatusError as e:
-        return f"Error: API returned status {e.response.status_code}. Details: {e.response.text}"
-    except Exception as e:
-        return f"Error: Unexpected error during routing: {e}"
-
-
 NEXTJS_API_URL = os.getenv("NEXTJS_API_URL", "http://localhost:3000")
 
 
@@ -547,7 +448,7 @@ def sessions_send(
             f"{api_url}/threads/{thread_id}/runs",
             headers={"Content-Type": "application/json"},
             json={
-                "assistant_id": "agent",
+                "assistant_id": "main",
                 "input": {"messages": [{"role": "user", "content": full_message}]},
                 "stream_resumable": True,
             },
@@ -611,7 +512,7 @@ def sessions_spawn(
             f"{api_url}/threads/{thread_id}/runs",
             headers={"Content-Type": "application/json"},
             json={
-                "assistant_id": "agent",
+                "assistant_id": "main",
                 "input": {
                     "messages": [{"role": "user", "content": full_message}],
                     "session_type": session_type,

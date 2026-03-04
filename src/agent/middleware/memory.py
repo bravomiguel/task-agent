@@ -282,7 +282,7 @@ async def _afind_previous_session(current_session_id: str, api_url: str) -> dict
     try:
         url = f"{api_url}/threads/search"  # LangGraph API endpoint
         payload = {
-            "metadata": {"graph_id": "agent"},
+            "metadata": {"graph_id": "main"},
             "limit": 5,
             "sort_by": "created_at",
             "sort_order": "desc",

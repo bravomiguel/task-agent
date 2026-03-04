@@ -67,7 +67,7 @@ if tavily_client is not None:
     tools.append(web_search)
 
 # Create the agent with backend factory
-agent = create_deep_agent(
+main = create_deep_agent(
     model=claude_opus,
     system_prompt=STATIC_PART_01,
     tools=tools,

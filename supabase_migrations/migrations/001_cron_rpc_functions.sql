@@ -18,7 +18,7 @@ BEGIN
   api_url := (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'langgraph_api_url');
   run_url := api_url || '/threads/' || thread_id || '/runs';
   body := jsonb_build_object(
-    'assistant_id', 'agent',
+    'assistant_id', 'main',
     'input', jsonb_build_object(
       'messages', jsonb_build_array(
         jsonb_build_object('role', 'user', 'content', user_message)

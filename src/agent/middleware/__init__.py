@@ -8,9 +8,6 @@ from agent.middleware.dynamic_context import RuntimeContextMiddleware
 from agent.middleware.session_metadata import SessionMetadataMiddleware
 from agent.middleware.tool_description import ToolDescriptionMiddleware
 from agent.middleware.session_setup import SessionSetupMiddleware
-from agent.middleware.triage_filter import TriageFilterMiddleware
-from agent.middleware.triage_threads import TriageThreadsMiddleware
-from agent.middleware.triage_context import TriageContextMiddleware
 
 __all__ = [
     "HeartbeatMiddleware",
@@ -21,7 +18,4 @@ __all__ = [
     "SessionMetadataMiddleware",
     "SessionSetupMiddleware",
     "ToolDescriptionMiddleware",
-    "TriageFilterMiddleware",
-    "TriageThreadsMiddleware",
-    "TriageContextMiddleware",
 ]

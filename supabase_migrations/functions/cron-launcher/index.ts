@@ -114,7 +114,7 @@ serve(async (req: Request) => {
       method: "POST",
       headers,
       body: JSON.stringify({
-        assistant_id: "agent",
+        assistant_id: "main",
         input: runInput,
         stream_resumable: true,
       }),

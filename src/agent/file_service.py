@@ -385,26 +385,3 @@ def health():
     return {"status": "healthy", "service": "file-service"}
 
 
-# ==================== TRIAGE OPERATIONS ====================
-
-
-@app.function(volumes={"/default-user": volume})
-def read_triage_rules() -> str | None:
-    """
-    Read triage rules from the user memory directory.
-
-    Returns:
-        Triage rules content as string, or None if file not found
-    """
-    try:
-        volume.reload()
-
-        with open("/default-user/memory/triage.md", "r") as f:
-            return f.read()
-
-    except FileNotFoundError:
-        print("Triage rules file not found: /default-user/memory/triage.md")
-        return None
-    except Exception as e:
-        print(f"Error reading triage rules: {e}")
-        return None
