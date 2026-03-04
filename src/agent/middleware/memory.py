@@ -71,7 +71,7 @@ class MemoryState(AgentState):
     _memory_flush_turn: NotRequired[bool]
     _session_archived: NotRequired[bool]
     _memory_index_synced: NotRequired[bool]
-    session_type: NotRequired[str]  # main | task | cron | heartbeat | subagent
+    session_type: NotRequired[str]  # main | cron | subagent
     cron_job_id: NotRequired[int]
     cron_job_name: NotRequired[str]
     cron_schedule_type: NotRequired[str]  # cron | at | every
@@ -460,7 +460,7 @@ class MemoryMiddleware(AgentMiddleware[MemoryState, Any]):
     def _inject_directives(self, messages: list, state: dict) -> None:
         """Inject memory directives into messages."""
         # Skip memory reminders for heartbeat runs
-        if state.get("session_type") == "heartbeat":
+        if state.get("cron_job_name") == "heartbeat":
             return
 
         # Memory reminder disabled — guards added to system prompt and AGENTS.md instead
@@ -495,30 +495,8 @@ class MemoryMiddleware(AgentMiddleware[MemoryState, Any]):
     # Transcript persistence (after_agent)
     # ------------------------------------------------------------------
 
-    def _is_silent_response(self, messages: list) -> bool:
-        """Check if the last AI message is HEARTBEAT_OK or NO_REPLY."""
-        for msg in reversed(messages):
-            msg_type = getattr(msg, "type", None) or (
-                msg.get("type") if isinstance(msg, dict) else None
-            )
-            if msg_type == "ai":
-                content = getattr(msg, "content", None) or (
-                    msg.get("content", "") if isinstance(msg, dict) else ""
-                )
-                if isinstance(content, str):
-                    stripped = content.strip()
-                    return stripped in ("HEARTBEAT_OK", "NO_REPLY")
-                return False
-        return False
-
     def _write_transcript(self, state: MemoryState, runtime: Runtime) -> None:
         """Write full conversation transcript to volume."""
-        # Skip transcript for silent responses (HEARTBEAT_OK, NO_REPLY)
-        messages = state.get("messages", [])
-        if self._is_silent_response(messages):
-            logger.debug("[Transcript] silent response, skipping")
-            return
-
         sandbox_id = state.get("modal_sandbox_id")
         if not sandbox_id:
             logger.debug("[Transcript] no sandbox available, skipping")
@@ -529,6 +507,7 @@ class MemoryMiddleware(AgentMiddleware[MemoryState, Any]):
             logger.debug("[Transcript] no session_id, skipping")
             return
 
+        messages = state.get("messages", [])
         if not messages:
             return
 

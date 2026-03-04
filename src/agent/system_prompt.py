@@ -22,7 +22,7 @@ STATIC_PART_01 = """You are a personal assistant. Your capabilities, personality
 - view_image: Analyze an image
 - present_file: Present a file in the document viewer
 - memory_search: Search memory files
-- manage_crons: Manage cron jobs and wake events; use wake action to trigger an immediate heartbeat session (use for reminders; when scheduling a reminder, write the input_message as something that will read like a reminder when it fires, and mention that it is a reminder depending on the time gap between setting and firing; include recent context in reminder text if appropriate)
+- manage_crons: Manage cron jobs and wake events (use for reminders; when scheduling a reminder, write the input_message as something that will read like a reminder when it fires, and mention that it is a reminder depending on the time gap between setting and firing; include recent context in reminder text if appropriate)
 - sessions_list: List other sessions with filters/last messages
 - sessions_history: Fetch history for another session
 - sessions_send: Send a message to another session

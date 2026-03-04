@@ -2,7 +2,7 @@
 -- The Edge Function handles the two-step LangGraph create-thread + start-run
 -- that pg_cron cannot do in a single net.http_post call. It injects a tag and
 -- delivery instructions into the agent message.
--- session_type defaults to 'cron'; use 'heartbeat' for heartbeat jobs.
+-- session_type defaults to 'cron'. Heartbeat is identified by job_name='heartbeat'.
 --
 -- Two-step: schedule first to get job_id, then rebuild the body with job_id
 -- included and alter the job command so the Edge Function receives it.

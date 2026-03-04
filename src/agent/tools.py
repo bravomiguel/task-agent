@@ -391,7 +391,7 @@ def sessions_list(
     Args:
         limit: Number of threads to return (default 20).
         offset: Pagination offset (default 0).
-        session_type: Filter by session type (e.g. "main", "cron", "heartbeat").
+        session_type: Filter by session type (e.g. "main", "cron").
             Filters client-side. Omit to return all types.
         message_limit: Include last N messages per session (default 0, max 20).
             Useful to peek at recent conversation without a separate call.
@@ -574,7 +574,7 @@ def sessions_send(
 @tool
 def sessions_spawn(
     message: str,
-    session_type: Literal["main", "task", "cron", "heartbeat", "subagent"] = "main",
+    session_type: Literal["main", "cron", "subagent"] = "main",
     timeout_seconds: int = 0,
     state: Annotated[dict, InjectedState] = None,
 ) -> str:

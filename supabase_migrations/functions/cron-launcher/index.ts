@@ -1,7 +1,7 @@
 /**
  * cron-launcher — Supabase Edge Function
  *
- * Called by pg_cron for cron and heartbeat jobs. Bridges the two-call
+ * Called by pg_cron for cron jobs (including heartbeat). Bridges the two-call
  * requirement (create thread + start run) that pg_cron cannot do in a single
  * net.http_post. Constructs the injected message with a tag and delivery
  * instructions before starting the run.
@@ -9,8 +9,8 @@
  * Expected POST body:
  *   { job_name: string, input_message: string, session_type?: string, once?: boolean, job_id?: number, schedule_type?: string }
  *
- * session_type defaults to "cron". Use "heartbeat" for heartbeat jobs.
- * once=true for one-shot jobs — auto-deletes the pg_cron job after firing.
+ * session_type defaults to "cron". Heartbeat is identified by job_name="heartbeat".
+ * once=true for one-shot jobs — auto-deactivates the pg_cron job after firing.
  *
  * Required env vars (set in Supabase dashboard):
  *   LANGGRAPH_API_URL — base URL of the LangGraph server
@@ -24,25 +24,27 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 
 function buildInjectedMessage(
-  sessionType: string,
   jobName: string,
   inputMessage: string,
   jobId?: number,
   scheduleType?: string,
 ): string {
+  const isHeartbeat = jobName === "heartbeat" || jobName === "wake";
+
   // Build attributes for system-message tag
-  const attrs = [`type="${sessionType === "heartbeat" ? "heartbeat" : "cron-job"}"`];
+  const attrs = [`type="${isHeartbeat ? "heartbeat" : "cron-job"}"`];
   attrs.push(`job_name="${jobName}"`);
   if (jobId != null) attrs.push(`job_id="${jobId}"`);
   if (scheduleType) attrs.push(`schedule_type="${scheduleType}"`);
 
-  const content = sessionType === "heartbeat" ? "[HEARTBEAT]" : inputMessage;
+  const content = isHeartbeat ? "[HEARTBEAT]" : inputMessage;
 
   const delivery =
-    `Focus only on the task above. When done, report back to the latest main session with: ` +
-    `what you did, any outputs or content produced (include links where appropriate), ` +
-    `and anything that needs follow-up. Give enough context that the main session can act ` +
-    `on it — whether that's updating the user, doing follow-on work, or just filing it away. ` +
+    `Focus only on the task above. When done, you MUST report back to the latest main session ` +
+    `— this is not optional, even if there's nothing actionable. Report: what you did (or checked), ` +
+    `any outputs or content produced (include links where appropriate), and anything that needs ` +
+    `follow-up. Give enough context that the main session can act on it — whether that's updating ` +
+    `the user, doing follow-on work, or just filing it away. ` +
     `If rejected (e.g. session is busy), send to a new main session instead.`;
 
   return `<system-message ${attrs.join(" ")}>\n${content}\n\n${delivery}\n</system-message>`;
@@ -93,7 +95,7 @@ serve(async (req: Request) => {
   }
 
   // Step 2: start a run with the given session_type and injected message
-  const message = buildInjectedMessage(sessionType, job_name, input_message, body.job_id, body.schedule_type);
+  const message = buildInjectedMessage(job_name, input_message, body.job_id, body.schedule_type);
   const runInput: Record<string, unknown> = {
     messages: [{ role: "user", content: message }],
     session_type: sessionType,

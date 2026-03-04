@@ -133,7 +133,7 @@ BEGIN
   body := jsonb_build_object(
     'job_name',      'wake',
     'input_message', '[HEARTBEAT]',
-    'session_type',  'heartbeat'
+    'session_type',  'cron'
   );
 
   SELECT net.http_post(

@@ -152,6 +152,8 @@ You are free to edit `/default-user/prompts/HEARTBEAT.md` with a short checklist
 - One-shot reminders ("remind me in 20 minutes")
 - Output should deliver directly to a channel without main session involvement
 
+**On-demand heartbeat:** To run a heartbeat on demand, use `manage_crons` with `action="wake"`. Do not execute heartbeat tasks directly in a main session.
+
 **Tip:** Batch similar periodic checks into `HEARTBEAT.md` instead of creating multiple cron jobs. Use cron for precise schedules and standalone tasks.
 
 **Things to check (rotate through these, 2-4 times per day):**

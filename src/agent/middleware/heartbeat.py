@@ -20,13 +20,14 @@ HEARTBEAT_INPUT_MESSAGE = (
 class HeartbeatState(AgentState):
     """State schema for heartbeat middleware."""
 
-    session_type: NotRequired[str]  # main | task | cron | heartbeat | subagent
+    session_type: NotRequired[str]  # main | cron | subagent
+    cron_job_name: NotRequired[str]
 
 
 class HeartbeatMiddleware(AgentMiddleware[HeartbeatState, Any]):
     """Middleware that handles heartbeat sessions.
 
-    - On heartbeat sessions (session_type="heartbeat"): checks if HEARTBEAT.md is
+    - On heartbeat cron jobs (cron_job_name="heartbeat"): checks if HEARTBEAT.md is
       empty and early-exits if so (zero cost). Otherwise lets the agent run — the
       Edge Function already injected delivery instructions into the message.
     - On first main session: auto-creates the heartbeat cron job if none exists.
@@ -69,7 +70,7 @@ class HeartbeatMiddleware(AgentMiddleware[HeartbeatState, Any]):
                 "job_name": "heartbeat",
                 "schedule_expr": "*/30 * * * *",
                 "input_message": HEARTBEAT_INPUT_MESSAGE,
-                "session_type": "heartbeat",
+                "session_type": "cron",
             }).execute()
             logger.info("[Heartbeat] auto-created heartbeat cron (*/30 * * * *)")
 
@@ -88,7 +89,8 @@ class HeartbeatMiddleware(AgentMiddleware[HeartbeatState, Any]):
             self._ensure_heartbeat_cron()
             return None
 
-        if session_type != "heartbeat":
+        # Check if this is a heartbeat cron job
+        if state.get("cron_job_name") != "heartbeat":
             return None  # Not a heartbeat session, pass through
 
         # Heartbeat session: early-exit if HEARTBEAT.md is empty (zero cost)
