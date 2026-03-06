@@ -37,13 +37,21 @@ try:
 except Exception as e:
     print(f"Warning: could not check existing crons: {e}", file=sys.stderr)
 
-# Create fresh heartbeat cron at default 30m
+# Default active hours config (matches config.py defaults)
+DEFAULT_TIMEZONE = "UTC"
+DEFAULT_ACTIVE_HOURS_START = "09:00"
+DEFAULT_ACTIVE_HOURS_END = "21:00"
+
+# Create fresh heartbeat cron at default 30m with active hours
 try:
     result = sb.rpc("create_cron_session_job", {
         "job_name": "heartbeat",
         "schedule_expr": "*/30 * * * *",
         "input_message": HEARTBEAT_INPUT_MESSAGE,
         "session_type": "cron",
+        "timezone": DEFAULT_TIMEZONE,
+        "active_hours_start": DEFAULT_ACTIVE_HOURS_START,
+        "active_hours_end": DEFAULT_ACTIVE_HOURS_END,
     }).execute()
     print(f"Created heartbeat cron (*/30 * * * *, job_id={result.data})")
 except Exception as e:

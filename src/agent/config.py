@@ -1,13 +1,12 @@
-"""config.py — User config schema, load/patch, active hours check, cron reconciliation."""
+"""config.py — User config schema, load/patch, cron reconciliation."""
 
 from __future__ import annotations
 
 import json
 import logging
 import re
-from datetime import datetime
 from typing import Any
-from zoneinfo import ZoneInfo, available_timezones
+from zoneinfo import available_timezones
 
 import modal
 from pydantic import BaseModel, field_validator
@@ -171,58 +170,39 @@ def _write_config(sandbox_id: str, config: UserConfig) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Active hours check
-# ---------------------------------------------------------------------------
-
-
-def is_within_active_hours(config: UserConfig, now: datetime | None = None) -> bool:
-    """Check if current time is within configured active hours.
-
-    Supports midnight wrap-around (e.g. 22:00–06:00).
-    Uses config.timezone (top-level) for timezone resolution.
-    """
-    ah = config.heartbeat.active_hours
-
-    # Parse to minutes since midnight
-    start_min = _time_to_minutes(ah.start)
-    end_min = _time_to_minutes(ah.end)
-
-    if start_min == end_min:
-        return False  # e.g. 09:00–09:00 = always inactive
-
-    # Resolve current time in user's timezone
-    tz = ZoneInfo(config.timezone)
-    if now is None:
-        now = datetime.now(tz=tz)
-    else:
-        now = now.astimezone(tz)
-
-    current_min = now.hour * 60 + now.minute
-
-    # Normal range (no wrap-around)
-    if end_min > start_min:
-        return start_min <= current_min < end_min
-
-    # Wrap-around (e.g. 22:00–06:00)
-    return current_min >= start_min or current_min < end_min
-
-
-def _time_to_minutes(time_str: str) -> int:
-    """Convert "HH:MM" to minutes since midnight. "24:00" → 1440."""
-    parts = time_str.split(":")
-    return int(parts[0]) * 60 + int(parts[1])
-
-
-# ---------------------------------------------------------------------------
 # Heartbeat cron reconciliation
 # ---------------------------------------------------------------------------
 
 
+HEARTBEAT_INPUT_MESSAGE = (
+    "Read HEARTBEAT.md from your project context and execute any tasks listed. "
+    "Do not infer or repeat old tasks from prior sessions."
+)
+
+
+def _build_heartbeat_body(config: UserConfig, job_id: int) -> dict:
+    """Build the POST body for the heartbeat cron job, including active hours."""
+    body: dict[str, Any] = {
+        "job_name": "heartbeat",
+        "input_message": HEARTBEAT_INPUT_MESSAGE,
+        "session_type": "cron",
+        "once": False,
+        "job_id": job_id,
+        "schedule_type": "cron",
+        "timezone": config.timezone,
+        "active_hours_start": config.heartbeat.active_hours.start,
+        "active_hours_end": config.heartbeat.active_hours.end,
+    }
+    return body
+
+
 def reconcile_heartbeat_cron(config: UserConfig) -> None:
-    """Sync heartbeat cron schedule to match config.heartbeat.every.
+    """Sync heartbeat cron schedule and active hours to match config.
 
     Compares desired interval against current heartbeat cron job in Supabase.
-    Updates the cron schedule if they differ. Deactivates if "off".
+    Updates the cron schedule if they differ. Also updates the job body with
+    current timezone and active hours so the cron-launcher can gate firings.
+    Deactivates if "off".
     """
     disabled = config.heartbeat.every == "off"
 
@@ -240,7 +220,7 @@ def reconcile_heartbeat_cron(config: UserConfig) -> None:
                 break
 
         if not heartbeat_job:
-            return  # No heartbeat job exists yet — ConfigMiddleware will create it
+            return  # No heartbeat job exists yet
 
         job_id = heartbeat_job.get("jobid")
         is_active = heartbeat_job.get("active", True)
@@ -257,9 +237,9 @@ def reconcile_heartbeat_cron(config: UserConfig) -> None:
         # Re-activate if currently inactive
         desired_cron = _parse_every_to_cron(config.heartbeat.every)
         current_schedule = heartbeat_job.get("schedule", "")
-        needs_update = current_schedule != desired_cron or not is_active
+        schedule_changed = current_schedule != desired_cron or not is_active
 
-        if needs_update:
+        if schedule_changed:
             params: dict[str, Any] = {"job_id": job_id, "new_schedule": desired_cron}
             if not is_active:
                 params["new_active"] = True
@@ -270,6 +250,19 @@ def reconcile_heartbeat_cron(config: UserConfig) -> None:
                 desired_cron,
                 " (reactivated)" if not is_active else "",
             )
+
+        # Always update the job body with current timezone + active hours
+        new_body = _build_heartbeat_body(config, job_id)
+        sb.rpc("update_agent_cron_body", {
+            "job_id": job_id,
+            "new_body": json.dumps(new_body),
+        }).execute()
+        logger.info(
+            "[Config] synced heartbeat body: tz=%s hours=%s-%s",
+            config.timezone,
+            config.heartbeat.active_hours.start,
+            config.heartbeat.active_hours.end,
+        )
 
     except Exception as e:
         logger.warning("[Config] failed to reconcile heartbeat cron: %s", e)

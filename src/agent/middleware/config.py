@@ -1,4 +1,4 @@
-"""Config middleware — gate heartbeat sessions by active hours and content."""
+"""Config middleware — gate heartbeat sessions by HEARTBEAT.md content."""
 
 from __future__ import annotations
 
@@ -8,8 +8,6 @@ from typing import Any, NotRequired
 from langchain.agents.middleware import AgentMiddleware, AgentState
 from langchain.agents.middleware.types import hook_config
 from langgraph.runtime import Runtime
-
-from agent.config import is_within_active_hours, load_config
 
 logger = logging.getLogger(__name__)
 
@@ -22,18 +20,17 @@ class ConfigState(AgentState):
 
 
 class ConfigMiddleware(AgentMiddleware[ConfigState, Any]):
-    """Gate heartbeat sessions by active hours and HEARTBEAT.md content.
+    """Gate heartbeat sessions by HEARTBEAT.md content.
 
     before_agent:
-      - On heartbeat cron sessions: loads config, checks active hours and
-        HEARTBEAT.md content, early-exits if outside hours or empty.
+      - On heartbeat cron sessions: checks if HEARTBEAT.md has actionable
+        content, early-exits if empty.
       - All other sessions: no-op.
 
-    Heartbeat cron creation and config init are handled by the reset/provisioning
-    script. Mid-run config changes are handled at their source (manage_config tool
-    or dashboard API route).
+    Active hours filtering is handled by the cron-launcher edge function
+    before a thread is created (timezone + active_hours are baked into the
+    heartbeat cron job body).
 
-    Must run AFTER ModalSandboxMiddleware (needs sandbox_id).
     Must run AFTER SessionSetupMiddleware (needs prompt_files for HEARTBEAT.md).
     """
 
@@ -58,20 +55,9 @@ class ConfigMiddleware(AgentMiddleware[ConfigState, Any]):
     def before_agent(
         self, state: ConfigState, runtime: Runtime
     ) -> dict[str, Any] | None:
-        """Gate heartbeat sessions by active hours and content."""
+        """Gate heartbeat sessions by content."""
         if state.get("cron_job_name") != "heartbeat":
             return None
-
-        sandbox_id = state.get("modal_sandbox_id")
-        if not sandbox_id:
-            logger.warning("[Config] no sandbox_id, skipping active hours check")
-            return None
-
-        config = load_config(sandbox_id)
-
-        if not is_within_active_hours(config):
-            logger.info("[Config] heartbeat outside active hours, early exit")
-            return {"jump_to": "end"}
 
         if self._is_heartbeat_empty(state):
             logger.info("[Config] HEARTBEAT.md empty, early exit")

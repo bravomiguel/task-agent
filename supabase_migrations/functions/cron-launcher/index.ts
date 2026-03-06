@@ -3,11 +3,17 @@
  *
  * Called by pg_cron for cron jobs (including heartbeat). Bridges the two-call
  * requirement (create thread + start run) that pg_cron cannot do in a single
- * net.http_post. Constructs the injected message with a tag and delivery
- * instructions before starting the run.
+ * net.http_post. Constructs the injected message with a structural tag
+ * before starting the run.
+ *
+ * For heartbeat/wake jobs, checks active hours before creating a thread.
+ * Active hours (timezone, start, end) are baked into the cron job body by
+ * reconcile_heartbeat_cron when config changes.
  *
  * Expected POST body:
- *   { job_name: string, input_message: string, session_type?: string, once?: boolean, job_id?: number, schedule_type?: string }
+ *   { job_name: string, input_message: string, session_type?: string, once?: boolean,
+ *     job_id?: number, schedule_type?: string, timezone?: string,
+ *     active_hours_start?: string, active_hours_end?: string }
  *
  * session_type defaults to "cron". Heartbeat is identified by job_name="heartbeat".
  * once=true for one-shot jobs — auto-deactivates the pg_cron job after firing.
@@ -22,6 +28,54 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 const LANGGRAPH_API_URL = Deno.env.get("LANGGRAPH_API_URL") ?? "";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+
+/**
+ * Check if current time is within active hours for the given timezone.
+ * Supports midnight wrap-around (e.g. 22:00–06:00).
+ * Returns true if no active hours are configured (no filtering).
+ */
+function isWithinActiveHours(
+  timezone?: string,
+  activeHoursStart?: string,
+  activeHoursEnd?: string,
+): boolean {
+  if (!timezone || !activeHoursStart || !activeHoursEnd) {
+    return true; // No active hours configured — allow
+  }
+
+  const toMinutes = (hhmm: string): number => {
+    const [h, m] = hhmm.split(":").map(Number);
+    return h * 60 + m;
+  };
+
+  const startMin = toMinutes(activeHoursStart);
+  const endMin = toMinutes(activeHoursEnd);
+
+  if (startMin === endMin) {
+    return false; // e.g. 09:00–09:00 = always inactive
+  }
+
+  // Get current time in user's timezone
+  const now = new Date();
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    hour: "numeric",
+    minute: "numeric",
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(now);
+  const hour = Number(parts.find((p) => p.type === "hour")?.value ?? 0);
+  const minute = Number(parts.find((p) => p.type === "minute")?.value ?? 0);
+  const currentMin = hour * 60 + minute;
+
+  // Normal range (no wrap-around)
+  if (endMin > startMin) {
+    return currentMin >= startMin && currentMin < endMin;
+  }
+
+  // Wrap-around (e.g. 22:00–06:00)
+  return currentMin >= startMin || currentMin < endMin;
+}
 
 function buildInjectedMessage(
   jobName: string,
@@ -47,7 +101,11 @@ serve(async (req: Request) => {
     return new Response("Method Not Allowed", { status: 405 });
   }
 
-  let body: { job_name?: string; input_message?: string; session_type?: string; once?: boolean; job_id?: number; schedule_type?: string };
+  let body: {
+    job_name?: string; input_message?: string; session_type?: string;
+    once?: boolean; job_id?: number; schedule_type?: string;
+    timezone?: string; active_hours_start?: string; active_hours_end?: string;
+  };
   try {
     body = await req.json();
   } catch {
@@ -58,6 +116,16 @@ serve(async (req: Request) => {
   const sessionType = body.session_type ?? "cron";
   if (!job_name || !input_message) {
     return new Response("Missing job_name or input_message", { status: 400 });
+  }
+
+  // Active hours gate — skip heartbeat/wake if outside configured hours
+  const isHeartbeat = job_name === "heartbeat" || job_name === "wake";
+  if (isHeartbeat && !isWithinActiveHours(body.timezone, body.active_hours_start, body.active_hours_end)) {
+    console.log(`[cron-launcher] job=${job_name} outside active hours, skipping`);
+    return new Response(JSON.stringify({ ok: true, skipped: "outside_active_hours" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
   }
 
   if (!LANGGRAPH_API_URL) {

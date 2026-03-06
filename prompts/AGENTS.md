@@ -229,6 +229,10 @@ Include:
 
 Give enough context that the recipient can act on it — whether that's updating the user, doing follow-on work, or filing it away.
 
+### Receiving Replies
+
+The main session may message back after your report — asking for clarification, follow-up work, or additional detail. Handle these like any other task: do the work and report back again. The conversation may go multiple rounds.
+
 ### When to Stay Silent
 
 Only stay silent when you genuinely did nothing:
