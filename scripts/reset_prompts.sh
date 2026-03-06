@@ -31,7 +31,7 @@ fi
 for f in "${files[@]}"; do
   name="$(basename "$f")"
   echo "Uploading $name..."
-  "$MODAL" volume put user-default-user "$f" "$VOLUME_PATH/$name" --force
+  "$MODAL" volume put user-dev "$f" "$VOLUME_PATH/$name" --force
 done
 
 echo "Done."

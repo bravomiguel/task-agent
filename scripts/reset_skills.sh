@@ -16,7 +16,7 @@ VOLUME_PATH="/skills"
 
 # Wipe existing skills directory on volume
 echo "Wiping existing skills..."
-"$MODAL" volume rm user-default-user "$VOLUME_PATH" -r 2>/dev/null || true
+"$MODAL" volume rm user-dev "$VOLUME_PATH" -r 2>/dev/null || true
 
 if [ $# -eq 0 ]; then
   # Upload all skill directories
@@ -42,7 +42,7 @@ fi
 for d in "${dirs[@]}"; do
   name="$(basename "$d")"
   echo "Uploading $name/..."
-  "$MODAL" volume put user-default-user "$d" "$VOLUME_PATH/$name" --force
+  "$MODAL" volume put user-dev "$d" "$VOLUME_PATH/$name" --force
 done
 
 echo "Done."

@@ -6,7 +6,7 @@ Two responsibilities:
 2. Pre-compaction flush — when token count nears the summarization threshold,
    injects a directive to write durable memories before context is compressed.
 3. Transcript persistence — after each agent run, writes the full conversation
-   transcript to /default-user/session-transcripts/{session_id}.md for indexing.
+   transcript to /mnt/session-transcripts/{session_id}.md for indexing.
 
 Session archiving and memory index sync are handled by SessionSetupMiddleware.
 
@@ -46,7 +46,7 @@ This is a silent system reminder. Do not acknowledge or reference it in any resp
 
 MEMORY_FLUSH_DIRECTIVE = """
 <system-message type="memory-flush">
-Pre-compaction memory flush. Before continuing, append durable memories to /default-user/memory/{today}.md now. See Memory section in your system prompt for full guidelines.
+Pre-compaction memory flush. Before continuing, append durable memories to /mnt/memory/{today}.md now. See Memory section in your system prompt for full guidelines.
 
 This is a silent system reminder. Action if appropriate, but do not acknowledge or reference it in any response to the user or in todos.
 </system-message>
@@ -217,8 +217,8 @@ def _write_transcript_to_volume(
     session_id: str,
     content: str,
 ) -> None:
-    """Write transcript file to /default-user/session-transcripts/ via sandbox."""
-    dir_path = "/default-user/session-transcripts"
+    """Write transcript file to /mnt/session-transcripts/ via sandbox."""
+    dir_path = "/mnt/session-transcripts"
     filepath = f"{dir_path}/{session_id}.md"
 
     cmd = f"mkdir -p '{dir_path}' && cat > '{filepath}' << 'TRANSCRIPT_EOF'\n{content}\nTRANSCRIPT_EOF"
@@ -231,7 +231,7 @@ def _write_transcript_to_volume(
         logger.warning("[Transcript] failed to write %s: %s", filepath, stderr)
         return
 
-    sync_process = sandbox.exec("sync", "/default-user", timeout=30)
+    sync_process = sandbox.exec("sync", "/mnt", timeout=30)
     sync_process.wait()
 
 
@@ -336,8 +336,8 @@ def _write_archive_to_volume(
     filename: str,
     content: str,
 ) -> None:
-    """Write archive file to /default-user/memory/ via sandbox."""
-    filepath = f"/default-user/memory/{filename}"
+    """Write archive file to /mnt/memory/ via sandbox."""
+    filepath = f"/mnt/memory/{filename}"
 
     cmd = f"cat > '{filepath}' << 'ARCHIVE_EOF'\n{content}\nARCHIVE_EOF"
 
@@ -349,7 +349,7 @@ def _write_archive_to_volume(
         logger.warning("[SessionArchive] failed to write %s: %s", filepath, stderr)
         return
 
-    sync_process = sandbox.exec("sync", "/default-user", timeout=30)
+    sync_process = sandbox.exec("sync", "/mnt", timeout=30)
     sync_process.wait()
 
 

@@ -32,7 +32,7 @@ def sync_memory_index(sandbox: modal.Sandbox) -> dict:
     """Run incremental memory-index sync inside the Modal sandbox.
 
     1. Pipes _sandbox_script.py to ``python3 -`` with the ``sync`` subcommand.
-    2. The script lists ``/default-user/memory/*.md``, checks mtime/size
+    2. The script lists ``/mnt/memory/*.md``, checks mtime/size
        against what is already indexed, and only re-embeds changed files.
     3. Returns the JSON summary emitted by the script.
     """
@@ -93,7 +93,7 @@ def sync_memory_index(sandbox: modal.Sandbox) -> dict:
         # Commit LanceDB writes to the volume so subsequent reload_volumes()
         # calls (e.g. from memory_search) don't wipe the index.
         t4 = time.monotonic()
-        sync_proc = sandbox.exec("sync", "/default-user", timeout=30)
+        sync_proc = sandbox.exec("sync", "/mnt", timeout=30)
         sync_proc.wait()
         logger.info("[MemoryIndex] volume synced in %.1fs", time.monotonic() - t4)
 

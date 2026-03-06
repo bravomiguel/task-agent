@@ -24,7 +24,7 @@ SKILLS_SYSTEM_PROMPT = """
 You have access to a skills library with specialized capabilities for document manipulation.
 These skills contain tested patterns from extensive trial and error that significantly improve output quality.
 
-**Skills Directory:** `/default-user/skills/`
+**Skills Directory:** `/mnt/skills/`
 
 {skills_list}
 
@@ -34,10 +34,10 @@ When a user's task matches a skill, your FIRST action must be to read the SKILL.
 Do NOT start writing code or creating files until you've read the relevant skill(s).
 
 **Task → Skill Mapping:**
-- "create/edit a Word document" → read `/default-user/skills/docx/SKILL.md`
-- "fill a PDF form" or "work with PDF" → read `/default-user/skills/pdf/SKILL.md`
-- "make a presentation" → read `/default-user/skills/pptx/SKILL.md`
-- "work with spreadsheet/Excel" → read `/default-user/skills/xlsx/SKILL.md`
+- "create/edit a Word document" → read `/mnt/skills/docx/SKILL.md`
+- "fill a PDF form" or "work with PDF" → read `/mnt/skills/pdf/SKILL.md`
+- "make a presentation" → read `/mnt/skills/pptx/SKILL.md`
+- "work with spreadsheet/Excel" → read `/mnt/skills/xlsx/SKILL.md`
 
 **Multiple Skills:**
 Complex tasks may require combining multiple skills. Don't limit yourself to one.
@@ -116,14 +116,14 @@ class RuntimeContextMiddleware(AgentMiddleware[RuntimeContextState, Any]):
             context = (
                 f"\n\n### Current Session\n"
                 f"Your session ID is `{session_id}`. "
-                f"Save user-requested files to `/default-user/session-storage/{session_id}/outputs/`."
+                f"Save user-requested files to `/mnt/session-storage/{session_id}/outputs/`."
             )
             request.system_prompt = request.system_prompt + context
 
     def _format_skills_list(self, skills: list[SkillMetadata]) -> str:
         """Format skills metadata for display in system prompt."""
         if not skills:
-            return "(No skills available yet. Skills will appear in /default-user/skills/ when added.)"
+            return "(No skills available yet. Skills will appear in /mnt/skills/ when added.)"
 
         lines = ["**Available Skills:**", ""]
 
@@ -152,8 +152,8 @@ class RuntimeContextMiddleware(AgentMiddleware[RuntimeContextState, Any]):
             return
 
         # Build file listing with paths
-        PROMPT_DIR = "/default-user/prompts"
-        MEMORY_DIR = "/default-user/memory"
+        PROMPT_DIR = "/mnt/prompts"
+        MEMORY_DIR = "/mnt/memory"
         file_listing = []
         for filename in prompt_files:
             if filename == "MEMORY.md":
@@ -165,8 +165,6 @@ class RuntimeContextMiddleware(AgentMiddleware[RuntimeContextState, Any]):
         header = (
             f"\n\n## Project Context\n\n"
             f"The following project context files have been loaded:\n{files_block}\n\n"
-            f"These are live files on disk. To edit them, use `edit_file` with the paths above. "
-            f"To delete a file, use `execute_bash` with `rm <path>`.\n\n"
             f"If SOUL.md is present, embody its persona and tone."
         )
         request.system_prompt += header

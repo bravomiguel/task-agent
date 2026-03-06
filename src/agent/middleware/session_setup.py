@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 class SessionSetupMiddleware(AgentMiddleware[AgentState, Any]):
     """Runs prompt file loading, skills discovery, and memory setup in parallel.
 
-    Loads all .md files from /default-user/prompts/ plus /default-user/memory/MEMORY.md
+    Loads all .md files from /mnt/prompts/ plus /mnt/memory/MEMORY.md
     as project context files (mirroring OpenClaw's bootstrap file pattern).
     """
 
@@ -43,7 +43,7 @@ class SessionSetupMiddleware(AgentMiddleware[AgentState, Any]):
         self,
         llm: Any = None,
         api_url: str | None = None,
-        skills_path: str = "/default-user/skills",
+        skills_path: str = "/mnt/skills",
         archive_message_limit: int = 15,
     ):
         super().__init__()
@@ -98,17 +98,17 @@ class SessionSetupMiddleware(AgentMiddleware[AgentState, Any]):
         return head + marker + tail
 
     def _load_prompt_files(self, sandbox_id: str, _retries: int = 3) -> dict[str, Any]:
-        """Read all .md files from /default-user/prompts/ + MEMORY.md in one sandbox call."""
+        """Read all .md files from /mnt/prompts/ + MEMORY.md in one sandbox call."""
         for attempt in range(_retries):
             try:
                 sandbox = modal.Sandbox.from_id(sandbox_id)
                 process = sandbox.exec(
                     "bash", "-c",
-                    'for f in /default-user/prompts/*.md; do '
+                    'for f in /mnt/prompts/*.md; do '
                     '[ -f "$f" ] && echo "---FILE:$(basename $f)" && cat "$f"; '
                     'done; '
-                    '[ -f /default-user/memory/MEMORY.md ] && '
-                    'echo "---FILE:MEMORY.md" && cat /default-user/memory/MEMORY.md; '
+                    '[ -f /mnt/memory/MEMORY.md ] && '
+                    'echo "---FILE:MEMORY.md" && cat /mnt/memory/MEMORY.md; '
                     'true',
                     timeout=10,
                 )

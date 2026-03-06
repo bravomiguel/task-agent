@@ -13,7 +13,7 @@ Before doing anything else:
 > Skip steps 1 and 2 if BOOTSTRAP.md is present in Project Context — go there first.
 
 1. Review SOUL.md, USER.md, and MEMORY.md (if it exists) in your project context
-2. Read `/default-user/memory/YYYY-MM-DD.md` (today + yesterday) for recent context
+2. Read `/mnt/memory/YYYY-MM-DD.md` (today + yesterday) for recent context
 
 Don't ask permission. Just do it.
 
@@ -21,8 +21,8 @@ Don't ask permission. Just do it.
 
 You wake up fresh each session. These files are your continuity:
 
-- **Daily notes:** `/default-user/memory/YYYY-MM-DD.md` — raw logs of what happened, append-only
-- **Long-term:** `/default-user/memory/MEMORY.md` — your curated memories, like a human's long-term memory
+- **Daily notes:** `/mnt/memory/YYYY-MM-DD.md` — raw logs of what happened, append-only
+- **Long-term:** `/mnt/memory/MEMORY.md` — your curated memories, like a human's long-term memory
 
 Capture what matters. Decisions, context, things to remember.
 
@@ -40,7 +40,7 @@ Capture what matters. Decisions, context, things to remember.
 
 Daily notes are append-only. To add new entries:
 
-1. `read_file` the existing `/default-user/memory/YYYY-MM-DD.md`
+1. `read_file` the existing `/mnt/memory/YYYY-MM-DD.md`
 2. `edit_file` to add your new entries at the end
 
 If the file doesn't exist yet, use `write_file` to create it.
@@ -49,7 +49,7 @@ If the file doesn't exist yet, use `write_file` to create it.
 
 - **Memory is limited** — if you want to remember something, WRITE IT TO A FILE
 - "Mental notes" don't survive session restarts. Files do.
-- When someone says "remember this" → update `/default-user/memory/YYYY-MM-DD.md` or relevant file
+- When someone says "remember this" → update `/mnt/memory/YYYY-MM-DD.md` or relevant file
 - When you learn a lesson → update AGENTS.md, TOOLS.md, or the relevant skill
 - When you make a mistake → document it so future-you doesn't repeat it
 - **Text > Brain** 📝
@@ -133,7 +133,7 @@ When you receive a heartbeat poll (message matches the configured heartbeat prom
 Default heartbeat prompt:
 `Read HEARTBEAT.md if it exists (workspace context). Follow it strictly. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK.`
 
-You are free to edit `/default-user/prompts/HEARTBEAT.md` with a short checklist or reminders. Keep it small to limit token burn.
+You are free to edit `/mnt/prompts/HEARTBEAT.md` with a short checklist or reminders. Keep it small to limit token burn.
 
 ### Heartbeat vs Cron: When to Use Each
 
@@ -163,7 +163,7 @@ You are free to edit `/default-user/prompts/HEARTBEAT.md` with a short checklist
 - **Mentions** - Twitter/social notifications?
 - **Weather** - Relevant if your human might go out?
 
-**Track your checks** in `/default-user/memory/heartbeat-state.json`:
+**Track your checks** in `/mnt/memory/heartbeat-state.json`:
 
 ```json
 {
@@ -201,7 +201,7 @@ You are free to edit `/default-user/prompts/HEARTBEAT.md` with a short checklist
 
 Periodically (every few days), use a heartbeat to:
 
-1. Read through recent `/default-user/memory/YYYY-MM-DD.md` files
+1. Read through recent `/mnt/memory/YYYY-MM-DD.md` files
 2. Identify significant events, lessons, or insights worth keeping long-term
 3. Update MEMORY.md with distilled learnings
 4. Remove outdated info from MEMORY.md that's no longer relevant

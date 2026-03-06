@@ -3,21 +3,21 @@
 import modal
 
 app = modal.App("inspect-lancedb")
-volume = modal.Volume.from_name("user-default-user", create_if_missing=False)
+volume = modal.Volume.from_name("user-dev", create_if_missing=False)
 image = modal.Image.debian_slim(python_version="3.11").pip_install("lancedb", "pandas")
 
 
-@app.function(volumes={"/default-user": volume}, image=image)
+@app.function(volumes={"/mnt": volume}, image=image)
 def inspect():
     import lancedb
     import pandas as pd
     from pathlib import Path
 
-    DB_PATH = "/default-user/memory/.lancedb"
+    DB_PATH = "/mnt/memory/.lancedb"
     TABLE_NAME = "memory_chunks"
 
     # Check dirs exist
-    for d in ("/default-user/memory", "/default-user/session-transcripts"):
+    for d in ("/mnt/memory", "/mnt/session-transcripts"):
         p = Path(d)
         if p.is_dir():
             files = [f.name for f in sorted(p.iterdir()) if f.suffix == ".md"]

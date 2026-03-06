@@ -75,7 +75,7 @@ def _parse_skill_metadata(skill_md_path: Path, sandbox: modal.Sandbox) -> SkillM
         return None
 
 
-def _list_skills_from_sandbox(sandbox: modal.Sandbox, skills_dir: str = "/default-user/skills") -> list[SkillMetadata]:
+def _list_skills_from_sandbox(sandbox: modal.Sandbox, skills_dir: str = "/mnt/skills") -> list[SkillMetadata]:
     """List all skills from the sandbox's /skills directory.
 
     Args:

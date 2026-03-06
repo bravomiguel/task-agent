@@ -108,7 +108,7 @@ class UserConfig(BaseModel):
 # Load / patch / write
 # ---------------------------------------------------------------------------
 
-CONFIG_PATH = "/default-user/config.json"
+CONFIG_PATH = "/mnt/config.json"
 
 
 def load_config(sandbox_id: str) -> UserConfig:
@@ -285,7 +285,7 @@ def apply_config_side_effects(config: UserConfig, sandbox_id: str | None = None)
         _sync_timezone_to_user_md(sandbox_id, config.timezone)
 
 
-USER_MD_PATH = "/default-user/prompts/USER.md"
+USER_MD_PATH = "/mnt/prompts/USER.md"
 _TZ_LINE_RE = re.compile(r"^(- \*\*Timezone\*\*:).*$", re.MULTILINE)
 
 

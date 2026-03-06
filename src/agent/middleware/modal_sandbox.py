@@ -115,7 +115,7 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
         startup_timeout: int = 180,
         idle_timeout: int = 60 * 3,  # 3 minutes
         max_timeout: int = 60 * 60 * 24,   # 24 hours
-        user_volume_name: str = "user-default-user",
+        user_volume_name: str = "user-dev",
     ):
         super().__init__()
         self._workdir = workdir
@@ -196,7 +196,7 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
             timeout=self._max_timeout,
             idle_timeout=self._idle_timeout,
             volumes={
-                "/default-user": user_volume,
+                "/mnt": user_volume,
             },
             env=sandbox_env,
             verbose=True,
@@ -222,9 +222,9 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
         # Create per-session directories (volume-level dirs created by reset script)
         sandbox.exec(
             "mkdir", "-p",
-            f"/default-user/session-storage/{session_id}/workspace",
-            f"/default-user/session-storage/{session_id}/uploads",
-            f"/default-user/session-storage/{session_id}/outputs",
+            f"/mnt/session-storage/{session_id}/workspace",
+            f"/mnt/session-storage/{session_id}/uploads",
+            f"/mnt/session-storage/{session_id}/outputs",
             timeout=10,
         ).wait()
 
@@ -240,7 +240,7 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
         for _ in range(10):
             try:
                 probe = sandbox.exec(
-                    "head", "-c", "1", "/default-user/prompts/AGENTS.md",
+                    "head", "-c", "1", "/mnt/prompts/AGENTS.md",
                     timeout=5,
                 )
                 probe.wait()

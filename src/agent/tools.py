@@ -83,14 +83,14 @@ def view_image(
     if session_id is None:
         return [{"type": "text", "text": "Error: Session ID not available."}]
 
-    # Normalize filepath to relative path (strip /default-user/session-storage/{id}/ prefix if present)
+    # Normalize filepath to relative path (strip /mnt/session-storage/{id}/ prefix if present)
     normalized_path = filepath
-    if filepath.startswith("/default-user/session-storage/"):
-        parts = filepath.split("/", 5)  # ['', 'default-user', 'session-storage', 'id', 'uploads', 'file.png']
+    if filepath.startswith("/mnt/session-storage/"):
+        parts = filepath.split("/", 5)  # ['', 'mnt', 'session-storage', 'id', 'uploads', 'file.png']
         if len(parts) >= 6:
             normalized_path = "/".join(parts[4:])  # 'uploads/file.png'
-    elif filepath.startswith("default-user/session-storage/"):
-        parts = filepath.split("/", 4)  # ['default-user', 'session-storage', 'id', 'uploads', 'file.png']
+    elif filepath.startswith("mnt/session-storage/"):
+        parts = filepath.split("/", 4)  # ['mnt', 'session-storage', 'id', 'uploads', 'file.png']
         if len(parts) >= 5:
             normalized_path = "/".join(parts[3:])  # 'uploads/file.png'
 

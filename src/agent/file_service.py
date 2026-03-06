@@ -13,13 +13,13 @@ image = modal.Image.debian_slim().pip_install("fastapi[standard]")
 app = modal.App("file-service", image=image)
 
 # Create or reference user volume
-user_volume = modal.Volume.from_name("user-default-user", create_if_missing=True, version=2)
+user_volume = modal.Volume.from_name("user-dev", create_if_missing=True, version=2)
 
 # Keep 'volume' as alias for backwards compatibility
 volume = user_volume
 
 
-@app.function(volumes={"/default-user": volume})
+@app.function(volumes={"/mnt": volume})
 def list_files(session_id: str) -> dict:
     """
     List all files in a session's folder.
@@ -65,7 +65,7 @@ def list_files(session_id: str) -> dict:
         raise
 
 
-@app.function(volumes={"/default-user": volume})
+@app.function(volumes={"/mnt": volume})
 def read_file(session_id: str, file_path: str) -> dict:
     """
     Read file content from a session's folder.
@@ -100,7 +100,7 @@ def read_file(session_id: str, file_path: str) -> dict:
         raise
 
 
-@app.function(volumes={"/default-user": volume})
+@app.function(volumes={"/mnt": volume})
 def read_file_bytes(session_id: str, file_path: str) -> dict:
     """
     Read file content as base64-encoded bytes from a session's folder.
@@ -141,7 +141,7 @@ def read_file_bytes(session_id: str, file_path: str) -> dict:
         raise
 
 
-@app.function(volumes={"/default-user": volume})
+@app.function(volumes={"/mnt": volume})
 def update_file(session_id: str, file_path: str, content: str) -> dict:
     """
     Update or create a file in a session's folder.
@@ -172,7 +172,7 @@ def update_file(session_id: str, file_path: str, content: str) -> dict:
         return {"success": False, "error": str(e)}
 
 
-@app.function(volumes={"/default-user": volume})
+@app.function(volumes={"/mnt": volume})
 def upload_file_bytes(session_id: str, filename: str, content_b64: str) -> dict:
     """
     Upload a binary file to a session's uploads folder.
@@ -218,7 +218,7 @@ def upload_file_bytes(session_id: str, filename: str, content_b64: str) -> dict:
         return {"success": False, "error": str(e)}
 
 
-@app.function(volumes={"/default-user": volume})
+@app.function(volumes={"/mnt": volume})
 def upload_temp_file(temp_id: str, filename: str, content_b64: str) -> dict:
     """
     Upload a binary file to temporary uploads staging area.
@@ -265,7 +265,7 @@ def upload_temp_file(temp_id: str, filename: str, content_b64: str) -> dict:
         return {"success": False, "error": str(e)}
 
 
-@app.function(volumes={"/default-user": volume})
+@app.function(volumes={"/mnt": volume})
 def delete_file(session_id: str, file_path: str, sandbox_id: str = None) -> dict:
     """
     Delete a file from a session's folder.
@@ -282,7 +282,7 @@ def delete_file(session_id: str, file_path: str, sandbox_id: str = None) -> dict
         Dictionary with 'success' boolean and optional 'error'
     """
     try:
-        full_path = f"/default-user/session-storage/{session_id}/{file_path}"
+        full_path = f"/mnt/session-storage/{session_id}/{file_path}"
 
         if sandbox_id:
             # Use existing sandbox
@@ -292,14 +292,14 @@ def delete_file(session_id: str, file_path: str, sandbox_id: str = None) -> dict
                 # If sandbox doesn't exist, create temporary one
                 sb = modal.Sandbox.create(
                     image=modal.Image.debian_slim(),
-                    volumes={"/default-user": volume},
+                    volumes={"/mnt": volume},
                     timeout=60
                 )
         else:
             # Create temporary sandbox for deletion
             sb = modal.Sandbox.create(
                 image=modal.Image.debian_slim(),
-                volumes={"/default-user": volume},
+                volumes={"/mnt": volume},
                 timeout=60
             )
 
@@ -309,7 +309,7 @@ def delete_file(session_id: str, file_path: str, sandbox_id: str = None) -> dict
 
         if process.returncode == 0:
             # Sync volume from within sandbox to persist deletion
-            sync_process = sb.exec("sync", "/default-user", timeout=30)
+            sync_process = sb.exec("sync", "/mnt", timeout=30)
             sync_process.wait()
 
             # Terminate temporary sandbox if we created one
@@ -355,7 +355,7 @@ def get_sandbox_files(session_id: str, sandbox_id: str) -> dict:
         sb = modal.Sandbox.from_id(sandbox_id)
 
         # List files using sandbox ls command
-        process = sb.exec("ls", "-la", f"/default-user/session-storage/{session_id}", timeout=10)
+        process = sb.exec("ls", "-la", f"/mnt/session-storage/{session_id}", timeout=10)
         process.wait()
 
         if process.returncode == 0:

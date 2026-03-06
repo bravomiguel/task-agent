@@ -4,12 +4,12 @@
 This script is piped to `python3 -` via sandbox.exec() from the LangGraph
 server.  It has two subcommands:
 
-  sync   — Incremental index of /default-user/memory/*.md and
-           /default-user/session-transcripts/*.md into LanceDB
+  sync   — Incremental index of /mnt/memory/*.md and
+           /mnt/session-transcripts/*.md into LanceDB
   search — Hybrid BM25 + vector search against the index
 
 LanceDB stores its data as immutable Lance flat-files at
-/default-user/memory/.lancedb/ on the Modal Volume — no SQLite locking issues.
+/mnt/memory/.lancedb/ on the Modal Volume — no SQLite locking issues.
 """
 
 from __future__ import annotations
@@ -25,10 +25,10 @@ from pathlib import Path
 # Constants (mirrored in store.py for the orchestrator side)
 # ---------------------------------------------------------------------------
 
-DB_PATH = "/default-user/memory/.lancedb"
+DB_PATH = "/mnt/memory/.lancedb"
 TABLE_NAME = "memory_chunks"
-MEMORY_DIR = "/default-user/memory"
-SESSIONS_DIR = "/default-user/session-transcripts"
+MEMORY_DIR = "/mnt/memory"
+SESSIONS_DIR = "/mnt/session-transcripts"
 EMBEDDING_MODEL = "text-embedding-3-small"
 
 CHUNK_TOKENS = 400

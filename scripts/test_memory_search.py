@@ -5,7 +5,7 @@ import modal
 from pathlib import Path
 
 app = modal.App("test-memory-search")
-volume = modal.Volume.from_name("user-default-user", create_if_missing=False)
+volume = modal.Volume.from_name("user-dev", create_if_missing=False)
 
 rclone_image = modal.Image.debian_slim(python_version="3.11").pip_install(
     "lancedb", "tantivy", "openai", "pandas"
@@ -13,7 +13,7 @@ rclone_image = modal.Image.debian_slim(python_version="3.11").pip_install(
 
 DEBUG_SCRIPT = """
 import json, os, sys
-DB_PATH = "/default-user/memory/.lancedb"
+DB_PATH = "/mnt/memory/.lancedb"
 TABLE_NAME = "memory_chunks"
 QUERY = sys.argv[1]
 API_KEY = sys.argv[2]
@@ -73,7 +73,7 @@ def main(query: str = "cangrejo"):
     sb_app = modal.App.lookup("agent-sandbox", create_if_missing=True)
     sandbox = modal.Sandbox.create(
         app=sb_app, image=rclone_image, workdir="/workspace",
-        timeout=120, idle_timeout=60, volumes={"/default-user": volume},
+        timeout=120, idle_timeout=60, volumes={"/mnt": volume},
     )
     try:
         p = sandbox.exec("python3", "-c", DEBUG_SCRIPT, query, api_key, timeout=30)
