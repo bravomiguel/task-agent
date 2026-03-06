@@ -13,8 +13,11 @@ from typing import Annotated, Literal
 
 import httpx
 import modal
+from langchain_core.messages import ToolMessage
 from langchain_core.tools import tool
+from langchain_core.tools import InjectedToolCallId
 from langgraph.prebuilt import InjectedState
+from langgraph.types import Command
 
 logger = logging.getLogger(__name__)
 
@@ -649,6 +652,85 @@ def _parse_every_schedule(interval_str: str) -> str:
     raise ValueError(f"Unsupported unit: {unit}")
 
 
+# ---------------------------------------------------------------------------
+# Config management
+# ---------------------------------------------------------------------------
+
+
+@tool
+def manage_config(
+    action: Literal["get", "patch"],
+    patch: str = None,
+    state: Annotated[dict, InjectedState] = None,
+    tool_call_id: Annotated[str, InjectedToolCallId] = None,
+) -> Command | str:
+    """View or update user configuration (timezone, heartbeat schedule, active hours, etc.).
+
+    Use this tool (not manage_crons) to change heartbeat frequency or active hours.
+    Use this tool to change user timezone — it auto-syncs to USER.md.
+
+    Args:
+        action: "get" to read current config, "patch" to merge changes.
+        patch: JSON string of partial config to merge (required for patch).
+            Example: '{"timezone": "Europe/London"}'
+            Example: '{"heartbeat": {"active_hours": {"start": "09:00", "end": "17:00"}}}'
+            Use null to delete a key: '{"heartbeat": {"active_hours": null}}'
+
+    Returns:
+        Current or updated config as JSON.
+    """
+    from agent.config import apply_config_side_effects, load_config, patch_config
+
+    sandbox_id = state.get("modal_sandbox_id") if state else None
+    if not sandbox_id:
+        return "Error: no sandbox available."
+
+    try:
+        if action == "get":
+            config = load_config(sandbox_id)
+            return _json.dumps(config.model_dump(exclude_none=True) or {})
+
+        elif action == "patch":
+            if not patch:
+                return "Error: patch is required for patch action."
+            try:
+                patch_data = _json.loads(patch)
+            except _json.JSONDecodeError as e:
+                return f"Error: invalid JSON in patch: {e}"
+
+            # Write config, apply side-effects, update state — all in one step
+            new_config = patch_config(sandbox_id, patch_data)
+            apply_config_side_effects(new_config, sandbox_id=sandbox_id)
+            config_dict = new_config.model_dump(exclude_none=True)
+            result = _json.dumps({"config": config_dict})
+            return Command(update={
+                "config": config_dict,
+                "messages": [ToolMessage(content=result, tool_call_id=tool_call_id)],
+            })
+
+        else:
+            return f"Error: unknown action '{action}'."
+
+    except Exception as e:
+        logger.warning("[manage_config] %s failed: %s", action, e)
+        return f"Error: {action} failed: {e}"
+
+
+def _is_heartbeat_job(sb, *, job_id: int = None, job_name: str = None) -> bool:
+    """Check if a cron job is the heartbeat (managed by config, not user-editable)."""
+    if job_name and "heartbeat" in job_name.lower():
+        return True
+    if job_id is not None:
+        try:
+            result = sb.rpc("list_agent_crons").execute()
+            for job in result.data or []:
+                if job.get("jobid") == job_id:
+                    return "heartbeat" in (job.get("jobname") or "").lower()
+        except Exception:
+            pass
+    return False
+
+
 @tool
 def manage_crons(
     action: Literal["status", "list", "add", "update", "remove", "run", "runs", "wake"],
@@ -759,6 +841,9 @@ def manage_crons(
         elif action == "update":
             if job_id is None:
                 return "Error: job_id is required for update."
+            # Guard: heartbeat cron is managed by config — use manage_config instead
+            if _is_heartbeat_job(sb, job_id=job_id):
+                return "Error: heartbeat schedule is managed by config. Use manage_config to change heartbeat frequency or active hours."
             params = {"job_id": job_id}
             if schedule is not None:
                 params["new_schedule"] = schedule
@@ -770,6 +855,9 @@ def manage_crons(
         elif action == "remove":
             if not job_name:
                 return "Error: job_name is required for remove."
+            # Guard: heartbeat cron is managed by config — use manage_config instead
+            if _is_heartbeat_job(sb, job_name=job_name):
+                return "Error: heartbeat cron is managed by config. Use manage_config to change heartbeat settings."
             sb.rpc("delete_agent_cron", {"job_name": job_name}).execute()
             return _json.dumps({"removed": True, "job_name": job_name})
 

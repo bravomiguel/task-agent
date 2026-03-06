@@ -1,6 +1,6 @@
 """Middleware package for agent middleware components."""
 
-from agent.middleware.heartbeat import HeartbeatMiddleware
+from agent.middleware.config import ConfigMiddleware
 from agent.middleware.memory import MemoryMiddleware
 from agent.middleware.modal_sandbox import ModalSandboxMiddleware
 from agent.middleware.move_uploads import MoveUploadsMiddleware
@@ -10,7 +10,7 @@ from agent.middleware.tool_description import ToolDescriptionMiddleware
 from agent.middleware.session_setup import SessionSetupMiddleware
 
 __all__ = [
-    "HeartbeatMiddleware",
+    "ConfigMiddleware",
     "MemoryMiddleware",
     "ModalSandboxMiddleware",
     "MoveUploadsMiddleware",

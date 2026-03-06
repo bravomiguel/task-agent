@@ -21,6 +21,9 @@ echo "Wiping /session-storage/..."
 echo "Wiping /session-transcripts/..."
 "$MODAL" volume rm user-default-user /session-transcripts/ -r 2>/dev/null || true
 
+echo "Wiping /config.json..."
+"$MODAL" volume rm user-default-user /config.json 2>/dev/null || true
+
 echo "Restoring default prompts..."
 "$SCRIPT_DIR/reset_prompts.sh"
 
