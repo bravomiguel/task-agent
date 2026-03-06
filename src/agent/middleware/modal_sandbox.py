@@ -219,17 +219,12 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
             raise RuntimeError(
                 f"Modal sandbox failed to start within {self._startup_timeout}s")
 
-        # Create directory structure in a single exec call
+        # Create per-session directories (volume-level dirs created by reset script)
         sandbox.exec(
             "mkdir", "-p",
             f"/default-user/session-storage/{session_id}/workspace",
             f"/default-user/session-storage/{session_id}/uploads",
             f"/default-user/session-storage/{session_id}/outputs",
-            "/default-user/memory",
-            "/default-user/skills",
-            "/default-user/prompts",
-            "/default-user/session-transcripts",
-            "/default-user/.temp-uploads",
             timeout=10,
         ).wait()
 

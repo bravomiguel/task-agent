@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Factory reset: wipe memory, sessions, and restore default prompts.
+# Factory reset: wipe entire volume and restore expected structure.
 #
 # Usage:
 #   ./scripts/reset_volume.sh
@@ -10,21 +10,40 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 MODAL="$PROJECT_DIR/.venv/bin/modal"
 
+KEEPFILE=$(mktemp)
+touch "$KEEPFILE"
+trap "rm -f $KEEPFILE" EXIT
+
 echo "=== Factory Reset ==="
 
-echo "Wiping /memory/..."
-"$MODAL" volume rm user-default-user /memory/ -r 2>/dev/null || true
+# Step 1: Wipe everything on the volume
+echo "Wiping entire volume..."
+for item in $("$MODAL" volume ls user-default-user / 2>/dev/null); do
+  if [ "$item" = "." ] || [ "$item" = ".." ]; then continue; fi
+  "$MODAL" volume rm user-default-user "/$item" -r 2>/dev/null || \
+  "$MODAL" volume rm user-default-user "/$item" 2>/dev/null || true
+done
 
-echo "Wiping /session-storage/..."
-"$MODAL" volume rm user-default-user /session-storage/ -r 2>/dev/null || true
+# Step 2: Recreate empty directory structure
+echo "Creating directory structure..."
+for dir in memory session-storage session-transcripts .temp-uploads; do
+  "$MODAL" volume put user-default-user "$KEEPFILE" "/$dir/.keep" --force
+done
 
-echo "Wiping /session-transcripts/..."
-"$MODAL" volume rm user-default-user /session-transcripts/ -r 2>/dev/null || true
+# Step 3: Restore default config
+echo "Restoring default config..."
+"$MODAL" volume put user-default-user "$PROJECT_DIR/config.default.json" /config.json --force
 
-echo "Wiping /config.json..."
-"$MODAL" volume rm user-default-user /config.json 2>/dev/null || true
-
+# Step 4: Restore default prompts
 echo "Restoring default prompts..."
 "$SCRIPT_DIR/reset_prompts.sh"
+
+# Step 5: Sync skills
+echo "Syncing skills..."
+"$MODAL" run "$SCRIPT_DIR/sync_skills.py"
+
+# Step 6: Reset heartbeat cron
+echo "Resetting heartbeat cron..."
+"$PROJECT_DIR/venv/bin/python" "$SCRIPT_DIR/reset_heartbeat_cron.py"
 
 echo "=== Factory reset complete ==="

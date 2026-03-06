@@ -13,11 +13,8 @@ from typing import Annotated, Literal
 
 import httpx
 import modal
-from langchain_core.messages import ToolMessage
 from langchain_core.tools import tool
-from langchain_core.tools import InjectedToolCallId
 from langgraph.prebuilt import InjectedState
-from langgraph.types import Command
 
 logger = logging.getLogger(__name__)
 
@@ -662,8 +659,7 @@ def manage_config(
     action: Literal["get", "patch"],
     patch: str = None,
     state: Annotated[dict, InjectedState] = None,
-    tool_call_id: Annotated[str, InjectedToolCallId] = None,
-) -> Command | str:
+) -> str:
     """View or update user configuration (timezone, heartbeat schedule, active hours, etc.).
 
     Use this tool (not manage_crons) to change heartbeat frequency or active hours.
@@ -698,15 +694,10 @@ def manage_config(
             except _json.JSONDecodeError as e:
                 return f"Error: invalid JSON in patch: {e}"
 
-            # Write config, apply side-effects, update state — all in one step
+            # Write config, apply side-effects (cron reconcile, USER.md sync)
             new_config = patch_config(sandbox_id, patch_data)
             apply_config_side_effects(new_config, sandbox_id=sandbox_id)
-            config_dict = new_config.model_dump(exclude_none=True)
-            result = _json.dumps({"config": config_dict})
-            return Command(update={
-                "config": config_dict,
-                "messages": [ToolMessage(content=result, tool_call_id=tool_call_id)],
-            })
+            return _json.dumps({"config": new_config.model_dump(exclude_none=True)})
 
         else:
             return f"Error: unknown action '{action}'."

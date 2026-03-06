@@ -112,7 +112,7 @@ CONFIG_PATH = "/default-user/config.json"
 
 
 def load_config(sandbox_id: str) -> UserConfig:
-    """Read config from the Modal volume. Auto-creates with defaults if missing."""
+    """Read config from the Modal volume. Returns defaults if missing/invalid."""
     sandbox = modal.Sandbox.from_id(sandbox_id)
     try:
         process = sandbox.exec("cat", CONFIG_PATH, timeout=5)
@@ -122,16 +122,9 @@ def load_config(sandbox_id: str) -> UserConfig:
             data = json.loads(raw)
             return UserConfig.model_validate(data)
     except Exception as e:
-        logger.info("[Config] config file missing or invalid, creating defaults: %s", e)
+        logger.warning("[Config] config file missing or invalid, using defaults: %s", e)
 
-    # File missing or invalid — create with defaults
-    config = UserConfig()
-    try:
-        _write_config(sandbox_id, config)
-        logger.info("[Config] auto-created %s", CONFIG_PATH)
-    except Exception as e:
-        logger.warning("[Config] failed to auto-create config: %s", e)
-    return config
+    return UserConfig()
 
 
 def _deep_merge(base: dict, patch: dict) -> dict:
