@@ -39,15 +39,7 @@ function buildInjectedMessage(
 
   const content = isHeartbeat ? "[HEARTBEAT]" : inputMessage;
 
-  const delivery =
-    `Focus only on the task above. When done, you MUST report back to the latest main session ` +
-    `— this is not optional, even if there's nothing actionable. Report: what you did (or checked), ` +
-    `any outputs or content produced (include links where appropriate), and anything that needs ` +
-    `follow-up. Give enough context that the main session can act on it — whether that's updating ` +
-    `the user, doing follow-on work, or just filing it away. ` +
-    `If rejected (e.g. session is busy), send to a new main session instead.`;
-
-  return `<system-message ${attrs.join(" ")}>\n${content}\n\n${delivery}\n</system-message>`;
+  return `<system-message ${attrs.join(" ")}>\n${content}\n</system-message>`;
 }
 
 serve(async (req: Request) => {
