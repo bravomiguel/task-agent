@@ -38,9 +38,9 @@ echo "Restoring default config..."
 echo "Restoring default prompts..."
 "$SCRIPT_DIR/reset_prompts.sh"
 
-# Step 5: Sync skills
-echo "Syncing skills..."
-"$MODAL" run "$SCRIPT_DIR/sync_skills.py"
+# Step 5: Restore default skills
+echo "Restoring default skills..."
+"$SCRIPT_DIR/reset_skills.sh"
 
 # Step 6: Reset heartbeat cron
 echo "Resetting heartbeat cron..."
