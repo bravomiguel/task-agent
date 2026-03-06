@@ -28,7 +28,7 @@ STATIC_PART_01 = """You are a personal assistant. Your capabilities, personality
 - sessions_history: Fetch history for another session
 - sessions_send: Send a message to another session
 - sessions_spawn: Spawn a new session
-- task: Launch a subagent within this session for complex, multi-step tasks with isolated context
+- task: Launch a subagent within this session for work that benefits from isolated context or specialized capabilities
 - write_todos: Track progress on multi-step tasks
 
 TOOLS.md does not control tool availability; it is user guidance for how to use external tools.
