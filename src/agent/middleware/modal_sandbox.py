@@ -89,6 +89,13 @@ rclone_image = (
         "rm -rf rclone-*",
         "rclone version",
     )
+    # Install gog CLI for Google Workspace (Gmail, Calendar, Drive, Sheets, Docs)
+    # Fork with GOG_ACCESS_TOKEN env var support for Composio-managed auth
+    .run_commands(
+        "curl -fsSL https://github.com/bravomiguel/gogcli/releases/download/v0.11.0-access-token/gogcli_0.11.0-access-token_linux_amd64.tar.gz"
+        " | tar -xz -C /usr/local/bin gog",
+        "chmod 755 /usr/local/bin/gog",
+    )
 )
 
 

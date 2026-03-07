@@ -874,3 +874,72 @@ def manage_crons(
     except Exception as e:
         logger.warning("[manage_crons] %s failed: %s", action, e)
         return f"Error: {action} failed: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Auth management (Composio)
+# ---------------------------------------------------------------------------
+
+
+@tool
+def manage_auth(
+    action: Literal["list", "initiate", "connect"],
+    service: str = None,
+    state: Annotated[dict, InjectedState] = None,
+) -> str:
+    """Manage external service authentication (Google Workspace, GitHub, Slack, etc.).
+
+    Uses Composio to provide OAuth credentials for third-party services.
+
+    Actions:
+      - "list": Check which services the user has connected.
+      - "initiate": Start an OAuth flow for a service. Returns an auth URL
+        the user must open in their browser. After they finish, call "connect".
+      - "connect": Fetch fresh credentials and set them up in the sandbox
+        for CLI tools (e.g. gog for Google). Also use to refresh expired tokens.
+
+    Args:
+        action: "list", "initiate", or "connect".
+        service: Service name for initiate/connect (e.g. "google", "github", "slack").
+
+    Returns:
+        JSON with connected services (list), auth URL (initiate), or
+        connection result with usage instructions (connect).
+    """
+    from agent.auth import (
+        SERVICE_REGISTRY,
+        connect_service,
+        initiate_service,
+        list_connected_services,
+    )
+
+    try:
+        if action == "list":
+            services = list_connected_services()
+            available = list(SERVICE_REGISTRY.keys())
+            return _json.dumps({
+                "connected": services,
+                "available_services": available,
+            })
+
+        elif action == "initiate":
+            if not service:
+                return "Error: service is required for initiate action."
+            result = initiate_service(service)
+            return _json.dumps(result)
+
+        elif action == "connect":
+            if not service:
+                return "Error: service is required for connect action."
+            sandbox_id = state.get("modal_sandbox_id") if state else None
+            if not sandbox_id:
+                return "Error: no sandbox available."
+            result = connect_service(service, sandbox_id)
+            return _json.dumps(result)
+
+        else:
+            return f"Error: unknown action '{action}'."
+
+    except Exception as e:
+        logger.warning("[manage_auth] %s failed: %s", action, e)
+        return f"Error: {action} failed: {e}"
