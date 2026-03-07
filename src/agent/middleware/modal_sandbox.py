@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 import uuid
 from typing import Any, NotRequired
@@ -79,6 +80,12 @@ rclone_image = (
     # Install sharp globally (dependency for html2pptx, which agent extracts locally per skill instructions)
     .run_commands(
         "npm install -g sharp",
+    )
+    # Browser automation: agent-browser CLI + Kernel CLI (for stealth/headed escalation)
+    .run_commands(
+        "npm install -g agent-browser @onkernel/cli ws",
+        # Download Chromium for agent-browser (separate from Playwright's copy)
+        "agent-browser install",
     )
     # Install rclone for Google Drive sync
     .run_commands(
@@ -185,7 +192,15 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
         # Add NODE_PATH so Node.js can find globally installed npm packages
         sandbox_env = {
             "NODE_PATH": "/usr/local/lib/node_modules",
+            # agent-browser: headless by default, no-sandbox for container
+            "AGENT_BROWSER_HEADLESS": "true",
+            "AGENT_BROWSER_NO_SANDBOX": "1",
         }
+
+        # Kernel API key for browser stealth/headed escalation (optional)
+        kernel_api_key = os.environ.get("KERNEL_API_KEY")
+        if kernel_api_key:
+            sandbox_env["KERNEL_API_KEY"] = kernel_api_key
 
         # Create new sandbox with user volume mounted and workdir set to workspace
         app = modal.App.lookup("agent-sandbox", create_if_missing=True)
