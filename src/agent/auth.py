@@ -29,13 +29,13 @@ SERVICE_REGISTRY: dict[str, dict[str, Any]] = {
         "auth_config_id": "ac_B08Vw1Ia0L05",
         "token_file": f"{AUTH_DIR}/google_token",
     },
+    "github": {
+        "display_name": "GitHub",
+        "composio_slug": "github",
+        "auth_config_id": "ac_slOJlN3EhyrJ",
+        "token_file": f"{AUTH_DIR}/github_token",
+    },
     # Future:
-    # "github": {
-    #     "display_name": "GitHub",
-    #     "composio_slug": "github",
-    #     "auth_config_id": "...",
-    #     "token_file": f"{AUTH_DIR}/github_token",
-    # },
     # "slack": {
     #     "display_name": "Slack",
     #     "composio_slug": "slack",
@@ -159,8 +159,36 @@ def _bootstrap_google(sandbox, acct: dict) -> dict[str, Any]:
     }
 
 
+def _bootstrap_github(sandbox, acct: dict) -> dict[str, Any]:
+    """Bootstrap GitHub auth in the sandbox."""
+    token = _extract_access_token(acct)
+    if not token:
+        return {"error": "No access_token in credentials. Check Composio connection status."}
+
+    if token.endswith("..."):
+        return {
+            "error": "Access token is masked. Disable secret masking in "
+                     "Composio project settings (Settings > Project Configuration).",
+        }
+
+    token_file = SERVICE_REGISTRY["github"]["token_file"]
+    _write_token_to_sandbox(sandbox, token, token_file)
+
+    return {
+        "status": "connected",
+        "service": "github",
+        "token_file": token_file,
+        "usage": (
+            f"Token written to {token_file}. Use with gh CLI:\n"
+            f"  export GH_TOKEN=$(cat {token_file})\n"
+            f"  gh repo list --limit 5"
+        ),
+    }
+
+
 _BOOTSTRAP_FUNCTIONS = {
     "google": _bootstrap_google,
+    "github": _bootstrap_github,
 }
 
 
