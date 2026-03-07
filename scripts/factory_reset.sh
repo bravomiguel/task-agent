@@ -30,7 +30,7 @@ done
 
 # Step 3: Recreate empty directory structure
 echo "Creating directory structure..."
-for dir in memory session-storage session-transcripts .temp-uploads; do
+for dir in memory session-storage session-transcripts .temp-uploads browser-profiles; do
   "$MODAL" volume put user-dev "$KEEPFILE" "/$dir/.keep" --force
 done
 
