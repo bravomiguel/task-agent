@@ -285,9 +285,9 @@ def _bootstrap_trello(sandbox, acct: dict) -> dict[str, Any]:
         "key_file": key_file,
         "usage": (
             f"Credentials written. Use with Trello API:\n"
-            f"  TRELLO_API_KEY=$(cat {key_file})\n"
+            f"  TRELLO_KEY=$(cat {key_file})\n"
             f"  TRELLO_TOKEN=$(cat {token_file})\n"
-            f'  curl -s "https://api.trello.com/1/members/me?key=$TRELLO_API_KEY&token=$TRELLO_TOKEN" | jq'
+            f'  curl -s "https://api.trello.com/1/members/me?key=$TRELLO_KEY&token=$TRELLO_TOKEN" | jq'
         ),
     }
 
