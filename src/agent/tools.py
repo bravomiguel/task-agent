@@ -172,10 +172,6 @@ def memory_search(
     if not sandbox_id:
         return "Error: No sandbox available."
 
-    api_key = os.getenv("OPENAI_API_KEY", "")
-    if not api_key:
-        return "Error: No OpenAI API key available for embedding."
-
     script = _load_memory_script()
 
     try:
@@ -187,7 +183,6 @@ def memory_search(
             "--query", query,
             "--max-results", str(max_results),
             "--min-score", str(min_score),
-            "--api-key", api_key,
             timeout=30,
         )
         process.stdin.write(script.encode())

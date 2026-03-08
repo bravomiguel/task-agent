@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import time
 from pathlib import Path
 
@@ -36,11 +35,6 @@ def sync_memory_index(sandbox: modal.Sandbox) -> dict:
        against what is already indexed, and only re-embeds changed files.
     3. Returns the JSON summary emitted by the script.
     """
-    api_key = os.getenv("OPENAI_API_KEY", "")
-    if not api_key:
-        logger.warning("[MemoryIndex] No OPENAI_API_KEY — skipping sync")
-        return {"status": "skipped", "message": "No API key"}
-
     script = _load_script()
     logger.info("[MemoryIndex] script loaded (%d bytes)", len(script))
 
@@ -53,7 +47,7 @@ def sync_memory_index(sandbox: modal.Sandbox) -> dict:
         t1 = time.monotonic()
         logger.info("[MemoryIndex] starting sandbox exec (python3 - sync)…")
         process = sandbox.exec(
-            "python3", "-", "sync", "--api-key", api_key,
+            "python3", "-", "sync",
             timeout=120,
         )
         logger.info("[MemoryIndex] exec started in %.1fs, writing stdin…", time.monotonic() - t1)

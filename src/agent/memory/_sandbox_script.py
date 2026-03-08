@@ -117,12 +117,9 @@ def _classify_source(path: str) -> str:
 # ---------------------------------------------------------------------------
 
 def cmd_sync(args: argparse.Namespace) -> None:
-    api_key = args.api_key or os.environ.get("OPENAI_API_KEY", "")
-    if not api_key:
+    if not os.environ.get("OPENAI_API_KEY"):
         json.dump({"status": "error", "message": "No OpenAI API key"}, sys.stdout)
         return
-
-    os.environ["OPENAI_API_KEY"] = api_key
 
     try:
         import lancedb
@@ -322,9 +319,6 @@ def _merge_hybrid_results(
 
 
 def cmd_search(args: argparse.Namespace) -> None:
-    api_key = args.api_key or os.environ.get("OPENAI_API_KEY", "")
-    if api_key:
-        os.environ["OPENAI_API_KEY"] = api_key
 
     try:
         import lancedb
@@ -439,14 +433,12 @@ def main() -> None:
     sub = parser.add_subparsers(dest="command")
 
     p_sync = sub.add_parser("sync", help="Incremental index sync")
-    p_sync.add_argument("--api-key", default="")
 
     p_search = sub.add_parser("search", help="Hybrid search")
     p_search.add_argument("--query", required=True)
     p_search.add_argument("--max-results", type=int, default=6)
     p_search.add_argument("--min-score", type=float, default=MIN_SCORE)
     p_search.add_argument("--source", default="", help="Filter by source label (e.g. 'sessions', 'memory')")
-    p_search.add_argument("--api-key", default="")
 
     args = parser.parse_args()
 
