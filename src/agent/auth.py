@@ -41,6 +41,13 @@ SERVICE_REGISTRY: dict[str, dict[str, Any]] = {
         "auth_config_id": "ac_pWHzlMJkhfn7",
         "token_file": f"{AUTH_DIR}/notion_token",
     },
+    "trello": {
+        "display_name": "Trello",
+        "composio_slug": "trello",
+        "auth_config_id": "ac_1h8eZlEgyiqz",
+        "token_file": f"{AUTH_DIR}/trello_token",
+        "key_file": f"{AUTH_DIR}/trello_key",
+    },
     # Future:
     # "slack": {
     #     "display_name": "Slack",
@@ -221,10 +228,75 @@ def _bootstrap_notion(sandbox, acct: dict) -> dict[str, Any]:
     }
 
 
+def _extract_consumer_key(acct: dict) -> str | None:
+    """Extract consumer_key (API key) from a Composio OAuth1 connected account."""
+    state_val = acct.get("state", {}).get("val", {})
+    # OAuth1 accounts may store consumer_key in state
+    for key in ("consumer_key", "key", "api_key"):
+        if state_val.get(key):
+            return state_val[key]
+    # Also check top-level data
+    data = acct.get("data", {})
+    for key in ("consumer_key", "key", "api_key"):
+        if data.get(key):
+            return data[key]
+    return None
+
+
+def _bootstrap_trello(sandbox, acct: dict) -> dict[str, Any]:
+    """Bootstrap Trello auth in the sandbox.
+
+    Trello uses OAuth1 but accepts simple key+token query params.
+    We need both the consumer_key (API key) and the OAuth access_token.
+    """
+    token = _extract_access_token(acct)
+    if not token:
+        # OAuth1 may use 'oauth_token' instead of 'access_token'
+        state_val = acct.get("state", {}).get("val", {})
+        token = state_val.get("oauth_token") or acct.get("data", {}).get("oauth_token")
+    if not token:
+        return {"error": "No access_token or oauth_token in credentials. Check Composio connection status."}
+
+    if token.endswith("..."):
+        return {
+            "error": "Access token is masked. Disable secret masking in "
+                     "Composio project settings (Settings > Project Configuration).",
+        }
+
+    consumer_key = _extract_consumer_key(acct)
+    if not consumer_key:
+        return {
+            "error": (
+                "No consumer_key (API key) found in Trello credentials. "
+                "The Composio connected account may not include it. "
+                "Check the connected account state in Composio dashboard."
+            ),
+        }
+
+    token_file = SERVICE_REGISTRY["trello"]["token_file"]
+    key_file = SERVICE_REGISTRY["trello"]["key_file"]
+    _write_token_to_sandbox(sandbox, token, token_file)
+    _write_token_to_sandbox(sandbox, consumer_key, key_file)
+
+    return {
+        "status": "connected",
+        "service": "trello",
+        "token_file": token_file,
+        "key_file": key_file,
+        "usage": (
+            f"Credentials written. Use with Trello API:\n"
+            f"  TRELLO_KEY=$(cat {key_file})\n"
+            f"  TRELLO_TOKEN=$(cat {token_file})\n"
+            f'  curl -s "https://api.trello.com/1/members/me?key=$TRELLO_KEY&token=$TRELLO_TOKEN" | jq'
+        ),
+    }
+
+
 _BOOTSTRAP_FUNCTIONS = {
     "google": _bootstrap_google,
     "github": _bootstrap_github,
     "notion": _bootstrap_notion,
+    "trello": _bootstrap_trello,
 }
 
 
