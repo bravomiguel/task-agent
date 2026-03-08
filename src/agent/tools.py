@@ -660,16 +660,19 @@ def manage_config(
     patch: str = None,
     state: Annotated[dict, InjectedState] = None,
 ) -> str:
-    """View or update user configuration (timezone, heartbeat schedule, active hours, etc.).
+    """View or update user configuration (timezone, heartbeat, skills, etc.).
 
     Use this tool (not manage_crons) to change heartbeat frequency or active hours.
     Use this tool to change user timezone — it auto-syncs to USER.md.
+    Use this tool to enable/disable skills. Skill changes take effect on the next session.
 
     Args:
         action: "get" to read current config, "patch" to merge changes.
         patch: JSON string of partial config to merge (required for patch).
             Example: '{"timezone": "Europe/London"}'
             Example: '{"heartbeat": {"active_hours": {"start": "09:00", "end": "17:00"}}}'
+            Example: '{"skills": {"notion": false}}' — disable a skill
+            Example: '{"skills": {"notion": true}}' — re-enable a skill
             Use null to delete a key: '{"heartbeat": {"active_hours": null}}'
 
     Returns:

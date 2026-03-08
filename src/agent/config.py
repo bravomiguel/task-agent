@@ -94,6 +94,7 @@ class HeartbeatConfig(BaseModel):
 class UserConfig(BaseModel):
     timezone: str = DEFAULT_TIMEZONE  # IANA timezone — global user timezone
     heartbeat: HeartbeatConfig = HeartbeatConfig()
+    skills: dict[str, bool] = {}  # skill name → enabled; missing = enabled
 
     @field_validator("timezone")
     @classmethod

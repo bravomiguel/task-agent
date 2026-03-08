@@ -57,6 +57,7 @@ class RuntimeContextState(ModalSandboxState):
     """Extended state with prompt files and skills metadata."""
     prompt_files: NotRequired[dict[str, str]]
     skills_metadata: NotRequired[list[SkillMetadata]]
+    skills_config: NotRequired[dict[str, bool]]
 
 
 class RuntimeContextMiddleware(AgentMiddleware[RuntimeContextState, Any]):
@@ -120,16 +121,39 @@ class RuntimeContextMiddleware(AgentMiddleware[RuntimeContextState, Any]):
             )
             request.system_prompt = request.system_prompt + context
 
-    def _format_skills_list(self, skills: list[SkillMetadata]) -> str:
-        """Format skills metadata for display in system prompt."""
+    def _format_skills_list(
+        self,
+        skills: list[SkillMetadata],
+        skills_config: dict[str, bool],
+    ) -> str:
+        """Format skills metadata for display in system prompt.
+
+        Enabled skills show full path for reading. Disabled skills are listed
+        but marked as unavailable this session.
+        """
         if not skills:
             return "(No skills available yet. Skills will appear in /mnt/skills/ when added.)"
 
-        lines = ["**Available Skills:**", ""]
-
+        enabled = []
+        disabled = []
         for skill in skills:
+            is_enabled = skills_config.get(skill["name"], True)  # missing = enabled
+            if is_enabled:
+                enabled.append(skill)
+            else:
+                disabled.append(skill)
+
+        lines = ["**Available Skills:**", ""]
+        for skill in enabled:
             lines.append(f"- **{skill['name']}**: {skill['description']}")
             lines.append(f"  → Read `{skill['path']}` for full instructions")
+            lines.append("")
+
+        if disabled:
+            lines.append("**Disabled Skills** (not available this session — use `manage_config` to re-enable; takes effect next session):")
+            lines.append("")
+            for skill in disabled:
+                lines.append(f"- ~~{skill['name']}~~: {skill['description']}")
             lines.append("")
 
         return "\n".join(lines)
@@ -137,7 +161,8 @@ class RuntimeContextMiddleware(AgentMiddleware[RuntimeContextState, Any]):
     def _inject_skills(self, request: ModelRequest) -> None:
         """Inject skills documentation into system prompt."""
         skills_metadata = request.state.get("skills_metadata", [])
-        skills_list = self._format_skills_list(skills_metadata)
+        skills_config = request.state.get("skills_config", {})
+        skills_list = self._format_skills_list(skills_metadata, skills_config)
         skills_section = SKILLS_SYSTEM_PROMPT.format(skills_list=skills_list)
 
         if request.system_prompt:
