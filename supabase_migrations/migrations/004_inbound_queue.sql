@@ -37,17 +37,18 @@ CREATE INDEX IF NOT EXISTS inbound_buffer_key_created
 CREATE TABLE IF NOT EXISTS inbound_queue (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   source text NOT NULL DEFAULT 'slack',
-  priority int NOT NULL DEFAULT 2,      -- 1=DM, 2=channel (future: 3=subagent, 4=cron, 5=heartbeat)
+  priority int NOT NULL DEFAULT 2,      -- 1=DM, 2=channel, 3=subagent, 4=cron, 5=heartbeat
+  thread_id text,                       -- target LangGraph thread (null = route to latest main)
   buffer_key text NOT NULL,
-  combined_text text NOT NULL,          -- "[jane] hey\n[mike] yeah"
+  combined_text text NOT NULL,          -- "[jane] hey\n[mike] yeah" or pre-wrapped system-message
   metadata jsonb DEFAULT '{}'::jsonb,   -- channel_id, thread_ts, senders, message_count, etc.
   created_at timestamptz NOT NULL DEFAULT now(),
   dispatched_at timestamptz             -- null = pending, set when dispatched
 );
 
--- Dispatcher: oldest undispatched, highest priority first
+-- Dispatcher: oldest undispatched per thread, highest priority first
 CREATE INDEX IF NOT EXISTS inbound_queue_dispatch
-  ON inbound_queue (dispatched_at NULLS FIRST, priority, created_at);
+  ON inbound_queue (dispatched_at NULLS FIRST, thread_id, priority, created_at);
 
 -- ---------------------------------------------------------------------------
 -- RPC: atomic flush — delete all buffer rows for a key and return them

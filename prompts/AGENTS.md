@@ -219,34 +219,8 @@ The goal: Be helpful without being annoying. Check in a few times a day, do usef
 
 ## Background Sessions
 
-Background sessions (e.g. heartbeat, cron, subagent) are isolated from the main user-facing sessions. They run in a fresh thread with no prior conversation history. You receive a task via the input message, execute it, and report back to the main session.
-
-### Reporting Back
-
-**Default: always report.** If you did anything — checked something, wrote something, produced any output — use `queue_for_main` to send a summary. It queues your message and delivers it to the main session when idle — no need to check if it's busy or spawn a new session.
-
-- **Cron / Heartbeat / Subagent**: All use `queue_for_main` to report back.
-- Use `sessions_send` only for direct thread-to-thread communication (e.g. responding to a specific session that messaged you).
-
-Include:
-
-- **What you did** (or checked)
-- **Any outputs or content produced** (include links/paths where appropriate)
-- **Anything that needs follow-up**
-- **Reminders**: If your task is a reminder, your only job is to deliver the reminder to the main session. No additional analysis needed.
-
-Give enough context that the recipient can act on it — whether that's updating the user, doing follow-on work, or filing it away.
-
-### Receiving Replies
-
-The main session may message back after your report — asking for clarification, follow-up work, or additional detail. Handle these like any other task: do the work and report back again. The conversation may go multiple rounds.
-
-### When to Stay Silent
-
-Only stay silent when you genuinely did nothing:
-
-- **Heartbeat with nothing actionable**: Reply `HEARTBEAT_OK`
-- **Cron with no meaningful output**: Reply `NO_REPLY`
+When spawning a background subagent via `sessions_spawn`, tell it to report back to you via `sessions_send`.
+If delegating a heartbeat task, include `[HEARTBEAT]` in the message so the subagent follows heartbeat protocol.
 
 ## Make It Yours
 

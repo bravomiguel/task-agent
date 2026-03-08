@@ -114,9 +114,10 @@ class RuntimeContextMiddleware(AgentMiddleware[RuntimeContextState, Any]):
         # Session context (static per run — no datetime to preserve prompt caching)
         session_id = request.state.get("session_id")
         if session_id:
+            session_type = request.state.get("session_type", "main")
             context = (
                 f"\n\n### Current Session\n"
-                f"Your session ID is `{session_id}`. "
+                f"Your session ID is `{session_id}`. Session type: **{session_type}**.\n"
                 f"Save user-requested files to `/mnt/session-storage/{session_id}/outputs/`."
             )
             request.system_prompt = request.system_prompt + context

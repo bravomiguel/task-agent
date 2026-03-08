@@ -1,11 +1,12 @@
 /**
  * queue-dispatcher — Supabase Edge Function
  *
- * Called by pg_cron every 10 seconds. Pops the oldest undispatched item from
- * `inbound_queue` and dispatches it to the agent's most recent idle main
- * session thread. If the main thread is busy, skips until the next poll.
+ * Called by pg_cron every 10 seconds. Drains per-thread queues: for each
+ * thread that has pending items in `inbound_queue`, checks if the thread is
+ * idle, and dispatches the oldest item if so.
  *
- * Dispatches ONE item per invocation to avoid overwhelming the agent.
+ * Also handles items without a thread_id (e.g. Slack messages that need
+ * routing to the latest main thread).
  *
  * Required env vars:
  *   LANGGRAPH_API_URL — base URL of the LangGraph server
@@ -30,21 +31,25 @@ function supabaseHeaders(): Record<string, string> {
   };
 }
 
-async function fetchOldestPending(): Promise<Record<string, unknown> | null> {
+/**
+ * Fetch all pending items grouped by thread, oldest first per thread.
+ * Returns items with distinct thread_ids (one per thread, highest priority/oldest).
+ */
+async function fetchPendingItems(): Promise<Record<string, unknown>[]> {
+  // Get all undispatched items, ordered by priority then created_at
   const params = new URLSearchParams({
     dispatched_at: "is.null",
     order: "priority.asc,created_at.asc",
-    limit: "1",
+    limit: "50",
   });
   const resp = await fetch(`${SUPABASE_URL}/rest/v1/inbound_queue?${params}`, {
     headers: supabaseHeaders(),
   });
   if (!resp.ok) {
     console.error(`[queue-dispatcher] fetch pending failed: ${resp.status}`);
-    return null;
+    return [];
   }
-  const rows = await resp.json();
-  return rows.length > 0 ? rows[0] : null;
+  return await resp.json();
 }
 
 async function markDispatched(id: string): Promise<void> {
@@ -67,10 +72,15 @@ async function markDispatched(id: string): Promise<void> {
 
 const lgHeaders = { "Content-Type": "application/json" };
 
-/**
- * Find the most recent main session thread.
- * Returns the thread object or null if none found.
- */
+async function getThreadStatus(threadId: string): Promise<string | null> {
+  const resp = await fetch(`${LANGGRAPH_API_URL}/threads/${threadId}`, {
+    headers: lgHeaders,
+  });
+  if (!resp.ok) return null;
+  const data = await resp.json();
+  return data.status ?? null;
+}
+
 async function findMainThread(): Promise<Record<string, unknown> | null> {
   const resp = await fetch(`${LANGGRAPH_API_URL}/threads/search`, {
     method: "POST",
@@ -86,7 +96,6 @@ async function findMainThread(): Promise<Record<string, unknown> | null> {
     return null;
   }
   const threads = await resp.json();
-
   for (const t of threads) {
     const values = t.values || {};
     if (values.session_type === "main") {
@@ -96,9 +105,6 @@ async function findMainThread(): Promise<Record<string, unknown> | null> {
   return null;
 }
 
-/**
- * Create a new LangGraph thread.
- */
 async function createThread(): Promise<string | null> {
   const resp = await fetch(`${LANGGRAPH_API_URL}/threads`, {
     method: "POST",
@@ -113,9 +119,6 @@ async function createThread(): Promise<string | null> {
   return data.thread_id;
 }
 
-/**
- * Start a run on a thread with the given message and input state.
- */
 async function startRun(
   threadId: string,
   message: string,
@@ -142,57 +145,43 @@ async function startRun(
 }
 
 // ---------------------------------------------------------------------------
-// Main dispatch logic
+// Dispatch logic
 // ---------------------------------------------------------------------------
 
-async function dispatch(): Promise<Record<string, unknown>> {
-  if (!LANGGRAPH_API_URL) {
-    return { ok: false, error: "LANGGRAPH_API_URL not configured" };
-  }
-
-  // 1. Pop oldest undispatched item
-  const item = await fetchOldestPending();
-  if (!item) {
-    return { ok: true, idle: true };
-  }
-
-  const itemId = item.id as string;
+async function dispatchItem(item: Record<string, unknown>): Promise<{ dispatched: boolean; threadId?: string }> {
   const meta = (item.metadata || {}) as Record<string, unknown>;
   const source = (item.source as string) ?? "unknown";
-
-  // 2. Find most recent main thread and check if idle
-  const mainThread = await findMainThread();
-
-  if (mainThread && mainThread.status === "busy") {
-    console.log("[queue-dispatcher] main thread busy, skipping");
-    return { ok: true, skipped: "main_thread_busy" };
-  }
-
-  // 3. Determine thread — use existing idle main or create new
-  let threadId: string;
-  let sessionType: string;
-
-  if (mainThread && mainThread.status !== "busy") {
-    // Post to existing idle main thread
-    threadId = mainThread.thread_id as string;
-    sessionType = "main";
-  } else {
-    // No main thread found — create a new one
-    const newId = await createThread();
-    if (!newId) {
-      return { ok: false, error: "Failed to create thread" };
-    }
-    threadId = newId;
-    sessionType = "main";
-  }
-
-  // 4. Build message — Slack items need wrapping, cron/heartbeat/subagent are pre-wrapped
   const combinedText = (item.combined_text as string) ?? "";
-  let message: string;
-  const runInput: Record<string, unknown> = { session_type: sessionType };
+  const itemThreadId = item.thread_id as string | null;
 
+  let threadId: string;
+  let message: string;
+  const runInput: Record<string, unknown> = { session_type: "main" };
+
+  if (itemThreadId) {
+    // Item has a specific target thread — check if it's idle
+    const status = await getThreadStatus(itemThreadId);
+    if (status === "busy") {
+      return { dispatched: false };
+    }
+    threadId = itemThreadId;
+  } else {
+    // No target thread (e.g. Slack) — find the latest idle main thread
+    const mainThread = await findMainThread();
+    if (mainThread && mainThread.status === "busy") {
+      return { dispatched: false };
+    }
+    if (mainThread) {
+      threadId = mainThread.thread_id as string;
+    } else {
+      const newId = await createThread();
+      if (!newId) return { dispatched: false };
+      threadId = newId;
+    }
+  }
+
+  // Build message based on source
   if (source === "slack") {
-    // Wrap Slack batch in system-message tag
     const channelId = (meta.channel_id as string) ?? "";
     const threadTs = (meta.thread_ts as string) ?? "";
     const attrs = [
@@ -207,25 +196,48 @@ async function dispatch(): Promise<Record<string, unknown>> {
     runInput.channel_id = channelId;
     runInput.channel_metadata = meta;
   } else {
-    // Cron, heartbeat, subagent — combined_text already has system-message tag
+    // Cron, heartbeat, subagent, sessions-send — combined_text is pre-formatted
     message = combinedText;
     if (meta.job_id != null) runInput.cron_job_id = meta.job_id;
     if (meta.job_name) runInput.cron_job_name = meta.job_name;
     if (meta.schedule_type) runInput.cron_schedule_type = meta.schedule_type;
   }
 
-  // 5. Start run
   const ok = await startRun(threadId, message, runInput);
+  return { dispatched: ok, threadId: ok ? threadId : undefined };
+}
 
-  if (!ok) {
-    return { ok: false, error: "Failed to start run" };
+async function dispatch(): Promise<Record<string, unknown>> {
+  if (!LANGGRAPH_API_URL) {
+    return { ok: false, error: "LANGGRAPH_API_URL not configured" };
   }
 
-  // 6. Mark as dispatched
-  await markDispatched(itemId);
+  const items = await fetchPendingItems();
+  if (items.length === 0) {
+    return { ok: true, idle: true };
+  }
 
-  console.log(`[queue-dispatcher] dispatched queue_id=${itemId} to thread=${threadId} (${source})`);
-  return { ok: true, dispatched: true, thread_id: threadId, queue_id: itemId };
+  // Group by thread — dispatch one item per thread per cycle
+  const seenThreads = new Set<string>();
+  let dispatched = 0;
+  let skipped = 0;
+
+  for (const item of items) {
+    const threadKey = (item.thread_id as string) ?? "__unrouted__";
+    if (seenThreads.has(threadKey)) continue;
+    seenThreads.add(threadKey);
+
+    const result = await dispatchItem(item);
+    if (result.dispatched) {
+      await markDispatched(item.id as string);
+      dispatched++;
+      console.log(`[queue-dispatcher] dispatched queue_id=${item.id} to thread=${result.threadId}`);
+    } else {
+      skipped++;
+    }
+  }
+
+  return { ok: true, dispatched, skipped };
 }
 
 // ---------------------------------------------------------------------------

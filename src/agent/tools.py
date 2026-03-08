@@ -414,6 +414,34 @@ def _wait_for_run(thread_id: str, run_id: str, timeout_seconds: int, api_url: st
         return {"status": "error", "thread_id": thread_id, "run_id": run_id, "error": str(e)}
 
 
+def _queue_for_thread(thread_id: str, message: str, state: dict | None, source: str = "sessions-send") -> dict:
+    """Insert a message into inbound_queue for later delivery to a specific thread.
+
+    Used as fallback when a thread is busy and can't accept a run immediately.
+    """
+    session_type = state.get("session_type", "unknown") if state else "unknown"
+    priority_map = {"subagent": 3, "cron": 4, "heartbeat": 5}
+    priority = priority_map.get(session_type, 3)
+
+    try:
+        sb = _get_supabase()
+        sb.table("inbound_queue").insert({
+            "source": source,
+            "priority": priority,
+            "thread_id": thread_id,
+            "buffer_key": f"{source}:{thread_id}",
+            "combined_text": message,
+            "metadata": {
+                "session_id": state.get("session_id") if state else None,
+                "session_type": session_type,
+            },
+        }).execute()
+        return {"status": "queued", "thread_id": thread_id, "priority": priority}
+    except Exception as e:
+        logger.warning("[_queue_for_thread] failed: %s", e)
+        return {"status": "error", "error": str(e)}
+
+
 @tool
 def sessions_send(
     thread_id: str,
@@ -425,7 +453,8 @@ def sessions_send(
 
     Use sessions_list first to find the target thread_id. By default fires and
     forgets (timeout_seconds=0). Set timeout_seconds > 0 to wait for the
-    agent's reply.
+    agent's reply. If the target thread is busy, the message is automatically
+    queued and delivered when it becomes idle.
 
     Args:
         thread_id: The session ID to send to (from sessions_list).
@@ -433,7 +462,7 @@ def sessions_send(
         timeout_seconds: Seconds to wait for reply (0 = fire-and-forget).
 
     Returns:
-        JSON with status (accepted/ok/timeout/error), thread_id, run_id,
+        JSON with status (accepted/queued/ok/timeout/error), thread_id, run_id,
         and optionally reply.
     """
     api_url = LANGGRAPH_API_URL
@@ -457,12 +486,16 @@ def sessions_send(
             return _json.dumps(_wait_for_run(thread_id, run_id, timeout_seconds, api_url))
 
         return _json.dumps({"status": "accepted", "thread_id": thread_id, "run_id": run_id})
+    except httpx.HTTPStatusError as e:
+        # Thread busy (409 Conflict) — queue for later delivery
+        if e.response.status_code == 409:
+            result = _queue_for_thread(thread_id, full_message, state)
+            return _json.dumps(result)
+        return _json.dumps({"status": "error", "error": f"HTTP {e.response.status_code}: {e.response.text}"})
     except httpx.ConnectError as e:
         return _json.dumps({"status": "error", "error": f"Connection failed: {e}"})
     except httpx.TimeoutException:
         return _json.dumps({"status": "error", "error": "Request timed out"})
-    except httpx.HTTPStatusError as e:
-        return _json.dumps({"status": "error", "error": f"HTTP {e.response.status_code}: {e.response.text}"})
     except Exception as e:
         return _json.dumps({"status": "error", "error": str(e)})
 
@@ -470,19 +503,20 @@ def sessions_send(
 @tool
 def sessions_spawn(
     message: str,
-    session_type: Literal["main", "cron", "subagent"] = "main",
+    session_type: Literal["main", "subagent"] = "subagent",
     timeout_seconds: int = 0,
     state: Annotated[dict, InjectedState] = None,
 ) -> str:
-    """Spawn a new session.
+    """Spawn a non-blocking background session.
 
-    Creates a fresh thread and starts a run. Use as a fallback when
-    sessions_send fails (e.g. thread busy). Set timeout_seconds > 0 to wait
+    Creates a fresh thread and starts a run. The session runs independently
+    and supports back-and-forth conversation via sessions_send. Use for
+    longer work you don't need to wait on. Set timeout_seconds > 0 to wait
     for the agent's reply.
 
     Args:
         message: The message to send to the new session.
-        session_type: Type of session to create (default "main").
+        session_type: Type of session to create (default "subagent").
         timeout_seconds: Seconds to wait for reply (0 = fire-and-forget).
 
     Returns:
@@ -1108,52 +1142,3 @@ def send_message(
         return _json.dumps({"status": "error", "platform": platform, "error": str(e)})
 
 
-# ---------------------------------------------------------------------------
-# Queue for main (background sessions → inbound_queue)
-# ---------------------------------------------------------------------------
-
-
-@tool
-def queue_for_main(
-    message: str,
-    state: Annotated[dict, InjectedState] = None,
-) -> str:
-    """Queue a message for delivery to the main session thread.
-
-    Use this from background sessions (cron, heartbeat, subagent) to report
-    back to the main session. Messages are queued and dispatched one at a time
-    when the main thread is idle — no need to check if it's busy or spawn
-    a new session.
-
-    Args:
-        message: The message content to deliver to the main session.
-
-    Returns:
-        JSON with queue status.
-    """
-    try:
-        wrapped = _wrap_origin_message("queue-for-main", message, state)
-        session_type = state.get("session_type", "unknown") if state else "unknown"
-
-        # Priority: subagent=3, cron=4, heartbeat=5
-        priority_map = {"subagent": 3, "cron": 4, "heartbeat": 5}
-        priority = priority_map.get(session_type, 3)
-
-        sb = _get_supabase()
-        sb.table("inbound_queue").insert({
-            "source": session_type,
-            "priority": priority,
-            "buffer_key": f"{session_type}:{state.get('session_id', 'unknown') if state else 'unknown'}",
-            "combined_text": wrapped,
-            "metadata": {
-                "session_id": state.get("session_id") if state else None,
-                "session_type": session_type,
-                "cron_job_name": state.get("cron_job_name") if state else None,
-            },
-        }).execute()
-
-        return _json.dumps({"status": "queued", "priority": priority})
-
-    except Exception as e:
-        logger.warning("[queue_for_main] failed: %s", e)
-        return _json.dumps({"status": "error", "error": str(e)})
