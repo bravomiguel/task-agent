@@ -105,9 +105,12 @@ rclone_image = (
         " > /etc/apt/sources.list.d/github-cli.list",
         "apt-get update -qq && apt-get install -y -qq gh",
     )
-    # Install Gemini CLI (Node.js-based)
+    # Install Gemini CLI (Node.js-based) and pre-configure for API key auth
+    # so it never prompts interactively. GEMINI_API_KEY env var is injected
+    # at sandbox creation via Modal Secret.
     .run_commands(
         "npm install -g @google/gemini-cli",
+        'mkdir -p /root/.gemini && echo \'{"security":{"auth":{"selectedType":"api-key"}}}\' > /root/.gemini/settings.json',
     )
 )
 

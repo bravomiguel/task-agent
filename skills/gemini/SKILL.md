@@ -9,7 +9,7 @@ Use Gemini in one-shot mode with a positional prompt (avoid interactive mode).
 
 ## Authentication
 
-`GEMINI_API_KEY` is pre-configured as an environment variable. No setup needed.
+`GEMINI_API_KEY` is pre-configured as an environment variable and auth is pre-configured for API key mode. No setup needed — works in headless/non-interactive mode.
 
 ## Quick start
 
