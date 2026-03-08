@@ -48,13 +48,24 @@ SERVICE_REGISTRY: dict[str, dict[str, Any]] = {
         "token_file": f"{AUTH_DIR}/trello_token",
         "key_file": f"{AUTH_DIR}/trello_key",
     },
-    # Future:
-    # "slack": {
-    #     "display_name": "Slack",
-    #     "composio_slug": "slack",
-    #     "auth_config_id": "ac_gB4gJrTfl1Rh",
-    #     "token_file": f"{AUTH_DIR}/slack_token",
-    # },
+    "slack": {
+        "display_name": "Slack",
+        "composio_slug": "slack",
+        "auth_config_id": "ac_gB4gJrTfl1Rh",
+        "token_file": f"{AUTH_DIR}/slack_token",
+    },
+    "teams": {
+        "display_name": "Microsoft Teams",
+        "composio_slug": "microsoft_teams",
+        "auth_config_id": "ac_PLACEHOLDER_TEAMS",  # TODO: create in Composio dashboard
+        "token_file": f"{AUTH_DIR}/teams_token",
+    },
+    "microsoft": {
+        "display_name": "Microsoft 365 (Outlook)",
+        "composio_slug": "outlook",
+        "auth_config_id": "ac_PLACEHOLDER_MS365",  # TODO: create in Composio dashboard
+        "token_file": f"{AUTH_DIR}/microsoft_token",
+    },
 }
 
 # Reverse map: composio toolkit slug → our service name
@@ -292,11 +303,97 @@ def _bootstrap_trello(sandbox, acct: dict) -> dict[str, Any]:
     }
 
 
+def _bootstrap_slack(sandbox, acct: dict) -> dict[str, Any]:
+    """Bootstrap Slack auth in the sandbox."""
+    token = _extract_access_token(acct)
+    if not token:
+        return {"error": "No access_token in credentials. Check Composio connection status."}
+
+    if token.endswith("..."):
+        return {
+            "error": "Access token is masked. Disable secret masking in "
+                     "Composio project settings (Settings > Project Configuration).",
+        }
+
+    token_file = SERVICE_REGISTRY["slack"]["token_file"]
+    _write_token_to_sandbox(sandbox, token, token_file)
+
+    return {
+        "status": "connected",
+        "service": "slack",
+        "token_file": token_file,
+        "usage": (
+            f"Token written to {token_file}. Use with Slack Web API:\n"
+            f"  export SLACK_TOKEN=$(cat {token_file})\n"
+            f'  curl -H "Authorization: Bearer $SLACK_TOKEN" '
+            f"https://slack.com/api/auth.test"
+        ),
+    }
+
+
+def _bootstrap_teams(sandbox, acct: dict) -> dict[str, Any]:
+    """Bootstrap Microsoft Teams auth in the sandbox."""
+    token = _extract_access_token(acct)
+    if not token:
+        return {"error": "No access_token in credentials. Check Composio connection status."}
+
+    if token.endswith("..."):
+        return {
+            "error": "Access token is masked. Disable secret masking in "
+                     "Composio project settings (Settings > Project Configuration).",
+        }
+
+    token_file = SERVICE_REGISTRY["teams"]["token_file"]
+    _write_token_to_sandbox(sandbox, token, token_file)
+
+    return {
+        "status": "connected",
+        "service": "teams",
+        "token_file": token_file,
+        "usage": (
+            f"Token written to {token_file}. Use with Microsoft Graph API:\n"
+            f"  export TEAMS_TOKEN=$(cat {token_file})\n"
+            f'  curl -H "Authorization: Bearer $TEAMS_TOKEN" '
+            f"https://graph.microsoft.com/v1.0/me"
+        ),
+    }
+
+
+def _bootstrap_microsoft(sandbox, acct: dict) -> dict[str, Any]:
+    """Bootstrap Microsoft 365 (Outlook) auth in the sandbox."""
+    token = _extract_access_token(acct)
+    if not token:
+        return {"error": "No access_token in credentials. Check Composio connection status."}
+
+    if token.endswith("..."):
+        return {
+            "error": "Access token is masked. Disable secret masking in "
+                     "Composio project settings (Settings > Project Configuration).",
+        }
+
+    token_file = SERVICE_REGISTRY["microsoft"]["token_file"]
+    _write_token_to_sandbox(sandbox, token, token_file)
+
+    return {
+        "status": "connected",
+        "service": "microsoft",
+        "token_file": token_file,
+        "usage": (
+            f"Token written to {token_file}. Use with ms365_cli.py:\n"
+            f"  python3 /mnt/skills/microsoft/scripts/ms365_cli.py user\n"
+            f"  python3 /mnt/skills/microsoft/scripts/ms365_cli.py mail list --top 5"
+        ),
+    }
+
+
 _BOOTSTRAP_FUNCTIONS = {
     "google": _bootstrap_google,
     "github": _bootstrap_github,
     "notion": _bootstrap_notion,
     "trello": _bootstrap_trello,
+    "slack": _bootstrap_slack,
+    "teams": _bootstrap_teams,
+    "microsoft": _bootstrap_microsoft,
 }
 
 
