@@ -18,7 +18,7 @@ Before using any Trello commands, set up auth for this session:
 Set the credentials for API calls:
 
 ```bash
-TRELLO_KEY=$(cat /workspace/.auth/trello_key)
+TRELLO_API_KEY=$(cat /workspace/.auth/trello_key)
 TRELLO_TOKEN=$(cat /workspace/.auth/trello_token)
 ```
 
@@ -31,25 +31,25 @@ All commands use curl to hit the Trello REST API.
 ### List boards
 
 ```bash
-curl -s "https://api.trello.com/1/members/me/boards?key=$TRELLO_KEY&token=$TRELLO_TOKEN" | jq '.[] | {name, id}'
+curl -s "https://api.trello.com/1/members/me/boards?key=$TRELLO_API_KEY&token=$TRELLO_TOKEN" | jq '.[] | {name, id}'
 ```
 
 ### List lists in a board
 
 ```bash
-curl -s "https://api.trello.com/1/boards/{boardId}/lists?key=$TRELLO_KEY&token=$TRELLO_TOKEN" | jq '.[] | {name, id}'
+curl -s "https://api.trello.com/1/boards/{boardId}/lists?key=$TRELLO_API_KEY&token=$TRELLO_TOKEN" | jq '.[] | {name, id}'
 ```
 
 ### List cards in a list
 
 ```bash
-curl -s "https://api.trello.com/1/lists/{listId}/cards?key=$TRELLO_KEY&token=$TRELLO_TOKEN" | jq '.[] | {name, id, desc}'
+curl -s "https://api.trello.com/1/lists/{listId}/cards?key=$TRELLO_API_KEY&token=$TRELLO_TOKEN" | jq '.[] | {name, id, desc}'
 ```
 
 ### Create a card
 
 ```bash
-curl -s -X POST "https://api.trello.com/1/cards?key=$TRELLO_KEY&token=$TRELLO_TOKEN" \
+curl -s -X POST "https://api.trello.com/1/cards?key=$TRELLO_API_KEY&token=$TRELLO_TOKEN" \
   -d "idList={listId}" \
   -d "name=Card Title" \
   -d "desc=Card description"
@@ -58,21 +58,21 @@ curl -s -X POST "https://api.trello.com/1/cards?key=$TRELLO_KEY&token=$TRELLO_TO
 ### Move a card to another list
 
 ```bash
-curl -s -X PUT "https://api.trello.com/1/cards/{cardId}?key=$TRELLO_KEY&token=$TRELLO_TOKEN" \
+curl -s -X PUT "https://api.trello.com/1/cards/{cardId}?key=$TRELLO_API_KEY&token=$TRELLO_TOKEN" \
   -d "idList={newListId}"
 ```
 
 ### Add a comment to a card
 
 ```bash
-curl -s -X POST "https://api.trello.com/1/cards/{cardId}/actions/comments?key=$TRELLO_KEY&token=$TRELLO_TOKEN" \
+curl -s -X POST "https://api.trello.com/1/cards/{cardId}/actions/comments?key=$TRELLO_API_KEY&token=$TRELLO_TOKEN" \
   -d "text=Your comment here"
 ```
 
 ### Archive a card
 
 ```bash
-curl -s -X PUT "https://api.trello.com/1/cards/{cardId}?key=$TRELLO_KEY&token=$TRELLO_TOKEN" \
+curl -s -X PUT "https://api.trello.com/1/cards/{cardId}?key=$TRELLO_API_KEY&token=$TRELLO_TOKEN" \
   -d "closed=true"
 ```
 
@@ -80,13 +80,13 @@ curl -s -X PUT "https://api.trello.com/1/cards/{cardId}?key=$TRELLO_KEY&token=$T
 
 ```bash
 # Get all boards
-curl -s "https://api.trello.com/1/members/me/boards?key=$TRELLO_KEY&token=$TRELLO_TOKEN&fields=name,id" | jq
+curl -s "https://api.trello.com/1/members/me/boards?key=$TRELLO_API_KEY&token=$TRELLO_TOKEN&fields=name,id" | jq
 
 # Find a specific board by name
-curl -s "https://api.trello.com/1/members/me/boards?key=$TRELLO_KEY&token=$TRELLO_TOKEN" | jq '.[] | select(.name | contains("Work"))'
+curl -s "https://api.trello.com/1/members/me/boards?key=$TRELLO_API_KEY&token=$TRELLO_TOKEN" | jq '.[] | select(.name | contains("Work"))'
 
 # Get all cards on a board
-curl -s "https://api.trello.com/1/boards/{boardId}/cards?key=$TRELLO_KEY&token=$TRELLO_TOKEN" | jq '.[] | {name, list: .idList}'
+curl -s "https://api.trello.com/1/boards/{boardId}/cards?key=$TRELLO_API_KEY&token=$TRELLO_TOKEN" | jq '.[] | {name, list: .idList}'
 ```
 
 ## Notes
