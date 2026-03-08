@@ -35,6 +35,12 @@ SERVICE_REGISTRY: dict[str, dict[str, Any]] = {
         "auth_config_id": "ac_slOJlN3EhyrJ",
         "token_file": f"{AUTH_DIR}/github_token",
     },
+    "notion": {
+        "display_name": "Notion",
+        "composio_slug": "notion",
+        "auth_config_id": "ac_pWHzlMJkhfn7",
+        "token_file": f"{AUTH_DIR}/notion_token",
+    },
     # Future:
     # "slack": {
     #     "display_name": "Slack",
@@ -186,9 +192,39 @@ def _bootstrap_github(sandbox, acct: dict) -> dict[str, Any]:
     }
 
 
+def _bootstrap_notion(sandbox, acct: dict) -> dict[str, Any]:
+    """Bootstrap Notion auth in the sandbox."""
+    token = _extract_access_token(acct)
+    if not token:
+        return {"error": "No access_token in credentials. Check Composio connection status."}
+
+    if token.endswith("..."):
+        return {
+            "error": "Access token is masked. Disable secret masking in "
+                     "Composio project settings (Settings > Project Configuration).",
+        }
+
+    token_file = SERVICE_REGISTRY["notion"]["token_file"]
+    _write_token_to_sandbox(sandbox, token, token_file)
+
+    return {
+        "status": "connected",
+        "service": "notion",
+        "token_file": token_file,
+        "usage": (
+            f"Token written to {token_file}. Use with Notion API:\n"
+            f"  NOTION_KEY=$(cat {token_file})\n"
+            f'  curl -H "Authorization: Bearer $NOTION_KEY" '
+            f'-H "Notion-Version: 2025-09-03" '
+            f'"https://api.notion.com/v1/search" -X POST -d \'{{}}\''
+        ),
+    }
+
+
 _BOOTSTRAP_FUNCTIONS = {
     "google": _bootstrap_google,
     "github": _bootstrap_github,
+    "notion": _bootstrap_notion,
 }
 
 
