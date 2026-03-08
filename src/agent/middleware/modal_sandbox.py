@@ -105,7 +105,15 @@ rclone_image = (
         " > /etc/apt/sources.list.d/github-cli.list",
         "apt-get update -qq && apt-get install -y -qq gh",
     )
+    # Install Gemini CLI (Node.js-based)
+    .run_commands(
+        "npm install -g @google/gemini-cli",
+    )
 )
+
+# Platform-provided API keys (OPENAI_API_KEY, GEMINI_API_KEY, etc.)
+# Stored as a Modal Secret, injected as env vars at sandbox creation.
+platform_keys = modal.Secret.from_name("agent-platform-keys")
 
 
 class ModalSandboxState(AgentState):
@@ -208,6 +216,7 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
         sandbox = modal.Sandbox.create(
             app=app,
             image=image,
+            secrets=[platform_keys],
             workdir="/workspace",
             timeout=self._max_timeout,
             idle_timeout=self._idle_timeout,
