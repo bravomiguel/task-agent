@@ -5,8 +5,7 @@ from deepagents_cli.tools import http_request, fetch_url, web_search, tavily_cli
 from langchain.chat_models import init_chat_model
 from langchain_anthropic import ChatAnthropic
 from agent.claude_auth import get_claude_code_token
-from agent.tools import present_file, view_image, memory_search, sessions_list, sessions_send, sessions_spawn, sessions_history, manage_crons, manage_config, manage_auth
-from agent.messaging import send_message
+from agent.tools import present_file, view_image, memory_search, sessions_list, sessions_send, sessions_spawn, sessions_history, manage_crons, manage_config, manage_auth, send_message
 from agent.middleware import (
     ConfigMiddleware,
     MemoryMiddleware,
