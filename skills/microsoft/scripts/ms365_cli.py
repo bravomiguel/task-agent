@@ -4,7 +4,7 @@
 Reads Bearer token from /workspace/.auth/microsoft_token
 (written by manage_auth connect microsoft).
 
-Covers: Mail (Outlook), Calendar, Contacts.
+Covers: Mail (Outlook), Calendar, OneDrive, To Do, Contacts.
 """
 
 from __future__ import annotations
@@ -160,6 +160,87 @@ def cmd_calendar_create(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
+# OneDrive Files
+# ---------------------------------------------------------------------------
+
+def cmd_files_list(args: argparse.Namespace) -> None:
+    """List files in OneDrive."""
+    if args.path:
+        path = f"/me/drive/root:/{args.path}:/children"
+    else:
+        path = "/me/drive/root/children"
+    params = {
+        "$top": str(args.top),
+        "$select": "id,name,size,lastModifiedDateTime,folder,file,webUrl",
+    }
+    result = _graph("GET", path, params=params)
+    _out(result.get("value", []))
+
+
+def cmd_files_get(args: argparse.Namespace) -> None:
+    """Get file metadata."""
+    _out(_graph("GET", f"/me/drive/items/{args.id}"))
+
+
+def cmd_files_search(args: argparse.Namespace) -> None:
+    """Search files in OneDrive."""
+    params = {"$top": str(args.top)}
+    result = _graph("GET", f"/me/drive/root/search(q='{args.query}')", params=params)
+    _out(result.get("value", []))
+
+
+def cmd_files_download(args: argparse.Namespace) -> None:
+    """Download a file from OneDrive to local path."""
+    # Get download URL
+    meta = _graph("GET", f"/me/drive/items/{args.id}")
+    download_url = meta.get("@microsoft.graph.downloadUrl")
+    if not download_url:
+        _out({"error": "Could not get download URL", "metadata": meta})
+        return
+
+    try:
+        req = urllib.request.Request(download_url)
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            content = resp.read()
+        output_path = args.output or meta.get("name", "downloaded_file")
+        with open(output_path, "wb") as f:
+            f.write(content)
+        _out({"status": "downloaded", "path": output_path, "size": len(content)})
+    except Exception as e:
+        _out({"error": str(e)})
+
+
+# ---------------------------------------------------------------------------
+# To Do Tasks
+# ---------------------------------------------------------------------------
+
+def cmd_tasks_lists(_args: argparse.Namespace) -> None:
+    """List To Do task lists."""
+    result = _graph("GET", "/me/todo/lists")
+    _out(result.get("value", []))
+
+
+def cmd_tasks_get(args: argparse.Namespace) -> None:
+    """Get tasks from a list."""
+    params = {"$top": str(args.top)}
+    result = _graph("GET", f"/me/todo/lists/{args.list_id}/tasks", params=params)
+    _out(result.get("value", []))
+
+
+def cmd_tasks_create(args: argparse.Namespace) -> None:
+    """Create a new task."""
+    body: dict = {"title": args.title}
+    if args.due:
+        body["dueDateTime"] = {"dateTime": f"{args.due}T00:00:00", "timeZone": "UTC"}
+    _out(_graph("POST", f"/me/todo/lists/{args.list_id}/tasks", body=body))
+
+
+def cmd_tasks_complete(args: argparse.Namespace) -> None:
+    """Mark a task as complete."""
+    _out(_graph("PATCH", f"/me/todo/lists/{args.list_id}/tasks/{args.task_id}", body={"status": "completed"}))
+
+
+# ---------------------------------------------------------------------------
 # Contacts
 # ---------------------------------------------------------------------------
 
@@ -234,6 +315,52 @@ def main() -> None:
     p_cc.add_argument("--timezone", default="UTC")
     p_cc.add_argument("--attendees", help="Attendee emails, comma-separated")
     p_cc.set_defaults(func=cmd_calendar_create)
+
+    # Files (OneDrive)
+    p_files = sub.add_parser("files", help="OneDrive commands")
+    files_sub = p_files.add_subparsers(dest="files_cmd")
+
+    p_fl = files_sub.add_parser("list", help="List files")
+    p_fl.add_argument("--path", help="Folder path (e.g. Documents/Reports)")
+    p_fl.add_argument("--top", type=int, default=20)
+    p_fl.set_defaults(func=cmd_files_list)
+
+    p_fg = files_sub.add_parser("get", help="Get file metadata")
+    p_fg.add_argument("id", help="File/item ID")
+    p_fg.set_defaults(func=cmd_files_get)
+
+    p_fs = files_sub.add_parser("search", help="Search files")
+    p_fs.add_argument("query", help="Search query")
+    p_fs.add_argument("--top", type=int, default=10)
+    p_fs.set_defaults(func=cmd_files_search)
+
+    p_fd = files_sub.add_parser("download", help="Download a file")
+    p_fd.add_argument("id", help="File item ID")
+    p_fd.add_argument("--output", help="Local output path")
+    p_fd.set_defaults(func=cmd_files_download)
+
+    # Tasks (To Do)
+    p_tasks = sub.add_parser("tasks", help="To Do commands")
+    tasks_sub = p_tasks.add_subparsers(dest="tasks_cmd")
+
+    p_tl = tasks_sub.add_parser("lists", help="List task lists")
+    p_tl.set_defaults(func=cmd_tasks_lists)
+
+    p_tg = tasks_sub.add_parser("get", help="Get tasks from list")
+    p_tg.add_argument("list_id", help="Task list ID")
+    p_tg.add_argument("--top", type=int, default=20)
+    p_tg.set_defaults(func=cmd_tasks_get)
+
+    p_tc = tasks_sub.add_parser("create", help="Create task")
+    p_tc.add_argument("list_id", help="Task list ID")
+    p_tc.add_argument("--title", required=True)
+    p_tc.add_argument("--due", help="Due date (YYYY-MM-DD)")
+    p_tc.set_defaults(func=cmd_tasks_create)
+
+    p_td = tasks_sub.add_parser("complete", help="Mark task complete")
+    p_td.add_argument("list_id", help="Task list ID")
+    p_td.add_argument("task_id", help="Task ID")
+    p_td.set_defaults(func=cmd_tasks_complete)
 
     # Contacts
     p_con = sub.add_parser("contacts", help="Contacts commands")
