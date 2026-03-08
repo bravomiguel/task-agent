@@ -1,49 +1,46 @@
 /**
  * channel-webhook — Supabase Edge Function
  *
- * Receives inbound messages from chat platforms (Slack, Teams) and creates
- * LangGraph runs so the agent can process and reply. Each platform has its
- * own verification and payload parsing, but they share the same two-step
- * LangGraph flow: create thread → start run.
+ * Receives inbound Slack messages via Composio webhook triggers and buffers
+ * them in the `inbound_buffer` table with a 5-second debounce window.
+ * Messages from the same channel are grouped together. After the debounce
+ * window closes, the batch is flushed to `inbound_queue` for the
+ * queue-dispatcher to pick up.
  *
- * Routes:
- *   POST /channel-webhook/slack   — Slack Events API
- *   POST /channel-webhook/teams   — Microsoft Teams Bot Framework
- *
- * The agent's response is sent back via the send_message tool (outbound),
- * not by this function. This function is fire-and-forget.
+ * Route:
+ *   POST /channel-webhook/slack — Composio SLACK_NEW_MESSAGE trigger
  *
  * Required env vars:
- *   LANGGRAPH_API_URL — base URL of the LangGraph server
- *   SLACK_SIGNING_SECRET — for Slack request verification
+ *   COMPOSIO_WEBHOOK_SECRET — HMAC secret for Composio signature verification
+ *   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY — auto-injected by Supabase
  */
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
-const LANGGRAPH_API_URL = Deno.env.get("LANGGRAPH_API_URL") ?? "";
-const SLACK_SIGNING_SECRET = Deno.env.get("SLACK_SIGNING_SECRET") ?? "";
+const COMPOSIO_WEBHOOK_SECRET = Deno.env.get("COMPOSIO_WEBHOOK_SECRET") ?? "";
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+
+const DEBOUNCE_MS = 5_000;
 
 // ---------------------------------------------------------------------------
-// Slack verification
+// Composio HMAC verification
 // ---------------------------------------------------------------------------
 
-async function verifySlackSignature(
-  req: Request,
+async function verifyComposioSignature(
   rawBody: string,
+  signatureHeader: string,
 ): Promise<boolean> {
-  if (!SLACK_SIGNING_SECRET) return false;
+  if (!COMPOSIO_WEBHOOK_SECRET || !signatureHeader) return false;
 
-  const timestamp = req.headers.get("x-slack-request-timestamp") ?? "";
-  const signature = req.headers.get("x-slack-signature") ?? "";
+  // Format: "v1,{base64}"
+  const parts = signatureHeader.split(",");
+  if (parts.length !== 2 || parts[0] !== "v1") return false;
+  const expectedSig = parts[1];
 
-  // Reject requests older than 5 minutes
-  const now = Math.floor(Date.now() / 1000);
-  if (Math.abs(now - Number(timestamp)) > 300) return false;
-
-  const sigBasestring = `v0:${timestamp}:${rawBody}`;
   const key = await crypto.subtle.importKey(
     "raw",
-    new TextEncoder().encode(SLACK_SIGNING_SECRET),
+    new TextEncoder().encode(COMPOSIO_WEBHOOK_SECRET),
     { name: "HMAC", hash: "SHA-256" },
     false,
     ["sign"],
@@ -51,105 +48,95 @@ async function verifySlackSignature(
   const sig = await crypto.subtle.sign(
     "HMAC",
     key,
-    new TextEncoder().encode(sigBasestring),
+    new TextEncoder().encode(rawBody),
   );
-  const hex = Array.from(new Uint8Array(sig))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+  const computedSig = btoa(String.fromCharCode(...new Uint8Array(sig)));
 
-  return signature === `v0=${hex}`;
+  return computedSig === expectedSig;
 }
 
 // ---------------------------------------------------------------------------
-// LangGraph helpers (same pattern as cron-launcher)
+// Supabase REST helpers
 // ---------------------------------------------------------------------------
 
-async function createThreadAndRun(
-  platform: string,
-  sender: string,
-  channel: string,
-  text: string,
-  metadata: Record<string, unknown> = {},
-): Promise<{ ok: boolean; thread_id?: string; error?: string }> {
-  if (!LANGGRAPH_API_URL) {
-    return { ok: false, error: "LANGGRAPH_API_URL not configured" };
+function supabaseHeaders(): Record<string, string> {
+  return {
+    "Content-Type": "application/json",
+    "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    "apikey": SUPABASE_SERVICE_ROLE_KEY,
+  };
+}
+
+async function insertBuffer(row: Record<string, unknown>): Promise<Record<string, unknown> | null> {
+  const resp = await fetch(`${SUPABASE_URL}/rest/v1/inbound_buffer`, {
+    method: "POST",
+    headers: {
+      ...supabaseHeaders(),
+      "Prefer": "return=representation,resolution=ignore-duplicates",
+    },
+    body: JSON.stringify(row),
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    console.error(`[channel-webhook] buffer insert failed ${resp.status}: ${text}`);
+    return null;
   }
+  const rows = await resp.json();
+  return rows.length > 0 ? rows[0] : null;
+}
 
-  const headers = { "Content-Type": "application/json" };
+async function checkNewerMessages(bufferKey: string, afterTs: string): Promise<boolean> {
+  const params = new URLSearchParams({
+    buffer_key: `eq.${bufferKey}`,
+    created_at: `gt.${afterTs}`,
+    order: "created_at.desc",
+    limit: "1",
+  });
+  const resp = await fetch(`${SUPABASE_URL}/rest/v1/inbound_buffer?${params}`, {
+    headers: supabaseHeaders(),
+  });
+  if (!resp.ok) return false;
+  const rows = await resp.json();
+  return rows.length > 0;
+}
 
-  // Step 1: create thread
-  let threadId: string;
-  try {
-    const r1 = await fetch(`${LANGGRAPH_API_URL}/threads`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({}),
-    });
-    if (!r1.ok) {
-      const t = await r1.text();
-      console.error(`[channel-webhook] create thread failed ${r1.status}: ${t}`);
-      return { ok: false, error: `Create thread failed: ${r1.status}` };
-    }
-    threadId = (await r1.json()).thread_id;
-  } catch (err) {
-    console.error("[channel-webhook] create thread error:", err);
-    return { ok: false, error: `Create thread error: ${err}` };
+async function flushBuffer(bufferKey: string): Promise<Record<string, unknown>[]> {
+  const resp = await fetch(`${SUPABASE_URL}/rest/v1/rpc/flush_inbound_buffer`, {
+    method: "POST",
+    headers: supabaseHeaders(),
+    body: JSON.stringify({ p_buffer_key: bufferKey }),
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    console.error(`[channel-webhook] flush failed ${resp.status}: ${text}`);
+    return [];
   }
+  return await resp.json();
+}
 
-  // Build system-message tag with channel context
-  const attrs = [
-    `type="channel-message"`,
-    `platform="${platform}"`,
-    `sender="${sender}"`,
-    `channel="${channel}"`,
-  ];
-  for (const [k, v] of Object.entries(metadata)) {
-    if (v != null) attrs.push(`${k}="${v}"`);
+async function insertQueue(row: Record<string, unknown>): Promise<void> {
+  const resp = await fetch(`${SUPABASE_URL}/rest/v1/inbound_queue`, {
+    method: "POST",
+    headers: supabaseHeaders(),
+    body: JSON.stringify(row),
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    console.error(`[channel-webhook] queue insert failed ${resp.status}: ${text}`);
   }
-  const message = `<system-message ${attrs.join(" ")}>\n${text}\n</system-message>`;
-
-  // Step 2: start run
-  try {
-    const r2 = await fetch(`${LANGGRAPH_API_URL}/threads/${threadId}/runs`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        assistant_id: "main",
-        input: {
-          messages: [{ role: "user", content: message }],
-          session_type: "channel",
-          channel_platform: platform,
-          channel_sender: sender,
-          channel_id: channel,
-          channel_metadata: metadata,
-        },
-        stream_resumable: true,
-      }),
-    });
-    if (!r2.ok) {
-      const t = await r2.text();
-      console.error(`[channel-webhook] start run failed ${r2.status}: ${t}`);
-      return { ok: false, error: `Start run failed: ${r2.status}` };
-    }
-  } catch (err) {
-    console.error("[channel-webhook] start run error:", err);
-    return { ok: false, error: `Start run error: ${err}` };
-  }
-
-  console.log(`[channel-webhook] ${platform} sender=${sender} channel=${channel} thread=${threadId}`);
-  return { ok: true, thread_id: threadId };
 }
 
 // ---------------------------------------------------------------------------
-// Slack handler
+// Slack handler (Composio webhook format)
 // ---------------------------------------------------------------------------
 
 async function handleSlack(req: Request): Promise<Response> {
   const rawBody = await req.text();
 
-  // Verify signature
-  if (SLACK_SIGNING_SECRET) {
-    const valid = await verifySlackSignature(req, rawBody);
+  // Verify Composio HMAC signature
+  if (COMPOSIO_WEBHOOK_SECRET) {
+    const sigHeader = req.headers.get("webhook-signature") ?? "";
+    const valid = await verifyComposioSignature(rawBody, sigHeader);
     if (!valid) {
       return new Response("Invalid signature", { status: 401 });
     }
@@ -162,100 +149,109 @@ async function handleSlack(req: Request): Promise<Response> {
     return new Response("Invalid JSON", { status: 400 });
   }
 
-  // Handle Slack URL verification challenge
-  if (body.type === "url_verification") {
-    return new Response(JSON.stringify({ challenge: body.challenge }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    });
+  // Extract from Composio trigger payload
+  const data = body.data as Record<string, unknown> | undefined;
+  if (!data) {
+    console.log("[channel-webhook] No data in payload, skipping");
+    return jsonResponse({ ok: true, skipped: "no_data" });
   }
 
-  // Handle event callbacks
-  if (body.type !== "event_callback") {
-    return new Response("OK", { status: 200 });
+  const messageText = (data.message as string) ?? "";
+  if (!messageText) {
+    return jsonResponse({ ok: true, skipped: "empty_message" });
   }
 
-  const event = body.event as Record<string, unknown> | undefined;
-  if (!event) {
-    return new Response("OK", { status: 200 });
-  }
+  const senderObj = data.sender as Record<string, unknown> | undefined;
+  const senderId = (senderObj?.id as string) ?? "unknown";
+  const senderName = (senderObj?.name as string) ?? senderId;
+  const channelId = (data.channel as string) ?? (data.channel_id as string) ?? "unknown";
+  const channelType = (data.channel_type as string) ?? "";
+  const messageTs = String(data.timestamp ?? "");
+  const threadTs = (data.thread_ts as string) ?? "";
 
-  // Only process messages (not bot messages, not edits, not deletions)
-  if (
-    event.type !== "message" ||
-    event.subtype != null ||
-    event.bot_id != null
-  ) {
-    return new Response("OK", { status: 200 });
-  }
+  const bufferKey = `slack:${channelId}`;
+  const priority = channelType === "im" ? 1 : 2;
 
-  const text = (event.text as string) ?? "";
-  const sender = (event.user as string) ?? "unknown";
-  const channel = (event.channel as string) ?? "unknown";
-  const threadTs = event.thread_ts as string | undefined;
-  const ts = event.ts as string | undefined;
-  const teamId = (body.team_id as string) ?? "";
-
-  const result = await createThreadAndRun("slack", sender, channel, text, {
-    thread_ts: threadTs ?? ts,
-    team_id: teamId,
+  // Step 1: Insert into buffer (dedup via unique index on buffer_key + message_ts)
+  const inserted = await insertBuffer({
+    source: "slack",
+    buffer_key: bufferKey,
+    sender: senderId,
+    sender_name: senderName,
+    message_text: messageText,
+    metadata: {
+      message_ts: messageTs,
+      thread_ts: threadTs,
+      channel_id: channelId,
+      channel_type: channelType,
+      priority,
+    },
   });
 
-  // Always return 200 to Slack to avoid retries
-  return new Response(JSON.stringify(result), {
-    status: 200,
-    headers: { "Content-Type": "application/json" },
+  if (!inserted) {
+    // Duplicate or insert error — skip
+    return jsonResponse({ ok: true, skipped: "duplicate_or_error" });
+  }
+
+  const insertedAt = inserted.created_at as string;
+
+  // Step 2: Debounce — wait, then check if newer messages arrived
+  await new Promise((r) => setTimeout(r, DEBOUNCE_MS));
+
+  const hasNewer = await checkNewerMessages(bufferKey, insertedAt);
+  if (hasNewer) {
+    // A later invocation will handle the flush
+    console.log(`[channel-webhook] ${bufferKey} debounce: newer messages exist, skipping flush`);
+    return jsonResponse({ ok: true, debounced: true });
+  }
+
+  // Step 3: Flush — atomically grab all buffered messages for this key
+  const flushedRows = await flushBuffer(bufferKey);
+  if (flushedRows.length === 0) {
+    // Another invocation already flushed (race condition — safe to skip)
+    return jsonResponse({ ok: true, skipped: "already_flushed" });
+  }
+
+  // Step 4: Combine into a single batch and insert into dispatch queue
+  const senders = new Set<string>();
+  const lines: string[] = [];
+  let lastThreadTs = "";
+
+  for (const row of flushedRows) {
+    const name = (row.sender_name as string) || (row.sender as string);
+    senders.add(name);
+    lines.push(`[${name}] ${row.message_text}`);
+    const meta = row.metadata as Record<string, unknown> | undefined;
+    if (meta?.thread_ts) lastThreadTs = meta.thread_ts as string;
+  }
+
+  const combinedText = lines.join("\n");
+
+  await insertQueue({
+    source: "slack",
+    priority,
+    buffer_key: bufferKey,
+    combined_text: combinedText,
+    metadata: {
+      channel_id: channelId,
+      channel_type: channelType,
+      thread_ts: lastThreadTs,
+      senders: [...senders],
+      message_count: flushedRows.length,
+    },
   });
+
+  console.log(`[channel-webhook] ${bufferKey} flushed ${flushedRows.length} messages to queue`);
+  return jsonResponse({ ok: true, flushed: true, count: flushedRows.length });
 }
 
 // ---------------------------------------------------------------------------
-// Teams handler
+// Helpers
 // ---------------------------------------------------------------------------
 
-async function handleTeams(req: Request): Promise<Response> {
-  let body: Record<string, unknown>;
-  try {
-    body = await req.json();
-  } catch {
-    return new Response("Invalid JSON", { status: 400 });
-  }
-
-  // Teams Bot Framework sends activities
-  const activityType = body.type as string | undefined;
-  if (activityType !== "message") {
-    // Respond 200 to non-message activities (e.g. conversationUpdate)
-    return new Response("OK", { status: 200 });
-  }
-
-  const text = (body.text as string) ?? "";
-  const from = body.from as Record<string, unknown> | undefined;
-  const sender = (from?.aadObjectId as string) ?? (from?.id as string) ?? "unknown";
-  const senderName = (from?.name as string) ?? "";
-  const conversation = body.conversation as Record<string, unknown> | undefined;
-  const conversationId = (conversation?.id as string) ?? "unknown";
-  const conversationType = (conversation?.conversationType as string) ?? "";
-  const channelId = (body.channelId as string) ?? "";
-  const serviceUrl = (body.serviceUrl as string) ?? "";
-  const activityId = (body.id as string) ?? "";
-  const tenantId = ((body.channelData as Record<string, unknown>)?.tenant as Record<string, unknown>)?.id as string ?? "";
-
-  // Strip bot @mention from message text (Teams includes it)
-  const cleanText = text.replace(/<at>.*?<\/at>\s*/g, "").trim();
-  if (!cleanText) {
-    return new Response("OK", { status: 200 });
-  }
-
-  const result = await createThreadAndRun("teams", sender, conversationId, cleanText, {
-    sender_name: senderName,
-    conversation_type: conversationType,
-    channel_id: channelId,
-    service_url: serviceUrl,
-    activity_id: activityId,
-    tenant_id: tenantId,
-  });
-
-  return new Response(JSON.stringify(result), {
-    status: 200,
+function jsonResponse(data: Record<string, unknown>, status = 200): Response {
+  return new Response(JSON.stringify(data), {
+    status,
     headers: { "Content-Type": "application/json" },
   });
 }
@@ -272,16 +268,9 @@ serve(async (req: Request) => {
   const url = new URL(req.url);
   const path = url.pathname;
 
-  // Route by path suffix: /channel-webhook/slack, /channel-webhook/teams
   if (path.endsWith("/slack")) {
     return handleSlack(req);
   }
-  if (path.endsWith("/teams")) {
-    return handleTeams(req);
-  }
 
-  return new Response(
-    JSON.stringify({ error: "Unknown platform. Use /slack or /teams" }),
-    { status: 404, headers: { "Content-Type": "application/json" } },
-  );
+  return jsonResponse({ error: "Unknown platform. Use /slack" }, 404);
 });
