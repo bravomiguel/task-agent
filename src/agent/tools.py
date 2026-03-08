@@ -1106,3 +1106,54 @@ def send_message(
     except Exception as e:
         logger.warning("[send_message] %s send failed: %s", platform, e)
         return _json.dumps({"status": "error", "platform": platform, "error": str(e)})
+
+
+# ---------------------------------------------------------------------------
+# Queue for main (background sessions → inbound_queue)
+# ---------------------------------------------------------------------------
+
+
+@tool
+def queue_for_main(
+    message: str,
+    state: Annotated[dict, InjectedState] = None,
+) -> str:
+    """Queue a message for delivery to the main session thread.
+
+    Use this from background sessions (cron, heartbeat, subagent) to report
+    back to the main session. Messages are queued and dispatched one at a time
+    when the main thread is idle — no need to check if it's busy or spawn
+    a new session.
+
+    Args:
+        message: The message content to deliver to the main session.
+
+    Returns:
+        JSON with queue status.
+    """
+    try:
+        wrapped = _wrap_origin_message("queue-for-main", message, state)
+        session_type = state.get("session_type", "unknown") if state else "unknown"
+
+        # Priority: subagent=3, cron=4, heartbeat=5
+        priority_map = {"subagent": 3, "cron": 4, "heartbeat": 5}
+        priority = priority_map.get(session_type, 3)
+
+        sb = _get_supabase()
+        sb.table("inbound_queue").insert({
+            "source": session_type,
+            "priority": priority,
+            "buffer_key": f"{session_type}:{state.get('session_id', 'unknown') if state else 'unknown'}",
+            "combined_text": wrapped,
+            "metadata": {
+                "session_id": state.get("session_id") if state else None,
+                "session_type": session_type,
+                "cron_job_name": state.get("cron_job_name") if state else None,
+            },
+        }).execute()
+
+        return _json.dumps({"status": "queued", "priority": priority})
+
+    except Exception as e:
+        logger.warning("[queue_for_main] failed: %s", e)
+        return _json.dumps({"status": "error", "error": str(e)})

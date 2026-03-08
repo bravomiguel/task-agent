@@ -186,29 +186,36 @@ async function dispatch(): Promise<Record<string, unknown>> {
     sessionType = "main";
   }
 
-  // 4. Build system-message with channel context
+  // 4. Build message — Slack items need wrapping, cron/heartbeat/subagent are pre-wrapped
   const combinedText = (item.combined_text as string) ?? "";
-  const channelId = (meta.channel_id as string) ?? "";
-  const threadTs = (meta.thread_ts as string) ?? "";
-  const platform = source === "slack" ? "slack" : source;
+  let message: string;
+  const runInput: Record<string, unknown> = { session_type: sessionType };
 
-  const attrs = [
-    `type="channel-message"`,
-    `platform="${platform}"`,
-    `channel="${channelId}"`,
-  ];
-  if (threadTs) attrs.push(`thread_ts="${threadTs}"`);
-  if (meta.senders) attrs.push(`senders="${(meta.senders as string[]).join(",")}"`);
-
-  const message = `<system-message ${attrs.join(" ")}>\n${combinedText}\n</system-message>`;
+  if (source === "slack") {
+    // Wrap Slack batch in system-message tag
+    const channelId = (meta.channel_id as string) ?? "";
+    const threadTs = (meta.thread_ts as string) ?? "";
+    const attrs = [
+      `type="channel-message"`,
+      `platform="slack"`,
+      `channel="${channelId}"`,
+    ];
+    if (threadTs) attrs.push(`thread_ts="${threadTs}"`);
+    if (meta.senders) attrs.push(`senders="${(meta.senders as string[]).join(",")}"`);
+    message = `<system-message ${attrs.join(" ")}>\n${combinedText}\n</system-message>`;
+    runInput.channel_platform = "slack";
+    runInput.channel_id = channelId;
+    runInput.channel_metadata = meta;
+  } else {
+    // Cron, heartbeat, subagent — combined_text already has system-message tag
+    message = combinedText;
+    if (meta.job_id != null) runInput.cron_job_id = meta.job_id;
+    if (meta.job_name) runInput.cron_job_name = meta.job_name;
+    if (meta.schedule_type) runInput.cron_schedule_type = meta.schedule_type;
+  }
 
   // 5. Start run
-  const ok = await startRun(threadId, message, {
-    session_type: sessionType,
-    channel_platform: platform,
-    channel_id: channelId,
-    channel_metadata: meta,
-  });
+  const ok = await startRun(threadId, message, runInput);
 
   if (!ok) {
     return { ok: false, error: "Failed to start run" };

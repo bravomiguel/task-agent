@@ -223,10 +223,10 @@ Background sessions (e.g. heartbeat, cron, subagent) are isolated from the main 
 
 ### Reporting Back
 
-**Default: always report.** If you did anything — checked something, wrote something, produced any output — send a summary using `sessions_send`. If busy (send rejected), use `sessions_spawn` to create a new main session instead.
+**Default: always report.** If you did anything — checked something, wrote something, produced any output — use `queue_for_main` to send a summary. It queues your message and delivers it to the main session when idle — no need to check if it's busy or spawn a new session.
 
-- **Cron / Heartbeat**: Report to the most recent main session.
-- **Subagent**: Report to the originating session (session ID provided in your input message).
+- **Cron / Heartbeat / Subagent**: All use `queue_for_main` to report back.
+- Use `sessions_send` only for direct thread-to-thread communication (e.g. responding to a specific session that messaged you).
 
 Include:
 
