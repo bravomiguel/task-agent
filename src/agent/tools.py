@@ -974,34 +974,28 @@ def manage_auth(
         elif action == "connect":
             if not service:
                 return "Error: service is required for connect action."
+            if service == "slack-bot":
+                result = connect_slack_bot(token)
+                return _json.dumps(result)
             sandbox_id = state.get("modal_sandbox_id") if state else None
             if not sandbox_id:
                 return "Error: no sandbox available."
-            if service == "slack-bot":
-                result = connect_slack_bot(token, sandbox_id)
-                return _json.dumps(result)
             result = connect_service(service, sandbox_id)
             return _json.dumps(result)
 
         elif action == "status":
             if not service:
                 return "Error: service is required for status action."
-            sandbox_id = state.get("modal_sandbox_id") if state else None
-            if not sandbox_id:
-                return "Error: no sandbox available."
             if service in ("slack", "slack-bot"):
-                result = slack_status(sandbox_id)
+                result = slack_status()
                 return _json.dumps(result)
             return _json.dumps({"error": f"Status not implemented for {service}. Use 'list' to check all services."})
 
         elif action == "disconnect":
             if not service:
                 return "Error: service is required for disconnect action."
-            sandbox_id = state.get("modal_sandbox_id") if state else None
-            if not sandbox_id:
-                return "Error: no sandbox available."
             if service == "slack-bot":
-                result = disconnect_slack_bot(sandbox_id)
+                result = disconnect_slack_bot()
                 return _json.dumps(result)
             return _json.dumps({"error": f"Disconnect not implemented for {service}."})
 
@@ -1117,20 +1111,14 @@ _MSG_SENDERS: dict[str, callable] = {
 }
 
 
-def _resolve_slack_token(sandbox, as_identity: str | None, sandbox_id: str) -> str:
+def _resolve_slack_token(sandbox, as_identity: str | None) -> str:
     """Resolve the Slack token based on identity preference.
 
-    Priority: explicit as_identity > bot if enabled > user OAuth fallback.
+    Priority: explicit as_identity > bot if token exists > user OAuth fallback.
     """
     from agent.auth import vault_get_secret, SLACK_BOT_TOKEN_SECRET
-    from agent.config import load_config
 
-    config = load_config(sandbox_id)
-
-    use_bot = (
-        as_identity == "bot"
-        or (as_identity is None and config.slack.bot_enabled)
-    )
+    use_bot = as_identity == "bot" or as_identity is None
 
     if use_bot:
         token = vault_get_secret(SLACK_BOT_TOKEN_SECRET)
@@ -1184,7 +1172,7 @@ def send_message(
     try:
         sandbox = modal.Sandbox.from_id(sandbox_id)
         if platform == "slack":
-            token = _resolve_slack_token(sandbox, as_identity, sandbox_id)
+            token = _resolve_slack_token(sandbox, as_identity)
         else:
             token_file = _MSG_TOKEN_FILES.get(platform)
             token = _read_token_from_sandbox(sandbox, token_file)

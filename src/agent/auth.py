@@ -472,11 +472,11 @@ settings:
   token_rotation_enabled: false"""
 
 
-def connect_slack_bot(token: str | None, sandbox_id: str) -> dict[str, Any]:
+def connect_slack_bot(token: str | None) -> dict[str, Any]:
     """Handle the Slack bot connection flow.
 
     Phase 1 (token=None): Return manifest + setup instructions.
-    Phase 2 (token provided): Verify token, store in vault, update config.
+    Phase 2 (token provided): Verify token, store in vault.
     """
     import os
     supabase_url = os.environ.get("SUPABASE_URL", "")
@@ -518,13 +518,9 @@ def connect_slack_bot(token: str | None, sandbox_id: str) -> dict[str, Any]:
 
     bot_user_id = data.get("user_id", "")
 
-    # Store token and bot_user_id in vault (edge functions read both)
+    # Store token and bot_user_id in vault (edge functions + send_message read both)
     vault_set_secret(SLACK_BOT_TOKEN_SECRET, token)
     vault_set_secret("slack_bot_user_id", bot_user_id)
-
-    # Update config
-    from agent.config import patch_config
-    patch_config(sandbox_id, {"slack": {"bot_enabled": True, "bot_user_id": bot_user_id}})
 
     return {
         "status": "connected",
@@ -540,24 +536,18 @@ def connect_slack_bot(token: str | None, sandbox_id: str) -> dict[str, Any]:
     }
 
 
-def disconnect_slack_bot(sandbox_id: str) -> dict[str, Any]:
-    """Remove Slack bot token and disable bot in config."""
+def disconnect_slack_bot() -> dict[str, Any]:
+    """Remove Slack bot token from vault."""
     vault_delete_secret(SLACK_BOT_TOKEN_SECRET)
     vault_delete_secret("slack_bot_user_id")
-    from agent.config import patch_config
-    patch_config(sandbox_id, {"slack": {"bot_enabled": False, "bot_user_id": None}})
     return {"status": "disconnected", "service": "slack-bot"}
 
 
-def slack_status(sandbox_id: str) -> dict[str, Any]:
+def slack_status() -> dict[str, Any]:
     """Return combined Slack integration status (bot + user OAuth)."""
-    from agent.config import load_config
-
-    config = load_config(sandbox_id)
-
-    # Bot status
+    # Bot status (vault)
     bot_token = vault_get_secret(SLACK_BOT_TOKEN_SECRET)
-    bot_connected = bool(bot_token)
+    bot_user_id = vault_get_secret("slack_bot_user_id")
 
     # User OAuth status (Composio)
     user_connected = False
@@ -570,13 +560,11 @@ def slack_status(sandbox_id: str) -> dict[str, Any]:
 
     return {
         "bot": {
-            "connected": bot_connected,
-            "enabled": config.slack.bot_enabled,
-            "bot_user_id": config.slack.bot_user_id,
+            "connected": bool(bot_token),
+            "bot_user_id": bot_user_id,
         },
         "user_oauth": {
             "connected": user_connected,
-            "enabled": config.slack.user_messages_enabled,
         },
     }
 
