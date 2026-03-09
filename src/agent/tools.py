@@ -915,40 +915,49 @@ def manage_crons(
 
 @tool
 def manage_auth(
-    action: Literal["list", "initiate", "connect"],
+    action: Literal["list", "initiate", "connect", "status", "disconnect"],
     service: str = None,
+    token: str = None,
     state: Annotated[dict, InjectedState] = None,
 ) -> str:
     """Manage external service authentication (Google Workspace, GitHub, Slack, etc.).
 
-    Uses Composio to provide OAuth credentials for third-party services.
+    Uses Composio for OAuth credentials. Also supports direct token setup
+    for Slack bot (service="slack-bot").
 
     Actions:
       - "list": Check which services the user has connected.
       - "initiate": Start an OAuth flow for a service. Returns an auth URL
         the user must open in their browser. After they finish, call "connect".
-      - "connect": Fetch fresh credentials and set them up in the sandbox
-        for CLI tools (e.g. gog for Google). Also use to refresh expired tokens.
+      - "connect": Fetch fresh credentials and set them up in the sandbox.
+        For "slack-bot": first call without token to get setup instructions,
+        then call again with token="xoxb-..." to complete setup.
+      - "status": Get detailed status for a service (e.g. "slack" returns
+        both bot and user OAuth status).
+      - "disconnect": Remove credentials for a service (e.g. "slack-bot").
 
     Args:
-        action: "list", "initiate", or "connect".
-        service: Service name for initiate/connect (e.g. "google", "github", "slack").
+        action: "list", "initiate", "connect", "status", or "disconnect".
+        service: Service name (e.g. "google", "github", "slack", "slack-bot").
+        token: (slack-bot only) The bot token (xoxb-...) provided by the user.
 
     Returns:
-        JSON with connected services (list), auth URL (initiate), or
-        connection result with usage instructions (connect).
+        JSON with service status, auth URL, setup instructions, or result.
     """
     from agent.auth import (
         SERVICE_REGISTRY,
         connect_service,
+        connect_slack_bot,
+        disconnect_slack_bot,
         initiate_service,
         list_connected_services,
+        slack_status,
     )
 
     try:
         if action == "list":
             services = list_connected_services()
-            available = list(SERVICE_REGISTRY.keys())
+            available = list(SERVICE_REGISTRY.keys()) + ["slack-bot"]
             return _json.dumps({
                 "connected": services,
                 "available_services": available,
@@ -957,6 +966,8 @@ def manage_auth(
         elif action == "initiate":
             if not service:
                 return "Error: service is required for initiate action."
+            if service == "slack-bot":
+                return "Error: slack-bot uses direct token setup, not OAuth. Use action='connect' service='slack-bot'."
             result = initiate_service(service)
             return _json.dumps(result)
 
@@ -966,8 +977,33 @@ def manage_auth(
             sandbox_id = state.get("modal_sandbox_id") if state else None
             if not sandbox_id:
                 return "Error: no sandbox available."
+            if service == "slack-bot":
+                result = connect_slack_bot(token, sandbox_id)
+                return _json.dumps(result)
             result = connect_service(service, sandbox_id)
             return _json.dumps(result)
+
+        elif action == "status":
+            if not service:
+                return "Error: service is required for status action."
+            sandbox_id = state.get("modal_sandbox_id") if state else None
+            if not sandbox_id:
+                return "Error: no sandbox available."
+            if service in ("slack", "slack-bot"):
+                result = slack_status(sandbox_id)
+                return _json.dumps(result)
+            return _json.dumps({"error": f"Status not implemented for {service}. Use 'list' to check all services."})
+
+        elif action == "disconnect":
+            if not service:
+                return "Error: service is required for disconnect action."
+            sandbox_id = state.get("modal_sandbox_id") if state else None
+            if not sandbox_id:
+                return "Error: no sandbox available."
+            if service == "slack-bot":
+                result = disconnect_slack_bot(sandbox_id)
+                return _json.dumps(result)
+            return _json.dumps({"error": f"Disconnect not implemented for {service}."})
 
         else:
             return f"Error: unknown action '{action}'."
@@ -1081,12 +1117,40 @@ _MSG_SENDERS: dict[str, callable] = {
 }
 
 
+def _resolve_slack_token(sandbox, as_identity: str | None, sandbox_id: str) -> str:
+    """Resolve the Slack token based on identity preference.
+
+    Priority: explicit as_identity > bot if enabled > user OAuth fallback.
+    """
+    from agent.auth import vault_get_secret, SLACK_BOT_TOKEN_SECRET
+    from agent.config import load_config
+
+    config = load_config(sandbox_id)
+
+    use_bot = (
+        as_identity == "bot"
+        or (as_identity is None and config.slack.bot_enabled)
+    )
+
+    if use_bot:
+        token = vault_get_secret(SLACK_BOT_TOKEN_SECRET)
+        if token:
+            return token
+        if as_identity == "bot":
+            raise RuntimeError("Bot token not found in vault. Run manage_auth connect slack-bot first.")
+        # Fall through to user token
+
+    # User OAuth token from sandbox
+    return _read_token_from_sandbox(sandbox, _MSG_TOKEN_FILES["slack"])
+
+
 @tool
 def send_message(
     platform: Literal["slack", "teams"],
     recipient: str,
     text: str,
     thread_ts: str = None,
+    as_identity: Literal["bot", "user"] = None,
     state: Annotated[dict, InjectedState] = None,
 ) -> str:
     """Send a message to a user or channel on Slack or Microsoft Teams.
@@ -1103,6 +1167,8 @@ def send_message(
         thread_ts: (Slack only) Thread timestamp to reply in-thread. Use the
             thread_ts from the inbound channel-message to keep the conversation
             in the same thread.
+        as_identity: (Slack only) Send as "bot" (xoxb- token) or "user"
+            (Composio OAuth). Default: bot if bot_enabled, otherwise user.
 
     Returns:
         JSON with send status and message details.
@@ -1111,14 +1177,17 @@ def send_message(
     if not sandbox_id:
         return _json.dumps({"status": "error", "error": "No sandbox available."})
 
-    token_file = _MSG_TOKEN_FILES.get(platform)
     sender_fn = _MSG_SENDERS.get(platform)
-    if not token_file or not sender_fn:
+    if not sender_fn:
         return _json.dumps({"status": "error", "error": f"Unsupported platform: {platform}"})
 
     try:
         sandbox = modal.Sandbox.from_id(sandbox_id)
-        token = _read_token_from_sandbox(sandbox, token_file)
+        if platform == "slack":
+            token = _resolve_slack_token(sandbox, as_identity, sandbox_id)
+        else:
+            token_file = _MSG_TOKEN_FILES.get(platform)
+            token = _read_token_from_sandbox(sandbox, token_file)
     except Exception as e:
         return _json.dumps({
             "status": "error",

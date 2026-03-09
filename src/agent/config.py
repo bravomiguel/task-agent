@@ -91,10 +91,17 @@ class HeartbeatConfig(BaseModel):
         return v
 
 
+class SlackConfig(BaseModel):
+    bot_enabled: bool = False
+    bot_user_id: str | None = None  # from auth.test — used to filter self-messages
+    user_messages_enabled: bool = False  # Composio user OAuth active
+
+
 class UserConfig(BaseModel):
     timezone: str = DEFAULT_TIMEZONE  # IANA timezone — global user timezone
     heartbeat: HeartbeatConfig = HeartbeatConfig()
     skills: dict[str, bool] = {}  # skill name → enabled; missing = enabled
+    slack: SlackConfig = SlackConfig()
 
     @field_validator("timezone")
     @classmethod

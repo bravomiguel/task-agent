@@ -1,27 +1,30 @@
 /**
  * channel-webhook — Supabase Edge Function
  *
- * Receives inbound Slack messages via Composio webhook triggers and buffers
- * them in the `inbound_buffer` table with a 5-second debounce window.
- * Messages from the same channel are grouped together. After the debounce
- * window closes, the batch is flushed to `inbound_queue` for the
- * queue-dispatcher to pick up.
+ * Receives inbound Slack messages via two routes:
+ *   POST /channel-webhook/slack      — Composio SLACK_NEW_MESSAGE trigger (user OAuth)
+ *   POST /channel-webhook/slack-bot  — Slack Events API (bot events)
  *
- * Route:
- *   POST /channel-webhook/slack — Composio SLACK_NEW_MESSAGE trigger
+ * Both routes buffer messages in `inbound_buffer` with debounce, then flush
+ * to `inbound_queue` for dispatch. Same channel buffer key for cross-source dedup.
+ *
+ * Bot DMs use 300ms debounce for fast response. Everything else uses 5s.
  *
  * Required env vars:
  *   COMPOSIO_WEBHOOK_SECRET — HMAC secret for Composio signature verification
+ *   SLACK_SIGNING_SECRET — Slack app signing secret for bot event verification
  *   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY — auto-injected by Supabase
  */
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 const COMPOSIO_WEBHOOK_SECRET = Deno.env.get("COMPOSIO_WEBHOOK_SECRET") ?? "";
+const SLACK_SIGNING_SECRET = Deno.env.get("SLACK_SIGNING_SECRET") ?? "";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 
 const DEBOUNCE_MS = 5_000;
+const BOT_DM_DEBOUNCE_MS = 300;
 
 // ---------------------------------------------------------------------------
 // Composio HMAC verification
@@ -53,6 +56,41 @@ async function verifyComposioSignature(
   const computedSig = btoa(String.fromCharCode(...new Uint8Array(sig)));
 
   return computedSig === expectedSig;
+}
+
+// ---------------------------------------------------------------------------
+// Slack signing secret verification
+// ---------------------------------------------------------------------------
+
+async function verifySlackSignature(
+  rawBody: string,
+  timestamp: string,
+  signature: string,
+): Promise<boolean> {
+  if (!SLACK_SIGNING_SECRET || !timestamp || !signature) return false;
+
+  // Reject requests older than 5 minutes
+  const now = Math.floor(Date.now() / 1000);
+  if (Math.abs(now - Number(timestamp)) > 300) return false;
+
+  const baseString = `v0:${timestamp}:${rawBody}`;
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(SLACK_SIGNING_SECRET),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const sig = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    new TextEncoder().encode(baseString),
+  );
+  const computed = "v0=" + Array.from(new Uint8Array(sig))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+
+  return computed === signature;
 }
 
 // ---------------------------------------------------------------------------
@@ -126,8 +164,106 @@ async function insertQueue(row: Record<string, unknown>): Promise<void> {
   }
 }
 
+async function getVaultSecret(name: string): Promise<string | null> {
+  const resp = await fetch(`${SUPABASE_URL}/rest/v1/rpc/get_vault_secret`, {
+    method: "POST",
+    headers: supabaseHeaders(),
+    body: JSON.stringify({ p_name: name }),
+  });
+  if (!resp.ok) return null;
+  const data = await resp.json();
+  return data ?? null;
+}
+
 // ---------------------------------------------------------------------------
-// Slack handler (Composio webhook format)
+// Shared debounce + flush + queue logic
+// ---------------------------------------------------------------------------
+
+async function bufferAndFlush(
+  senderId: string,
+  senderName: string,
+  messageText: string,
+  channelId: string,
+  channelType: string,
+  messageTs: string,
+  threadTs: string,
+  debounceMs: number,
+): Promise<Response> {
+  const bufferKey = `slack:${channelId}`;
+  const priority = channelType === "im" ? 1 : 2;
+
+  // Step 1: Insert into buffer (dedup via unique index on buffer_key + message_ts)
+  const inserted = await insertBuffer({
+    source: "slack",
+    buffer_key: bufferKey,
+    sender: senderId,
+    sender_name: senderName,
+    message_text: messageText,
+    metadata: {
+      message_ts: messageTs,
+      thread_ts: threadTs,
+      channel_id: channelId,
+      channel_type: channelType,
+      priority,
+    },
+  });
+
+  if (!inserted) {
+    return jsonResponse({ ok: true, skipped: "duplicate_or_error" });
+  }
+
+  const insertedAt = inserted.created_at as string;
+
+  // Step 2: Debounce — wait, then check if newer messages arrived
+  await new Promise((r) => setTimeout(r, debounceMs));
+
+  const hasNewer = await checkNewerMessages(bufferKey, insertedAt);
+  if (hasNewer) {
+    console.log(`[channel-webhook] ${bufferKey} debounce: newer messages exist, skipping flush`);
+    return jsonResponse({ ok: true, debounced: true });
+  }
+
+  // Step 3: Flush — atomically grab all buffered messages for this key
+  const flushedRows = await flushBuffer(bufferKey);
+  if (flushedRows.length === 0) {
+    return jsonResponse({ ok: true, skipped: "already_flushed" });
+  }
+
+  // Step 4: Combine into a single batch and insert into dispatch queue
+  const senders = new Set<string>();
+  const lines: string[] = [];
+  let lastThreadTs = "";
+
+  for (const row of flushedRows) {
+    const name = (row.sender_name as string) || (row.sender as string);
+    senders.add(name);
+    lines.push(`[${name}] ${row.message_text}`);
+    const meta = row.metadata as Record<string, unknown> | undefined;
+    if (meta?.thread_ts) lastThreadTs = meta.thread_ts as string;
+  }
+
+  const combinedText = lines.join("\n");
+
+  await insertQueue({
+    source: "slack",
+    priority,
+    buffer_key: bufferKey,
+    combined_text: combinedText,
+    metadata: {
+      channel_id: channelId,
+      channel_type: channelType,
+      thread_ts: lastThreadTs,
+      senders: [...senders],
+      message_count: flushedRows.length,
+    },
+  });
+
+  console.log(`[channel-webhook] ${bufferKey} flushed ${flushedRows.length} messages to queue`);
+  return jsonResponse({ ok: true, flushed: true, count: flushedRows.length });
+}
+
+// ---------------------------------------------------------------------------
+// Slack handler — Composio webhook (user OAuth)
 // ---------------------------------------------------------------------------
 
 async function handleSlack(req: Request): Promise<Response> {
@@ -169,80 +305,117 @@ async function handleSlack(req: Request): Promise<Response> {
   const messageTs = String(data.timestamp ?? "");
   const threadTs = (data.thread_ts as string) ?? "";
 
-  const bufferKey = `slack:${channelId}`;
-  const priority = channelType === "im" ? 1 : 2;
+  return bufferAndFlush(
+    senderId, senderName, messageText,
+    channelId, channelType, messageTs, threadTs,
+    DEBOUNCE_MS,
+  );
+}
 
-  // Step 1: Insert into buffer (dedup via unique index on buffer_key + message_ts)
-  const inserted = await insertBuffer({
-    source: "slack",
-    buffer_key: bufferKey,
-    sender: senderId,
-    sender_name: senderName,
-    message_text: messageText,
-    metadata: {
-      message_ts: messageTs,
-      thread_ts: threadTs,
-      channel_id: channelId,
-      channel_type: channelType,
-      priority,
-    },
-  });
+// ---------------------------------------------------------------------------
+// Slack Bot handler — Slack Events API (direct from Slack)
+// ---------------------------------------------------------------------------
 
-  if (!inserted) {
-    // Duplicate or insert error — skip
-    return jsonResponse({ ok: true, skipped: "duplicate_or_error" });
+async function handleSlackBot(req: Request): Promise<Response> {
+  const rawBody = await req.text();
+
+  // Verify Slack signing secret
+  if (SLACK_SIGNING_SECRET) {
+    const timestamp = req.headers.get("x-slack-request-timestamp") ?? "";
+    const signature = req.headers.get("x-slack-signature") ?? "";
+    const valid = await verifySlackSignature(rawBody, timestamp, signature);
+    if (!valid) {
+      return new Response("Invalid signature", { status: 401 });
+    }
   }
 
-  const insertedAt = inserted.created_at as string;
-
-  // Step 2: Debounce — wait, then check if newer messages arrived
-  await new Promise((r) => setTimeout(r, DEBOUNCE_MS));
-
-  const hasNewer = await checkNewerMessages(bufferKey, insertedAt);
-  if (hasNewer) {
-    // A later invocation will handle the flush
-    console.log(`[channel-webhook] ${bufferKey} debounce: newer messages exist, skipping flush`);
-    return jsonResponse({ ok: true, debounced: true });
+  // Short-circuit Slack retries (we handle dedup via buffer)
+  const retryNum = req.headers.get("x-slack-retry-num");
+  if (retryNum) {
+    return jsonResponse({ ok: true, skipped: "retry" });
   }
 
-  // Step 3: Flush — atomically grab all buffered messages for this key
-  const flushedRows = await flushBuffer(bufferKey);
-  if (flushedRows.length === 0) {
-    // Another invocation already flushed (race condition — safe to skip)
-    return jsonResponse({ ok: true, skipped: "already_flushed" });
+  let body: Record<string, unknown>;
+  try {
+    body = JSON.parse(rawBody);
+  } catch {
+    return new Response("Invalid JSON", { status: 400 });
   }
 
-  // Step 4: Combine into a single batch and insert into dispatch queue
-  const senders = new Set<string>();
-  const lines: string[] = [];
-  let lastThreadTs = "";
-
-  for (const row of flushedRows) {
-    const name = (row.sender_name as string) || (row.sender as string);
-    senders.add(name);
-    lines.push(`[${name}] ${row.message_text}`);
-    const meta = row.metadata as Record<string, unknown> | undefined;
-    if (meta?.thread_ts) lastThreadTs = meta.thread_ts as string;
+  // Handle URL verification challenge (required during app setup)
+  if (body.type === "url_verification") {
+    return jsonResponse({ challenge: body.challenge as string });
   }
 
-  const combinedText = lines.join("\n");
+  if (body.type !== "event_callback") {
+    return jsonResponse({ ok: true, skipped: "not_event_callback" });
+  }
 
-  await insertQueue({
-    source: "slack",
-    priority,
-    buffer_key: bufferKey,
-    combined_text: combinedText,
-    metadata: {
-      channel_id: channelId,
-      channel_type: channelType,
-      thread_ts: lastThreadTs,
-      senders: [...senders],
-      message_count: flushedRows.length,
-    },
-  });
+  const event = body.event as Record<string, unknown> | undefined;
+  if (!event) {
+    return jsonResponse({ ok: true, skipped: "no_event" });
+  }
 
-  console.log(`[channel-webhook] ${bufferKey} flushed ${flushedRows.length} messages to queue`);
-  return jsonResponse({ ok: true, flushed: true, count: flushedRows.length });
+  const eventType = event.type as string;
+  if (!["message", "app_mention"].includes(eventType)) {
+    return jsonResponse({ ok: true, skipped: "unsupported_event_type" });
+  }
+
+  // Skip bot's own messages and message_changed/deleted subtypes
+  const subtype = event.subtype as string | undefined;
+  if (subtype) {
+    return jsonResponse({ ok: true, skipped: "subtype" });
+  }
+
+  // Filter out bot messages (bot_id present means it's from a bot)
+  if (event.bot_id) {
+    return jsonResponse({ ok: true, skipped: "bot_message" });
+  }
+
+  // Also check against our own bot_user_id from vault
+  const botUserId = await getVaultSecret("slack_bot_user_id");
+  if (botUserId && event.user === botUserId) {
+    return jsonResponse({ ok: true, skipped: "self_message" });
+  }
+
+  const messageText = (event.text as string) ?? "";
+  if (!messageText) {
+    return jsonResponse({ ok: true, skipped: "empty_message" });
+  }
+
+  const senderId = (event.user as string) ?? "unknown";
+  const channelId = (event.channel as string) ?? "unknown";
+  const channelType = (event.channel_type as string) ?? "";
+  const messageTs = (event.ts as string) ?? "";
+  const threadTs = (event.thread_ts as string) ?? "";
+
+  // Resolve sender display name via Slack API
+  let senderName = senderId;
+  const botToken = await getVaultSecret("slack_bot_token");
+  if (botToken) {
+    try {
+      const userResp = await fetch(`https://slack.com/api/users.info?user=${senderId}`, {
+        headers: { "Authorization": `Bearer ${botToken}` },
+      });
+      if (userResp.ok) {
+        const userData = await userResp.json();
+        if (userData.ok) {
+          senderName = userData.user?.real_name ?? userData.user?.name ?? senderId;
+        }
+      }
+    } catch {
+      // Fall through with senderId as name
+    }
+  }
+
+  // Bot DMs get fast debounce, channels get standard
+  const debounceMs = channelType === "im" ? BOT_DM_DEBOUNCE_MS : DEBOUNCE_MS;
+
+  return bufferAndFlush(
+    senderId, senderName, messageText,
+    channelId, channelType, messageTs, threadTs,
+    debounceMs,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -268,9 +441,12 @@ serve(async (req: Request) => {
   const url = new URL(req.url);
   const path = url.pathname;
 
+  if (path.endsWith("/slack-bot")) {
+    return handleSlackBot(req);
+  }
   if (path.endsWith("/slack")) {
     return handleSlack(req);
   }
 
-  return jsonResponse({ error: "Unknown platform. Use /slack" }, 404);
+  return jsonResponse({ error: "Unknown platform. Use /slack or /slack-bot" }, 404);
 });

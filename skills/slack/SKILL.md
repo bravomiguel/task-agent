@@ -1,55 +1,30 @@
 ---
 name: slack
-description: "Send messages and interact with Slack workspaces via the Slack Web API. Use when: user asks to send a Slack message, list channels, or interact with Slack."
+description: "Send messages and interact with Slack workspaces. Supports bot and user identities."
 ---
 
 # Slack Skill
 
-Send messages and interact with Slack workspaces via the Slack Web API.
-
-## Authentication
-
-Before using any Slack commands, set up auth for this session:
-
-1. `manage_auth` tool with action `"list"` — check if Slack is connected
-2. `manage_auth` tool with action `"connect"`, service `"slack"` — fetch token
-3. Token is written to `/workspace/.auth/slack_token`
-
-Set the token for API calls:
-
-```bash
-SLACK_TOKEN=$(cat /workspace/.auth/slack_token)
-```
-
-Run this before any Slack command. If you get a `token_expired` or `invalid_auth` error, re-run `manage_auth connect slack` to refresh.
-
 ## Sending Messages
 
-Use the `send_message` tool for the simplest way to send a message:
+Use the `send_message` tool:
 
 ```
 send_message(platform="slack", recipient="C01234567", text="Hello!")
+send_message(platform="slack", recipient="C01234567", text="Reply", thread_ts="1234567890.123456")
+send_message(platform="slack", recipient="C01234567", text="As bot", as_identity="bot")
+send_message(platform="slack", recipient="C01234567", text="As user", as_identity="user")
 ```
 
-Or via curl for more control (threads, blocks, etc.):
+### as_identity parameter
 
-```bash
-curl -s -X POST "https://slack.com/api/chat.postMessage" \
-  -H "Authorization: Bearer $SLACK_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"channel": "C01234567", "text": "Hello!"}'
-```
+- `"bot"` — sends as the Slack bot app (xoxb- token)
+- `"user"` — sends as the connected user (Composio OAuth)
+- `None` (default) — auto-selects bot if bot is enabled, otherwise user
 
-### Reply in a thread
+## Common API Operations
 
-```bash
-curl -s -X POST "https://slack.com/api/chat.postMessage" \
-  -H "Authorization: Bearer $SLACK_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"channel": "C01234567", "text": "Thread reply", "thread_ts": "1234567890.123456"}'
-```
-
-## Common Operations
+All curl examples use `$SLACK_TOKEN` — read from the appropriate token file.
 
 ### List channels
 
@@ -72,25 +47,13 @@ curl -s "https://slack.com/api/conversations.history?channel=C01234567&limit=20"
   -H "Authorization: Bearer $SLACK_TOKEN" | jq '.messages[] | {user, text, ts}'
 ```
 
-### Find a channel by name
+### Add a reaction
 
 ```bash
-curl -s "https://slack.com/api/conversations.list" \
-  -H "Authorization: Bearer $SLACK_TOKEN" | jq '.channels[] | select(.name == "general") | .id'
-```
-
-### Get user info
-
-```bash
-curl -s "https://slack.com/api/users.info?user=U01234567" \
-  -H "Authorization: Bearer $SLACK_TOKEN" | jq '.user | {name: .real_name, email: .profile.email}'
-```
-
-### Verify connection
-
-```bash
-curl -s "https://slack.com/api/auth.test" \
-  -H "Authorization: Bearer $SLACK_TOKEN" | jq
+curl -s -X POST "https://slack.com/api/reactions.add" \
+  -H "Authorization: Bearer $SLACK_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"channel": "C01234567", "name": "thumbsup", "timestamp": "1234567890.123456"}'
 ```
 
 ## Notes

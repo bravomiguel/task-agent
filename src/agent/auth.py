@@ -398,6 +398,190 @@ _BOOTSTRAP_FUNCTIONS = {
 
 
 # ---------------------------------------------------------------------------
+# Supabase vault helpers
+# ---------------------------------------------------------------------------
+
+
+def _get_supabase_client():
+    """Lazy import to avoid circular dependency with tools.py."""
+    from agent.tools import _get_supabase
+    return _get_supabase()
+
+
+def vault_set_secret(name: str, value: str) -> None:
+    """Store a secret in Supabase vault (upsert)."""
+    sb = _get_supabase_client()
+    sb.rpc("set_vault_secret", {"p_name": name, "p_secret": value}).execute()
+
+
+def vault_get_secret(name: str) -> str | None:
+    """Read a secret from Supabase vault."""
+    sb = _get_supabase_client()
+    result = sb.rpc("get_vault_secret", {"p_name": name}).execute()
+    return result.data if result.data else None
+
+
+def vault_delete_secret(name: str) -> None:
+    """Remove a secret from Supabase vault."""
+    sb = _get_supabase_client()
+    sb.rpc("delete_vault_secret", {"p_name": name}).execute()
+
+
+# ---------------------------------------------------------------------------
+# Slack Bot setup
+# ---------------------------------------------------------------------------
+
+SLACK_BOT_TOKEN_SECRET = "slack_bot_token"
+
+
+def _build_slack_manifest(webhook_url: str, app_name: str = "AI Assistant") -> str:
+    """Generate a Slack App manifest YAML with the webhook URL pre-filled."""
+    return f"""display_information:
+  name: "{app_name}"
+  description: "Personal AI assistant bot"
+features:
+  bot_user:
+    display_name: "{app_name}"
+    always_online: true
+oauth_config:
+  scopes:
+    bot:
+      - chat:write
+      - channels:read
+      - channels:history
+      - groups:read
+      - groups:history
+      - im:read
+      - im:history
+      - mpim:read
+      - mpim:history
+      - app_mentions:read
+      - users:read
+      - reactions:write
+settings:
+  event_subscriptions:
+    request_url: "{webhook_url}"
+    bot_events:
+      - message.im
+      - message.channels
+      - message.groups
+      - message.mpim
+      - app_mention
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false"""
+
+
+def connect_slack_bot(token: str | None, sandbox_id: str) -> dict[str, Any]:
+    """Handle the Slack bot connection flow.
+
+    Phase 1 (token=None): Return manifest + setup instructions.
+    Phase 2 (token provided): Verify token, store in vault, update config.
+    """
+    import os
+    supabase_url = os.environ.get("SUPABASE_URL", "")
+    webhook_url = f"{supabase_url}/functions/v1/channel-webhook/slack-bot"
+
+    if not token:
+        manifest = _build_slack_manifest(webhook_url)
+        return {
+            "status": "setup_required",
+            "message": (
+                "To set up the Slack bot:\n\n"
+                "1. Go to https://api.slack.com/apps → **Create New App** → **From a manifest**\n"
+                "2. Select your workspace\n"
+                "3. Switch to YAML tab and paste this manifest:\n\n"
+                f"```yaml\n{manifest}\n```\n\n"
+                "4. Click **Create** → **Install to Workspace** → **Allow**\n"
+                "5. Go to **OAuth & Permissions** and copy the **Bot User OAuth Token** (starts with `xoxb-`)\n"
+                "6. Give me the token and I'll finish the setup."
+            ),
+            "manifest": manifest,
+            "webhook_url": webhook_url,
+        }
+
+    # Phase 2: verify and store
+    if not token.startswith("xoxb-"):
+        return {"status": "error", "error": "Invalid token format. Bot tokens start with xoxb-"}
+
+    # Verify via auth.test
+    resp = httpx.post(
+        "https://slack.com/api/auth.test",
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+
+    if not data.get("ok"):
+        return {"status": "error", "error": f"Token verification failed: {data.get('error', 'unknown')}"}
+
+    bot_user_id = data.get("user_id", "")
+
+    # Store token and bot_user_id in vault (edge functions read both)
+    vault_set_secret(SLACK_BOT_TOKEN_SECRET, token)
+    vault_set_secret("slack_bot_user_id", bot_user_id)
+
+    # Update config
+    from agent.config import patch_config
+    patch_config(sandbox_id, {"slack": {"bot_enabled": True, "bot_user_id": bot_user_id}})
+
+    return {
+        "status": "connected",
+        "service": "slack-bot",
+        "bot_user_id": bot_user_id,
+        "team": data.get("team"),
+        "bot_name": data.get("user"),
+        "message": (
+            f"Slack bot connected! Bot user: {data.get('user')} ({bot_user_id}), "
+            f"workspace: {data.get('team')}. "
+            f"Users can now DM the bot directly, or add it to channels with /invite @{data.get('user')}."
+        ),
+    }
+
+
+def disconnect_slack_bot(sandbox_id: str) -> dict[str, Any]:
+    """Remove Slack bot token and disable bot in config."""
+    vault_delete_secret(SLACK_BOT_TOKEN_SECRET)
+    vault_delete_secret("slack_bot_user_id")
+    from agent.config import patch_config
+    patch_config(sandbox_id, {"slack": {"bot_enabled": False, "bot_user_id": None}})
+    return {"status": "disconnected", "service": "slack-bot"}
+
+
+def slack_status(sandbox_id: str) -> dict[str, Any]:
+    """Return combined Slack integration status (bot + user OAuth)."""
+    from agent.config import load_config
+
+    config = load_config(sandbox_id)
+
+    # Bot status
+    bot_token = vault_get_secret(SLACK_BOT_TOKEN_SECRET)
+    bot_connected = bool(bot_token)
+
+    # User OAuth status (Composio)
+    user_connected = False
+    try:
+        accounts = _list_composio_accounts()
+        acct = _find_account_by_slug(accounts, SERVICE_REGISTRY["slack"]["composio_slug"])
+        user_connected = acct is not None and acct.get("status") == "ACTIVE"
+    except Exception:
+        pass
+
+    return {
+        "bot": {
+            "connected": bot_connected,
+            "enabled": config.slack.bot_enabled,
+            "bot_user_id": config.slack.bot_user_id,
+        },
+        "user_oauth": {
+            "connected": user_connected,
+            "enabled": config.slack.user_messages_enabled,
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 

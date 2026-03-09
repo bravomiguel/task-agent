@@ -7,5 +7,10 @@
       "end": "21:00"
     }
   },
-  "skills": {}
+  "skills": {},
+  "slack": {
+    "bot_enabled": false,
+    "bot_user_id": null,
+    "user_messages_enabled": false
+  }
 }
