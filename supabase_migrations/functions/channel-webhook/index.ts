@@ -12,14 +12,15 @@
  *
  * Required env vars:
  *   COMPOSIO_WEBHOOK_SECRET — HMAC secret for Composio signature verification
- *   SLACK_SIGNING_SECRET — Slack app signing secret for bot event verification
  *   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY — auto-injected by Supabase
+ *
+ * Slack signing secret is stored per-user in Supabase vault (not as env var)
+ * and looked up at request time.
  */
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 const COMPOSIO_WEBHOOK_SECRET = Deno.env.get("COMPOSIO_WEBHOOK_SECRET") ?? "";
-const SLACK_SIGNING_SECRET = Deno.env.get("SLACK_SIGNING_SECRET") ?? "";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 
@@ -66,8 +67,9 @@ async function verifySlackSignature(
   rawBody: string,
   timestamp: string,
   signature: string,
+  signingSecret: string,
 ): Promise<boolean> {
-  if (!SLACK_SIGNING_SECRET || !timestamp || !signature) return false;
+  if (!signingSecret || !timestamp || !signature) return false;
 
   // Reject requests older than 5 minutes
   const now = Math.floor(Date.now() / 1000);
@@ -76,7 +78,7 @@ async function verifySlackSignature(
   const baseString = `v0:${timestamp}:${rawBody}`;
   const key = await crypto.subtle.importKey(
     "raw",
-    new TextEncoder().encode(SLACK_SIGNING_SECRET),
+    new TextEncoder().encode(signingSecret),
     { name: "HMAC", hash: "SHA-256" },
     false,
     ["sign"],
@@ -319,11 +321,27 @@ async function handleSlack(req: Request): Promise<Response> {
 async function handleSlackBot(req: Request): Promise<Response> {
   const rawBody = await req.text();
 
-  // Verify Slack signing secret
-  if (SLACK_SIGNING_SECRET) {
+  // Parse body first — needed to handle url_verification before secret is stored,
+  // and to identify team for future multi-tenant secret lookup.
+  let body: Record<string, unknown>;
+  try {
+    body = JSON.parse(rawBody);
+  } catch {
+    return new Response("Invalid JSON", { status: 400 });
+  }
+
+  // Handle URL verification challenge (required during app setup, before
+  // signing secret is stored in vault — Slack sends this immediately on save)
+  if (body.type === "url_verification") {
+    return jsonResponse({ challenge: body.challenge as string });
+  }
+
+  // Look up signing secret from vault and verify request
+  const signingSecret = await getVaultSecret("slack_signing_secret");
+  if (signingSecret) {
     const timestamp = req.headers.get("x-slack-request-timestamp") ?? "";
     const signature = req.headers.get("x-slack-signature") ?? "";
-    const valid = await verifySlackSignature(rawBody, timestamp, signature);
+    const valid = await verifySlackSignature(rawBody, timestamp, signature, signingSecret);
     if (!valid) {
       return new Response("Invalid signature", { status: 401 });
     }
@@ -333,18 +351,6 @@ async function handleSlackBot(req: Request): Promise<Response> {
   const retryNum = req.headers.get("x-slack-retry-num");
   if (retryNum) {
     return jsonResponse({ ok: true, skipped: "retry" });
-  }
-
-  let body: Record<string, unknown>;
-  try {
-    body = JSON.parse(rawBody);
-  } catch {
-    return new Response("Invalid JSON", { status: 400 });
-  }
-
-  // Handle URL verification challenge (required during app setup)
-  if (body.type === "url_verification") {
-    return jsonResponse({ challenge: body.challenge as string });
   }
 
   if (body.type !== "event_callback") {

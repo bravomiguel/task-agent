@@ -432,6 +432,7 @@ def vault_delete_secret(name: str) -> None:
 # ---------------------------------------------------------------------------
 
 SLACK_BOT_TOKEN_SECRET = "slack_bot_token"
+SLACK_SIGNING_SECRET_NAME = "slack_signing_secret"
 
 
 def _build_slack_manifest(webhook_url: str, app_name: str = "AI Assistant") -> str:
@@ -472,11 +473,11 @@ settings:
   token_rotation_enabled: false"""
 
 
-def connect_slack_bot(token: str | None) -> dict[str, Any]:
+def connect_slack_bot(token: str | None, signing_secret: str | None = None) -> dict[str, Any]:
     """Handle the Slack bot connection flow.
 
     Phase 1 (token=None): Return manifest + setup instructions.
-    Phase 2 (token provided): Verify token, store in vault.
+    Phase 2 (token provided): Verify token, store token + signing secret in vault.
     """
     import os
     supabase_url = os.environ.get("SUPABASE_URL", "")
@@ -493,8 +494,9 @@ def connect_slack_bot(token: str | None) -> dict[str, Any]:
                 "3. Switch to YAML tab and paste this manifest:\n\n"
                 f"```yaml\n{manifest}\n```\n\n"
                 "4. Click **Create** → **Install to Workspace** → **Allow**\n"
-                "5. Go to **OAuth & Permissions** and copy the **Bot User OAuth Token** (starts with `xoxb-`)\n"
-                "6. Give me the token and I'll finish the setup."
+                "5. Go to **Basic Information** → **App Credentials** and copy the **Signing Secret**\n"
+                "6. Go to **OAuth & Permissions** and copy the **Bot User OAuth Token** (starts with `xoxb-`)\n"
+                "7. Give me both the token and the signing secret and I'll finish the setup."
             ),
             "manifest": manifest,
             "webhook_url": webhook_url,
@@ -503,6 +505,15 @@ def connect_slack_bot(token: str | None) -> dict[str, Any]:
     # Phase 2: verify and store
     if not token.startswith("xoxb-"):
         return {"status": "error", "error": "Invalid token format. Bot tokens start with xoxb-"}
+
+    if not signing_secret:
+        return {
+            "status": "error",
+            "error": (
+                "Signing secret is required. Find it in your Slack app settings: "
+                "Basic Information → App Credentials → Signing Secret."
+            ),
+        }
 
     # Verify via auth.test
     resp = httpx.post(
@@ -518,9 +529,10 @@ def connect_slack_bot(token: str | None) -> dict[str, Any]:
 
     bot_user_id = data.get("user_id", "")
 
-    # Store token and bot_user_id in vault (edge functions + send_message read both)
+    # Store token, bot_user_id, and signing secret in vault
     vault_set_secret(SLACK_BOT_TOKEN_SECRET, token)
     vault_set_secret("slack_bot_user_id", bot_user_id)
+    vault_set_secret(SLACK_SIGNING_SECRET_NAME, signing_secret)
 
     return {
         "status": "connected",
@@ -537,9 +549,10 @@ def connect_slack_bot(token: str | None) -> dict[str, Any]:
 
 
 def disconnect_slack_bot() -> dict[str, Any]:
-    """Remove Slack bot token from vault."""
+    """Remove Slack bot token, signing secret, and bot_user_id from vault."""
     vault_delete_secret(SLACK_BOT_TOKEN_SECRET)
     vault_delete_secret("slack_bot_user_id")
+    vault_delete_secret(SLACK_SIGNING_SECRET_NAME)
     return {"status": "disconnected", "service": "slack-bot"}
 
 
