@@ -441,6 +441,9 @@ def _build_slack_manifest(webhook_url: str, app_name: str = "AI Assistant") -> s
   name: "{app_name}"
   description: "Personal AI assistant bot"
 features:
+  app_home:
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
   bot_user:
     display_name: "{app_name}"
     always_online: true
@@ -490,12 +493,12 @@ def connect_slack_bot(token: str | None, signing_secret: str | None = None) -> d
             "message": (
                 "To set up the Slack bot:\n\n"
                 "1. Go to https://api.slack.com/apps → **Create New App** → **From a manifest**\n"
-                "2. Select your workspace\n"
-                "3. Switch to YAML tab and paste this manifest:\n\n"
+                "2. Select your workspace, switch to **YAML** tab, and paste this manifest:\n\n"
                 f"```yaml\n{manifest}\n```\n\n"
-                "4. Click **Create** → **Install to Workspace** → **Allow**\n"
-                "5. Go to **Basic Information** → **App Credentials** and copy the **Signing Secret**\n"
-                "6. Go to **OAuth & Permissions** and copy the **Bot User OAuth Token** (starts with `xoxb-`)\n"
+                "3. Click **Create**\n"
+                "4. Go to **Install App** (left sidebar) → **Install to Workspace** → **Allow**\n"
+                "5. Copy the **Bot User OAuth Token** (starts with `xoxb-`) shown on the page\n"
+                "6. Go to **Basic Information** (left sidebar) → **App Credentials** → copy the **Signing Secret**\n"
                 "7. Give me both the token and the signing secret and I'll finish the setup."
             ),
             "manifest": manifest,

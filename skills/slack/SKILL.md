@@ -24,7 +24,18 @@ send_message(platform="slack", recipient="C01234567", text="As user", as_identit
 
 ## Common API Operations
 
-All curl examples use `$SLACK_TOKEN` — read from the appropriate token file.
+For direct Slack API calls (beyond what `send_message` provides), get a token first:
+
+```bash
+# Bot token (if bot is connected)
+manage_auth action="connect" service="slack-bot"  # token is in vault, not filesystem
+
+# User token (Composio OAuth)
+manage_auth action="connect" service="slack"  # writes to /workspace/.auth/slack_token
+export SLACK_TOKEN=$(cat /workspace/.auth/slack_token)
+```
+
+**Note:** For sending messages, prefer `send_message` tool — it handles token resolution automatically.
 
 ### List channels
 
