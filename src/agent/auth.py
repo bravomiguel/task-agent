@@ -601,12 +601,11 @@ def list_connected_services() -> list[dict[str, Any]]:
         seen_slugs.add(slug)
 
         svc_name = _SLUG_TO_SERVICE.get(slug)
+        if not svc_name:
+            continue  # Skip unknown/duplicate toolkit connections
         results.append({
             "service": svc_name,
-            "display_name": (
-                SERVICE_REGISTRY[svc_name]["display_name"]
-                if svc_name else slug
-            ),
+            "display_name": SERVICE_REGISTRY[svc_name]["display_name"],
             "composio_slug": slug,
             "status": acct.get("status"),
         })

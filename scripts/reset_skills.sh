@@ -14,11 +14,10 @@ SKILLS_DIR="$PROJECT_DIR/skills"
 MODAL="$PROJECT_DIR/.venv/bin/modal"
 VOLUME_PATH="/skills"
 
-# Wipe existing skills directory on volume
-echo "Wiping existing skills..."
-"$MODAL" volume rm user-dev "$VOLUME_PATH" -r 2>/dev/null || true
-
 if [ $# -eq 0 ]; then
+  # Wipe all skills when uploading all
+  echo "Wiping existing skills..."
+  "$MODAL" volume rm user-dev "$VOLUME_PATH" -r 2>/dev/null || true
   # Upload all skill directories
   dirs=()
   for d in "$SKILLS_DIR"/*/; do
@@ -28,6 +27,11 @@ if [ $# -eq 0 ]; then
     dirs+=("$d")
   done
 else
+  # Only wipe specified skills
+  for name in "$@"; do
+    echo "Wiping $name..."
+    "$MODAL" volume rm user-dev "$VOLUME_PATH/$name" -r 2>/dev/null || true
+  done
   dirs=()
   for name in "$@"; do
     path="$SKILLS_DIR/$name"

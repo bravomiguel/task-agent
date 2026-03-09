@@ -1,7 +1,12 @@
 """graph.py - deep agent with Modal sandbox and memory middleware."""
 
-from deepagents import create_deep_agent
+from deepagents.middleware import FilesystemMiddleware, SubAgentMiddleware
+from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
+from langchain.agents.middleware.summarization import SummarizationMiddleware
+from langchain.agents.middleware.todo import TodoListMiddleware
+from langchain_anthropic.middleware import AnthropicPromptCachingMiddleware
 from deepagents_cli.tools import http_request, fetch_url, web_search, tavily_client
+from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
 from langchain_anthropic import ChatAnthropic
 from agent.claude_auth import get_claude_code_token
@@ -66,11 +71,49 @@ tools = [http_request, fetch_url, present_file, view_image, memory_search, manag
 if tavily_client is not None:
     tools.append(web_search)
 
-# Create the agent with backend factory
-main = create_deep_agent(
-    model=claude_opus,
+# Build middleware stack manually (instead of create_deep_agent) so we can
+# inject ModalSandboxMiddleware into the subagent default_middleware.
+# Without it, subagents can't access the Modal sandbox because their state
+# schema doesn't include modal_sandbox_id and LazyModalBackend raises
+# "Modal sandbox not initialized".
+backend = create_backend_factory()
+
+deepagent_middleware = [
+    TodoListMiddleware(system_prompt="."),
+    FilesystemMiddleware(backend=backend, system_prompt=""),
+    SubAgentMiddleware(
+        default_model=claude_opus,
+        default_tools=tools,
+        subagents=[],
+        system_prompt=None,  # Suppress verbose tool docs (covered by STATIC_PART_01)
+        default_middleware=[
+            ModalSandboxMiddleware(),  # Reconnects to parent's sandbox
+            TodoListMiddleware(system_prompt="."),
+            FilesystemMiddleware(backend=backend, system_prompt=""),
+            SummarizationMiddleware(
+                model=claude_opus,
+                max_tokens_before_summary=170000,
+                messages_to_keep=6,
+            ),
+            AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"),
+            PatchToolCallsMiddleware(),
+        ],
+        general_purpose_agent=True,
+    ),
+    SummarizationMiddleware(
+        model=claude_opus,
+        max_tokens_before_summary=170000,
+        messages_to_keep=6,
+    ),
+    AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"),
+    PatchToolCallsMiddleware(),
+    # Custom middleware (appended after deepagents defaults)
+    *agent_middleware,
+]
+
+main = create_agent(
+    claude_opus,
     system_prompt=STATIC_PART_01,
     tools=tools,
-    middleware=agent_middleware,
-    backend=create_backend_factory(),
+    middleware=deepagent_middleware,
 )

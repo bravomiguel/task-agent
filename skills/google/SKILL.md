@@ -13,13 +13,14 @@ Before using any Google commands, set up auth for this session:
 2. `manage_auth` tool with action `"connect"`, service `"google"` — fetch token
 3. Token is written to `/workspace/.auth/google_token`
 
-Set the token for gog:
+Set the token and account for gog:
 
 ```bash
 export GOG_ACCESS_TOKEN=$(cat /workspace/.auth/google_token)
+export GOG_ACCOUNT=me
 ```
 
-Run this export before any gog command. If you get a 401 error, re-run `manage_auth connect google` to refresh the token, then re-export.
+Run both exports before any gog command. `GOG_ACCOUNT=me` is required when using access tokens. If you get a 401 error, re-run `manage_auth connect google` to refresh the token, then re-export.
 
 ## Gmail
 
