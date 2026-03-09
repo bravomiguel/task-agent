@@ -481,6 +481,29 @@ async function handleSlackBot(req: Request): Promise<Response> {
   const messageTs = (event.ts as string) ?? "";
   const threadTs = (event.thread_ts as string) ?? "";
 
+  // Block non-owner DMs (personal workspace use case)
+  if (channelType === "im") {
+    const ownerId = await getVaultSecret("slack_bot_owner_id");
+    if (ownerId && senderId !== ownerId) {
+      // Reply with a rejection message, then skip processing
+      const rejectToken = await getVaultSecret("slack_bot_token");
+      if (rejectToken) {
+        await fetch("https://slack.com/api/chat.postMessage", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${rejectToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            channel: channelId,
+            text: "Sorry, this is a private assistant. Only the owner can message me directly.",
+          }),
+        });
+      }
+      return jsonResponse({ ok: true, skipped: "non_owner_dm" });
+    }
+  }
+
   // Resolve sender display name via Slack API
   let senderName = senderId;
   const botToken = await getVaultSecret("slack_bot_token");

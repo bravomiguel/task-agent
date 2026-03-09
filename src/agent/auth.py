@@ -476,11 +476,15 @@ settings:
   token_rotation_enabled: false"""
 
 
-def connect_slack_bot(token: str | None, signing_secret: str | None = None) -> dict[str, Any]:
+def connect_slack_bot(
+    token: str | None,
+    signing_secret: str | None = None,
+    owner_slack_id: str | None = None,
+) -> dict[str, Any]:
     """Handle the Slack bot connection flow.
 
     Phase 1 (token=None): Return manifest + setup instructions.
-    Phase 2 (token provided): Verify token, store token + signing secret in vault.
+    Phase 2 (token provided): Verify token, store token + signing secret + owner ID in vault.
     """
     import os
     supabase_url = os.environ.get("SUPABASE_URL", "")
@@ -499,7 +503,11 @@ def connect_slack_bot(token: str | None, signing_secret: str | None = None) -> d
                 "4. Go to **Install App** (left sidebar) → **Install to Workspace** → **Allow**\n"
                 "5. Copy the **Bot User OAuth Token** (starts with `xoxb-`) shown on the page\n"
                 "6. Go to **Basic Information** (left sidebar) → **App Credentials** → copy the **Signing Secret**\n"
-                "7. Give me both the token and the signing secret and I'll finish the setup."
+                "7. Copy your **Slack member ID**: click your profile picture (bottom-left) → "
+                "**Profile** → click the **⋮** (three dots) → **Copy member ID**\n"
+                "8. Give me the bot token, signing secret, and your member ID and I'll finish the setup.\n\n"
+                "**AGENT NOTE**: Before showing this manifest to the user, replace \"AI Assistant\" "
+                "with your own name (from IDENTITY.md) in both the `name` and `display_name` fields."
             ),
             "manifest": manifest,
             "webhook_url": webhook_url,
@@ -518,6 +526,15 @@ def connect_slack_bot(token: str | None, signing_secret: str | None = None) -> d
             ),
         }
 
+    if not owner_slack_id:
+        return {
+            "status": "error",
+            "error": (
+                "Owner Slack member ID is required. In Slack, click your profile picture → "
+                "Profile → ⋮ (three dots) → Copy member ID."
+            ),
+        }
+
     # Verify via auth.test
     resp = httpx.post(
         "https://slack.com/api/auth.test",
@@ -532,30 +549,34 @@ def connect_slack_bot(token: str | None, signing_secret: str | None = None) -> d
 
     bot_user_id = data.get("user_id", "")
 
-    # Store token, bot_user_id, and signing secret in vault
+    # Store token, bot_user_id, signing secret, and owner ID in vault
     vault_set_secret(SLACK_BOT_TOKEN_SECRET, token)
     vault_set_secret("slack_bot_user_id", bot_user_id)
     vault_set_secret(SLACK_SIGNING_SECRET_NAME, signing_secret)
+    vault_set_secret("slack_bot_owner_id", owner_slack_id)
 
     return {
         "status": "connected",
         "service": "slack-bot",
         "bot_user_id": bot_user_id,
+        "owner_user_id": owner_slack_id,
         "team": data.get("team"),
         "bot_name": data.get("user"),
         "message": (
             f"Slack bot connected! Bot user: {data.get('user')} ({bot_user_id}), "
-            f"workspace: {data.get('team')}. "
-            f"Users can now DM the bot directly, or add it to channels with /invite @{data.get('user')}."
+            f"workspace: {data.get('team')}, owner: {owner_slack_id}. "
+            f"Only you can DM this bot. "
+            f"Add it to channels with /invite @{data.get('user')}."
         ),
     }
 
 
 def disconnect_slack_bot() -> dict[str, Any]:
-    """Remove Slack bot token, signing secret, and bot_user_id from vault."""
+    """Remove Slack bot token, signing secret, bot_user_id, and owner_id from vault."""
     vault_delete_secret(SLACK_BOT_TOKEN_SECRET)
     vault_delete_secret("slack_bot_user_id")
     vault_delete_secret(SLACK_SIGNING_SECRET_NAME)
+    vault_delete_secret("slack_bot_owner_id")
     return {"status": "disconnected", "service": "slack-bot"}
 
 

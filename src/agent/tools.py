@@ -919,6 +919,7 @@ def manage_auth(
     service: str = None,
     token: str = None,
     signing_secret: str = None,
+    owner_slack_id: str = None,
     state: Annotated[dict, InjectedState] = None,
 ) -> str:
     """Manage external service authentication (Google Workspace, GitHub, Slack, etc.).
@@ -932,7 +933,7 @@ def manage_auth(
         the user must open in their browser. After they finish, call "connect".
       - "connect": Fetch fresh credentials and set them up in the sandbox.
         For "slack-bot": first call without token to get setup instructions,
-        then call again with token and signing_secret to complete setup.
+        then call again with token, signing_secret, and owner_slack_id.
       - "status": Get detailed status for a service (e.g. "slack" returns
         both bot and user OAuth status).
       - "disconnect": Remove credentials for a service (e.g. "slack-bot").
@@ -942,6 +943,7 @@ def manage_auth(
         service: Service name (e.g. "google", "github", "slack", "slack-bot").
         token: (slack-bot only) The bot token (xoxb-...) provided by the user.
         signing_secret: (slack-bot only) The Slack app signing secret.
+        owner_slack_id: (slack-bot only) The owner's Slack member ID (starts with U).
 
     Returns:
         JSON with service status, auth URL, setup instructions, or result.
@@ -977,7 +979,7 @@ def manage_auth(
             if not service:
                 return "Error: service is required for connect action."
             if service == "slack-bot":
-                result = connect_slack_bot(token, signing_secret)
+                result = connect_slack_bot(token, signing_secret, owner_slack_id=owner_slack_id)
                 return _json.dumps(result)
             sandbox_id = state.get("modal_sandbox_id") if state else None
             if not sandbox_id:
