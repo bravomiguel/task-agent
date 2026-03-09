@@ -57,13 +57,13 @@ SERVICE_REGISTRY: dict[str, dict[str, Any]] = {
     "teams": {
         "display_name": "Microsoft Teams",
         "composio_slug": "microsoft_teams",
-        "auth_config_id": "ac_PLACEHOLDER_TEAMS",  # TODO: create in Composio dashboard
+        "auth_config_id": "ac_XWmB4dkUlNsK",
         "token_file": f"{AUTH_DIR}/teams_token",
     },
     "microsoft": {
         "display_name": "Microsoft 365 (Outlook)",
         "composio_slug": "outlook",
-        "auth_config_id": "ac_PLACEHOLDER_MS365",  # TODO: create in Composio dashboard
+        "auth_config_id": "ac_TpHKphOBjNNM",
         "token_file": f"{AUTH_DIR}/microsoft_token",
     },
 }
