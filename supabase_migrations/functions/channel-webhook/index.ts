@@ -35,14 +35,14 @@ const BOT_DM_DEBOUNCE_MS = 300;
 
 async function verifyComposioSignature(
   rawBody: string,
+  webhookId: string,
+  webhookTimestamp: string,
   signatureHeader: string,
 ): Promise<boolean> {
   if (!COMPOSIO_WEBHOOK_SECRET || !signatureHeader) return false;
 
-  // Format: "v1,{base64}"
-  const parts = signatureHeader.split(",");
-  if (parts.length !== 2 || parts[0] !== "v1") return false;
-  const expectedSig = parts[1];
+  // Signing string: "{webhook_id}.{webhook_timestamp}.{raw_body}"
+  const signingString = `${webhookId}.${webhookTimestamp}.${rawBody}`;
 
   const key = await crypto.subtle.importKey(
     "raw",
@@ -54,11 +54,16 @@ async function verifyComposioSignature(
   const sig = await crypto.subtle.sign(
     "HMAC",
     key,
-    new TextEncoder().encode(rawBody),
+    new TextEncoder().encode(signingString),
   );
   const computedSig = btoa(String.fromCharCode(...new Uint8Array(sig)));
 
-  return computedSig === expectedSig;
+  // Signature header format: "v1,{base64}" — extract the base64 part
+  const received = signatureHeader.includes(",")
+    ? signatureHeader.split(",")[1]
+    : signatureHeader;
+
+  return computedSig === received;
 }
 
 // ---------------------------------------------------------------------------
@@ -342,13 +347,15 @@ async function bufferAndFlush(
 async function handleSlack(req: Request): Promise<Response> {
   const rawBody = await req.text();
 
-  // Verify Composio HMAC signature (warn-only — Composio's signing format is undocumented)
+  // Verify Composio HMAC-SHA256 signature
   if (COMPOSIO_WEBHOOK_SECRET) {
+    const webhookId = req.headers.get("webhook-id") ?? "";
+    const webhookTimestamp = req.headers.get("webhook-timestamp") ?? "";
     const sigHeader = req.headers.get("webhook-signature") ?? "";
     if (sigHeader) {
-      const valid = await verifyComposioSignature(rawBody, sigHeader);
+      const valid = await verifyComposioSignature(rawBody, webhookId, webhookTimestamp, sigHeader);
       if (!valid) {
-        console.warn("[channel-webhook/slack] HMAC signature mismatch (allowing request, verification is warn-only)");
+        return new Response("Invalid signature", { status: 401 });
       }
     }
   }
