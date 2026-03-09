@@ -21,6 +21,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 const COMPOSIO_WEBHOOK_SECRET = Deno.env.get("COMPOSIO_WEBHOOK_SECRET") ?? "";
+const COMPOSIO_API_KEY = Deno.env.get("COMPOSIO_API_KEY") ?? "";
+const COMPOSIO_ENTITY_ID = Deno.env.get("COMPOSIO_ENTITY_ID") ?? "default";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 
@@ -93,6 +95,75 @@ async function verifySlackSignature(
     .join("");
 
   return computed === signature;
+}
+
+// ---------------------------------------------------------------------------
+// Slack user name resolution
+// ---------------------------------------------------------------------------
+
+let _slackTokenCache: { token: string; expiresAt: number } | null = null;
+
+async function getSlackTokenFromComposio(): Promise<string | null> {
+  // Return cached token if still valid (cache for 5 minutes)
+  if (_slackTokenCache && Date.now() < _slackTokenCache.expiresAt) {
+    return _slackTokenCache.token;
+  }
+
+  if (!COMPOSIO_API_KEY) return null;
+
+  try {
+    const params = new URLSearchParams({
+      statuses: "ACTIVE",
+      user_ids: COMPOSIO_ENTITY_ID,
+    });
+    const resp = await fetch(
+      `https://backend.composio.dev/api/v3/connected_accounts?${params}`,
+      { headers: { "x-api-key": COMPOSIO_API_KEY } },
+    );
+    if (!resp.ok) return null;
+
+    const data = await resp.json();
+    const items = data.items ?? data;
+    if (!Array.isArray(items)) return null;
+
+    for (const item of items) {
+      const slug = typeof item.toolkit === "object" ? item.toolkit?.slug : item.toolkit;
+      if (slug === "slack" && item.status === "ACTIVE") {
+        const token = item.state?.val?.access_token;
+        if (token) {
+          _slackTokenCache = { token, expiresAt: Date.now() + 5 * 60 * 1000 };
+          return token;
+        }
+      }
+    }
+  } catch {
+    // Fall through
+  }
+  return null;
+}
+
+async function resolveSlackUserName(userId: string): Promise<string> {
+  // Try bot token from vault first, then Composio user token
+  let token = await getVaultSecret("slack_bot_token");
+  if (!token) {
+    token = await getSlackTokenFromComposio();
+  }
+  if (!token) return userId;
+
+  try {
+    const resp = await fetch(`https://slack.com/api/users.info?user=${userId}`, {
+      headers: { "Authorization": `Bearer ${token}` },
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      if (data.ok) {
+        return data.user?.real_name ?? data.user?.name ?? userId;
+      }
+    }
+  } catch {
+    // Fall through
+  }
+  return userId;
 }
 
 // ---------------------------------------------------------------------------
@@ -308,7 +379,8 @@ async function handleSlack(req: Request): Promise<Response> {
   // V3 payload uses "user" (user ID string), V2 used "sender" object
   const senderObj = data.sender as Record<string, unknown> | undefined;
   const senderId = (data.user as string) ?? (senderObj?.id as string) ?? "unknown";
-  const senderName = (senderObj?.name as string) ?? senderId;
+  // Resolve display name via Slack API (bot token or Composio user token)
+  const senderName = (senderObj?.name as string) ?? await resolveSlackUserName(senderId);
   const channelId = (data.channel as string) ?? (data.channel_id as string) ?? "unknown";
   const channelType = (data.channel_type as string) ?? "";
   const messageTs = String(data.ts ?? data.timestamp ?? "");
