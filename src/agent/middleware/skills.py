@@ -6,15 +6,14 @@ in the sandbox. Used by SessionSetupMiddleware for skill discovery.
 
 from __future__ import annotations
 
+import logging
 import re
-from pathlib import Path
+import time
 from typing import TypedDict
 
 import modal
 
-
-# Maximum size for SKILL.md files (10MB)
-MAX_SKILL_FILE_SIZE = 10 * 1024 * 1024
+logger = logging.getLogger(__name__)
 
 
 class SkillMetadata(TypedDict):
@@ -24,59 +23,53 @@ class SkillMetadata(TypedDict):
     path: str
 
 
-def _parse_skill_metadata(skill_md_path: Path, sandbox: modal.Sandbox) -> SkillMetadata | None:
-    """Parse YAML frontmatter from a SKILL.md file in the sandbox.
 
-    Args:
-        skill_md_path: Path to SKILL.md in the sandbox
-        sandbox: Modal sandbox to read from
+_SKILLS_SCRIPT = (
+    'for d in {skills_dir}/*/; do '
+    '  f="$d/SKILL.md"; '
+    '  [ -f "$f" ] || continue; '
+    '  echo "===SKILL_PATH:$f==="; '
+    '  head -20 "$f"; '
+    'done'
+)
 
-    Returns:
-        SkillMetadata if valid, None if parsing fails
-    """
-    try:
-        # Read file from sandbox
-        process = sandbox.exec("cat", str(skill_md_path), timeout=10)
-        process.wait()
-        if process.returncode != 0:
-            return None
-        content = process.stdout.read()
 
-        # Check file size
-        if len(content) > MAX_SKILL_FILE_SIZE:
-            return None
+def _parse_skills_output(output: str) -> list[SkillMetadata]:
+    """Parse combined SKILL.md frontmatter output into metadata list."""
+    skills: list[SkillMetadata] = []
+    for block in output.split("===SKILL_PATH:")[1:]:
+        try:
+            separator_end = block.index("===\n")
+        except ValueError:
+            continue
+        skill_path = block[:separator_end]
+        content = block[separator_end + 4:]
 
-        # Parse YAML frontmatter
-        frontmatter_pattern = r"^---\s*\n(.*?)\n---\s*\n"
-        match = re.match(frontmatter_pattern, content, re.DOTALL)
-        if not match:
-            return None
+        frontmatter_match = re.match(r"^---\s*\n(.*?)\n---\s*\n", content, re.DOTALL)
+        if not frontmatter_match:
+            continue
 
-        frontmatter = match.group(1)
-
-        # Parse key-value pairs (simple parsing, no nested structures)
         metadata: dict[str, str] = {}
-        for line in frontmatter.split("\n"):
+        for line in frontmatter_match.group(1).split("\n"):
             kv_match = re.match(r"^(\w+):\s*(.+)$", line.strip())
             if kv_match:
                 key, value = kv_match.groups()
                 metadata[key] = value.strip()
 
-        # Validate required fields
-        if "name" not in metadata or "description" not in metadata:
-            return None
-
-        return SkillMetadata(
-            name=metadata["name"],
-            description=metadata["description"],
-            path=str(skill_md_path),
-        )
-    except Exception:
-        return None
+        if "name" in metadata and "description" in metadata:
+            skills.append(SkillMetadata(
+                name=metadata["name"],
+                description=metadata["description"],
+                path=skill_path,
+            ))
+    return skills
 
 
 def _list_skills_from_sandbox(sandbox: modal.Sandbox, skills_dir: str = "/mnt/skills") -> list[SkillMetadata]:
     """List all skills from the sandbox's /skills directory.
+
+    Uses a single sandbox.exec call to read all SKILL.md frontmatter at once.
+    Retries if the directory count exceeds parsed skills (volume still syncing).
 
     Args:
         sandbox: Modal sandbox with skills baked into image
@@ -85,35 +78,38 @@ def _list_skills_from_sandbox(sandbox: modal.Sandbox, skills_dir: str = "/mnt/sk
     Returns:
         List of skill metadata
     """
-    skills: list[SkillMetadata] = []
-
     try:
-        # List skill directories
-        process = sandbox.exec("ls", "-1", skills_dir, timeout=10)
-        process.wait()
-        if process.returncode != 0:
-            return []
+        # First, count how many skill dirs exist on the volume
+        count_proc = sandbox.exec(
+            "bash", "-c",
+            f'ls -1d {skills_dir}/*/ 2>/dev/null | wc -l',
+            timeout=10,
+        )
+        count_proc.wait()
+        expected = int(count_proc.stdout.read().strip() or "0")
 
-        skill_names = process.stdout.read().strip().split("\n")
+        script = _SKILLS_SCRIPT.format(skills_dir=skills_dir)
 
-        for skill_name in skill_names:
-            if not skill_name:
-                continue
+        # Try up to 3 times, waiting for volume to fully sync
+        for attempt in range(3):
+            process = sandbox.exec("bash", "-c", script, timeout=15)
+            process.wait()
+            output = process.stdout.read()
+            skills = _parse_skills_output(output)
 
-            skill_md_path = Path(skills_dir) / skill_name / "SKILL.md"
+            if len(skills) >= expected or expected == 0:
+                logger.info("[Skills] loaded %d/%d skills", len(skills), expected)
+                return skills
 
-            # Check if SKILL.md exists
-            check_process = sandbox.exec("test", "-f", str(skill_md_path), timeout=5)
-            check_process.wait()
-            if check_process.returncode != 0:
-                continue
+            logger.info(
+                "[Skills] found %d/%d skills (attempt %d), waiting for volume sync...",
+                len(skills), expected, attempt + 1,
+            )
+            time.sleep(1)
 
-            # Parse metadata
-            metadata = _parse_skill_metadata(skill_md_path, sandbox)
-            if metadata:
-                skills.append(metadata)
+        # Return whatever we got on final attempt
+        logger.warning("[Skills] returning %d/%d skills after retries", len(skills), expected)
+        return skills
 
     except Exception:
-        pass
-
-    return skills
+        return []
