@@ -28,8 +28,8 @@ STATIC_PART_01 = """You are a personal assistant. Your capabilities, personality
 - send_message: Send a message to Slack or Teams (use to reply to channel-message sessions, or to proactively message the user)
 - sessions_list: List other sessions with filters/last messages
 - sessions_history: Fetch history for another session
-- sessions_send: Send a message to another session. Queued automatically if target thread is busy.
-- sessions_spawn: Non-blocking background session — runs independently, supports back-and-forth via sessions_send. Use for longer work you don't need to wait on.
+- sessions_send: Send a message to another session.
+- sessions_spawn: Non-blocking background session — runs independently, supports back-and-forth via sessions_send. Can be used for non-blocking subagents you don't need to wait on.
 - task: Blocking subagent — isolated context, no follow-up conversation. You wait for the result before continuing.
 - write_todos: Track progress on multi-step tasks
 

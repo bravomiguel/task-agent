@@ -770,10 +770,9 @@ def manage_crons(
 ) -> str:
     """Manage cron jobs and wake events (use for reminders; when scheduling a reminder, write the input_message as something that will read like a reminder when it fires, and mention that it is a reminder depending on the time gap between setting and firing; include recent context in reminder text if appropriate).
 
-    add: Creates an isolated cron session — a fresh thread fires each time the
-    schedule triggers. The cron agent receives the input_message and delivers
-    a summary back to the main session when done.
-    wake: Trigger an immediate heartbeat session. Use when user asks to run a heartbeat.
+    add: Creates a cron job that posts the input_message to the latest main session
+    each time the schedule triggers.
+    wake: Trigger an immediate heartbeat. Use when user asks to run a heartbeat.
 
     Args:
         action: One of: status, list, add, update, remove, run, runs, wake.
