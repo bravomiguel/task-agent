@@ -304,7 +304,7 @@ def _bootstrap_trello(sandbox, acct: dict) -> dict[str, Any]:
 
 
 def _bootstrap_slack(sandbox, acct: dict) -> dict[str, Any]:
-    """Bootstrap Slack auth in the sandbox."""
+    """Bootstrap Slack auth in the sandbox and store owner user ID."""
     token = _extract_access_token(acct)
     if not token:
         return {"error": "No access_token in credentials. Check Composio connection status."}
@@ -318,7 +318,24 @@ def _bootstrap_slack(sandbox, acct: dict) -> dict[str, Any]:
     token_file = SERVICE_REGISTRY["slack"]["token_file"]
     _write_token_to_sandbox(sandbox, token, token_file)
 
-    return {
+    # Capture owner's Slack user ID from user token (for bot DM gating)
+    owner_user_id = None
+    try:
+        resp = httpx.post(
+            "https://slack.com/api/auth.test",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10,
+        )
+        data = resp.json()
+        if data.get("ok"):
+            owner_user_id = data.get("user_id")
+            if owner_user_id:
+                vault_set_secret("slack_bot_owner_id", owner_user_id)
+                logger.info("[Auth] stored Slack owner user ID: %s", owner_user_id)
+    except Exception as e:
+        logger.warning("[Auth] failed to resolve Slack owner ID: %s", e)
+
+    result = {
         "status": "connected",
         "service": "slack",
         "token_file": token_file,
@@ -329,6 +346,9 @@ def _bootstrap_slack(sandbox, acct: dict) -> dict[str, Any]:
             f"https://slack.com/api/auth.test"
         ),
     }
+    if owner_user_id:
+        result["owner_user_id"] = owner_user_id
+    return result
 
 
 def _bootstrap_teams(sandbox, acct: dict) -> dict[str, Any]:
