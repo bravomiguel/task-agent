@@ -309,13 +309,16 @@ async function bufferAndFlush(
 
   // Step 4: Combine into a single batch and insert into dispatch queue
   const senders = new Set<string>();
+  const senderIds = new Set<string>();
   const lines: string[] = [];
   let lastThreadTs = "";
 
   for (const row of flushedRows) {
     const name = (row.sender_name as string) || (row.sender as string);
     senders.add(name);
-    lines.push(`[${name}] ${row.message_text}`);
+    if (row.sender) senderIds.add(row.sender as string);
+    const id = (row.sender as string) || "";
+    lines.push(`[${name} (${id})] ${row.message_text}`);
     const meta = row.metadata as Record<string, unknown> | undefined;
     if (meta?.thread_ts) lastThreadTs = meta.thread_ts as string;
   }
@@ -332,6 +335,7 @@ async function bufferAndFlush(
       channel_type: channelType,
       thread_ts: lastThreadTs,
       senders: [...senders],
+      sender_ids: [...senderIds],
       message_count: flushedRows.length,
     },
   });
@@ -386,6 +390,16 @@ async function handleSlack(req: Request): Promise<Response> {
   // V3 payload uses "user" (user ID string), V2 used "sender" object
   const senderObj = data.sender as Record<string, unknown> | undefined;
   const senderId = (data.user as string) ?? (senderObj?.id as string) ?? "unknown";
+
+  // Filter out bot's own messages (Composio triggers on all channel messages)
+  if (data.bot_id || data.bot_profile) {
+    return jsonResponse({ ok: true, skipped: "bot_message" });
+  }
+  const botUserId = await getVaultSecret("slack_bot_user_id");
+  if (botUserId && senderId === botUserId) {
+    return jsonResponse({ ok: true, skipped: "self_message" });
+  }
+
   // Resolve display name via Slack API (bot token or Composio user token)
   const senderName = (senderObj?.name as string) ?? await resolveSlackUserName(senderId);
   const channelId = (data.channel as string) ?? (data.channel_id as string) ?? "unknown";

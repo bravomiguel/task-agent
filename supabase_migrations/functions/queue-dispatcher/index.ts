@@ -190,7 +190,12 @@ async function dispatchItem(item: Record<string, unknown>): Promise<{ dispatched
       `channel="${channelId}"`,
     ];
     if (threadTs) attrs.push(`thread_ts="${threadTs}"`);
-    if (meta.senders) attrs.push(`senders="${(meta.senders as string[]).join(",")}"`);
+    const channelType = (meta.channel_type as string) ?? "";
+    const isDm = channelType === "im";
+    const ids = meta.sender_ids as string[] | undefined;
+    const names = meta.senders as string[] | undefined;
+    if (names) attrs.push(`${isDm ? "sender" : "senders"}="${names.join(",")}"`);
+    if (ids) attrs.push(`${isDm ? "sender_id" : "sender_ids"}="${ids.join(",")}"`);
     message = `<system-message ${attrs.join(" ")}>\n${combinedText}\n</system-message>`;
     runInput.channel_platform = "slack";
     runInput.channel_id = channelId;
