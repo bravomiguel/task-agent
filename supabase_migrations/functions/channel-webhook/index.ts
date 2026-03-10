@@ -1,17 +1,17 @@
 /**
  * channel-webhook — Supabase Edge Function
  *
- * Receives inbound Slack messages via two routes:
- *   POST /channel-webhook/slack      — Composio SLACK_NEW_MESSAGE trigger (user OAuth)
- *   POST /channel-webhook/slack-bot  — Slack Events API (bot events)
+ * Receives inbound messages from external platforms via routes:
+ *   POST /channel-webhook/composio   — All Composio triggers (Slack, Gmail, Outlook)
+ *   POST /channel-webhook/slack      — Alias for /composio (backwards compat)
+ *   POST /channel-webhook/slack-bot  — Slack Events API (bot events, direct from Slack)
  *
- * Both routes buffer messages in `inbound_buffer` with debounce, then flush
- * to `inbound_queue` for dispatch. Same channel buffer key for cross-source dedup.
- *
- * Bot DMs use 300ms debounce for fast response. Everything else uses 5s.
+ * Composio sends all triggers to a single webhook URL. The handler inspects
+ * payload.type to route: slack triggers → buffer+flush, email triggers → direct queue.
  *
  * Required env vars:
  *   COMPOSIO_WEBHOOK_SECRET — HMAC secret for Composio signature verification
+ *   COMPOSIO_API_KEY — for fetching Composio connected account tokens
  *   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY — auto-injected by Supabase
  *
  * Slack signing secret is stored per-user in Supabase vault (not as env var)
@@ -28,6 +28,16 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "
 
 const DEBOUNCE_MS = 5_000;
 const BOT_DM_DEBOUNCE_MS = 300;
+
+// Composio trigger type constants (lowercase for case-insensitive matching)
+const SLACK_TRIGGERS = [
+  "slack_receive_direct_message",
+  "slack_receive_message",
+  "slack_receive_thread_reply",
+  "slack_receive_group_message",
+  "slack_receive_mpim_message",
+  "slack_new_message",
+];
 
 // ---------------------------------------------------------------------------
 // Composio HMAC verification
@@ -58,12 +68,11 @@ async function verifyComposioSignature(
   );
   const computedSig = btoa(String.fromCharCode(...new Uint8Array(sig)));
 
-  // Signature header format: "v1,{base64}" — extract the base64 part
-  const received = signatureHeader.includes(",")
-    ? signatureHeader.split(",")[1]
-    : signatureHeader;
-
-  return computedSig === received;
+  // Signature header may contain multiple signatures: "v1,{base64} v1,{base64}"
+  const signatures = signatureHeader.split(" ").map((s) =>
+    s.includes(",") ? s.split(",")[1] : s
+  );
+  return signatures.some((s) => s === computedSig);
 }
 
 // ---------------------------------------------------------------------------
@@ -169,6 +178,62 @@ async function resolveSlackUserName(userId: string): Promise<string> {
     // Fall through
   }
   return userId;
+}
+
+// ---------------------------------------------------------------------------
+// Composio token helpers (for Outlook email fetching)
+// ---------------------------------------------------------------------------
+
+async function fetchComposioAccessToken(connectionNanoId: string): Promise<string | null> {
+  if (!COMPOSIO_API_KEY) return null;
+  try {
+    const resp = await fetch(
+      `https://backend.composio.dev/api/v3/connected_accounts/${connectionNanoId}`,
+      { headers: { "x-api-key": COMPOSIO_API_KEY } },
+    );
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    return data?.data?.access_token ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchOutlookEmail(
+  messageId: string,
+  accessToken: string,
+): Promise<{ subject: string; body: string; from: string; to: string; cc: string; bcc: string; attachments: Array<{ name: string; size: number }> } | null> {
+  try {
+    const resp = await fetch(
+      `https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(messageId)}?$select=subject,body,bodyPreview,from,toRecipients,ccRecipients,bccRecipients,hasAttachments&$expand=attachments($select=name,size)`,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+          Prefer: 'outlook.body-content-type="text"',
+        },
+      },
+    );
+    if (!resp.ok) return null;
+    const email = await resp.json();
+    const extractAddresses = (arr: Array<{ emailAddress?: { address?: string } }> | undefined) =>
+      (arr ?? []).map((r) => r.emailAddress?.address).filter(Boolean).join(", ");
+    const attachments = (email.attachments ?? []).map((a: Record<string, unknown>) => ({
+      name: (a.name as string) ?? "unnamed",
+      size: (a.size as number) ?? 0,
+    }));
+    return {
+      subject: email.subject ?? "",
+      body: email.body?.content ?? email.bodyPreview ?? "",
+      from: email.from?.emailAddress?.address ?? "",
+      to: extractAddresses(email.toRecipients),
+      cc: extractAddresses(email.ccRecipients),
+      bcc: extractAddresses(email.bccRecipients),
+      attachments,
+    };
+  } catch {
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -345,10 +410,10 @@ async function bufferAndFlush(
 }
 
 // ---------------------------------------------------------------------------
-// Slack handler — Composio webhook (user OAuth)
+// Composio handler — unified entry point for all Composio triggers
 // ---------------------------------------------------------------------------
 
-async function handleSlack(req: Request): Promise<Response> {
+async function handleComposio(req: Request): Promise<Response> {
   const rawBody = await req.text();
 
   // Verify Composio HMAC-SHA256 signature
@@ -359,6 +424,7 @@ async function handleSlack(req: Request): Promise<Response> {
     if (sigHeader) {
       const valid = await verifyComposioSignature(rawBody, webhookId, webhookTimestamp, sigHeader);
       if (!valid) {
+        console.error(`[channel-webhook/composio] signature mismatch`);
         return new Response("Invalid signature", { status: 401 });
       }
     }
@@ -371,19 +437,57 @@ async function handleSlack(req: Request): Promise<Response> {
     return new Response("Invalid JSON", { status: 400 });
   }
 
-  console.log("[channel-webhook/slack] Payload keys:", Object.keys(body));
-
-  // Extract from Composio trigger payload
+  const triggerType = (body.type as string) ?? "";
+  const triggerLower = triggerType.toLowerCase();
   const data = body.data as Record<string, unknown> | undefined;
   if (!data) {
-    console.log("[channel-webhook/slack] No 'data' key in payload, keys:", Object.keys(body));
     return jsonResponse({ ok: true, skipped: "no_data" });
   }
 
+  // Extract trigger name from metadata.trigger_slug (Composio's field name)
+  const metadata = body.metadata as Record<string, unknown> | undefined;
+  const triggerName = (
+    (metadata?.trigger_slug as string) ?? (metadata?.trigger_name as string) ??
+    (body.trigger_name as string) ?? ""
+  ).toLowerCase();
+  console.log(`[channel-webhook/composio] trigger_slug=${triggerName || "(empty)"} type=${triggerType}`);
+
+  // Route by trigger_name first (specific), then fall back to type.
+  // If trigger_name is still empty, infer from data keys.
+  let routeKey = triggerName || triggerLower;
+  if (!triggerName && data) {
+    // Gmail events have message_id + message_text + sender
+    if ("message_id" in data && "message_text" in data) {
+      routeKey = "googlesuper_new_message";
+    }
+    // Outlook events have event_type + id (minimal payload, need Graph API fetch)
+    else if ("event_type" in data && !("message_text" in data)) {
+      routeKey = "outlook_message_trigger";
+    }
+  }
+
+  if (SLACK_TRIGGERS.includes(routeKey)) {
+    return handleSlackTrigger(data);
+  }
+  if (routeKey === "gmail_new_gmail_message" || routeKey === "googlesuper_new_message") {
+    return handleGmailTrigger(data);
+  }
+  if (routeKey === "outlook_message_trigger") {
+    return handleOutlookTrigger(data, metadata);
+  }
+
+  console.log(`[channel-webhook/composio] unhandled trigger type: ${triggerType}`);
+  return jsonResponse({ ok: true, skipped: "unhandled_trigger", type: triggerType });
+}
+
+// ---------------------------------------------------------------------------
+// Slack trigger handler (from Composio)
+// ---------------------------------------------------------------------------
+
+async function handleSlackTrigger(data: Record<string, unknown>): Promise<Response> {
   // V3 payload uses "text", V2 used "message"
   const messageText = (data.text as string) ?? (data.message as string) ?? "";
   if (!messageText) {
-    console.log("[channel-webhook/slack] Empty message, data keys:", Object.keys(data));
     return jsonResponse({ ok: true, skipped: "empty_message" });
   }
 
@@ -412,6 +516,120 @@ async function handleSlack(req: Request): Promise<Response> {
     channelId, channelType, messageTs, threadTs,
     DEBOUNCE_MS,
   );
+}
+
+// ---------------------------------------------------------------------------
+// Gmail trigger handler (from Composio)
+// ---------------------------------------------------------------------------
+
+async function handleGmailTrigger(data: Record<string, unknown>): Promise<Response> {
+  const messageId = (data.message_id as string) ?? "";
+  const sender = (data.sender as string) ?? "";
+  const subject = (data.subject as string) ?? "";
+  const messageText = (data.message_text as string) ?? "";
+  const attachmentList = data.attachment_list as Array<Record<string, unknown>> | undefined;
+
+  // Extract to/cc/bcc from payload headers if available
+  const payload = data.payload as Record<string, unknown> | undefined;
+  const headers = (payload?.headers ?? []) as Array<{ name?: string; value?: string }>;
+  const getHeader = (name: string) => headers.find((h) => h.name?.toLowerCase() === name)?.value ?? "";
+  const to = getHeader("to");
+  const cc = getHeader("cc");
+  const bcc = getHeader("bcc");
+
+  if (!messageText && !subject) {
+    return jsonResponse({ ok: true, skipped: "empty_email" });
+  }
+
+  console.log(`[channel-webhook/gmail] from=${sender} subject="${subject}"`);
+
+  // Build combined text with optional attachment list
+  let combinedText = `Subject: ${subject}\n\n${messageText}`;
+  if (Array.isArray(attachmentList) && attachmentList.length > 0) {
+    const lines = attachmentList.map((a) => {
+      const name = (a.filename as string) ?? (a.name as string) ?? "unnamed";
+      const size = a.size as number | undefined;
+      return size ? `- ${name} (${formatFileSize(size)})` : `- ${name}`;
+    });
+    combinedText += `\n\nAttachments:\n${lines.join("\n")}`;
+  }
+
+  await insertQueue({
+    source: "email",
+    priority: 3,
+    buffer_key: `gmail:${messageId}`,
+    combined_text: combinedText,
+    metadata: {
+      email_source: "gmail",
+      message_id: messageId,
+      sender,
+      subject,
+      to,
+      cc,
+      bcc,
+    },
+  });
+
+  return jsonResponse({ ok: true, queued: true, source: "gmail" });
+}
+
+// ---------------------------------------------------------------------------
+// Outlook trigger handler (from Composio)
+// ---------------------------------------------------------------------------
+
+async function handleOutlookTrigger(data: Record<string, unknown>, metadata?: Record<string, unknown>): Promise<Response> {
+  const messageId = (data.id as string) ?? "";
+  // connected_account_id is in metadata (from Composio webhook envelope)
+  const connectionNanoId = (metadata?.connected_account_id as string) ?? (data.connection_nano_id as string) ?? "";
+
+  console.log(`[channel-webhook/outlook] messageId=${messageId} connectionId=${connectionNanoId}`);
+
+  if (!messageId || !connectionNanoId) {
+    console.error(`[channel-webhook/outlook] missing_id — messageId=${messageId} connectionId=${connectionNanoId}`);
+    return jsonResponse({ ok: true, skipped: "missing_id" });
+  }
+
+  // Fetch full email from Graph API via Composio token
+  const accessToken = await fetchComposioAccessToken(connectionNanoId);
+  if (!accessToken) {
+    console.error("[channel-webhook/outlook] failed to get Composio access token");
+    return jsonResponse({ ok: false, error: "token_fetch_failed" }, 500);
+  }
+
+  const email = await fetchOutlookEmail(messageId, accessToken);
+  if (!email) {
+    console.error("[channel-webhook/outlook] failed to fetch email content");
+    return jsonResponse({ ok: false, error: "email_fetch_failed" }, 500);
+  }
+
+  console.log(`[channel-webhook/outlook] from=${email.from} subject="${email.subject}"`);
+
+  // Build combined text with optional attachment list
+  let combinedText = `Subject: ${email.subject}\n\n${email.body}`;
+  if (email.attachments.length > 0) {
+    const lines = email.attachments.map((a) =>
+      a.size ? `- ${a.name} (${formatFileSize(a.size)})` : `- ${a.name}`
+    );
+    combinedText += `\n\nAttachments:\n${lines.join("\n")}`;
+  }
+
+  await insertQueue({
+    source: "email",
+    priority: 3,
+    buffer_key: `outlook:${messageId}`,
+    combined_text: combinedText,
+    metadata: {
+      email_source: "outlook",
+      message_id: messageId,
+      sender: email.from,
+      subject: email.subject,
+      to: email.to,
+      cc: email.cc,
+      bcc: email.bcc,
+    },
+  });
+
+  return jsonResponse({ ok: true, queued: true, source: "outlook" });
 }
 
 // ---------------------------------------------------------------------------
@@ -557,6 +775,20 @@ async function handleSlackBot(req: Request): Promise<Response> {
 // Helpers
 // ---------------------------------------------------------------------------
 
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function escapeXml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 function jsonResponse(data: Record<string, unknown>, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
@@ -579,9 +811,9 @@ serve(async (req: Request) => {
   if (path.endsWith("/slack-bot")) {
     return handleSlackBot(req);
   }
-  if (path.endsWith("/slack")) {
-    return handleSlack(req);
+  if (path.endsWith("/composio") || path.endsWith("/slack")) {
+    return handleComposio(req);
   }
 
-  return jsonResponse({ error: "Unknown platform. Use /slack or /slack-bot" }, 404);
+  return jsonResponse({ error: "Unknown route" }, 404);
 });
