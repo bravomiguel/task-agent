@@ -121,6 +121,17 @@ def _find_account_by_slug(
     return None
 
 
+def _get_connected_account(account_id: str) -> dict[str, Any]:
+    """Fetch a single connected account by ID (includes full credential data)."""
+    resp = httpx.get(
+        f"{COMPOSIO_API_URL}/connected_accounts/{account_id}",
+        headers=_composio_headers(),
+        timeout=15,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
 # ---------------------------------------------------------------------------
 # Sandbox token helpers
 # ---------------------------------------------------------------------------
@@ -260,27 +271,43 @@ def _bootstrap_trello(sandbox, acct: dict) -> dict[str, Any]:
     Trello uses OAuth1 but accepts simple key+token query params.
     We need both the consumer_key (API key) and the OAuth access_token.
     """
+    # Try extracting token and key from list endpoint data first
     token = _extract_access_token(acct)
     if not token:
-        # OAuth1 may use 'oauth_token' instead of 'access_token'
         state_val = acct.get("state", {}).get("val", {})
         token = state_val.get("oauth_token") or acct.get("data", {}).get("oauth_token")
+    consumer_key = _extract_consumer_key(acct)
+
+    # List endpoint often lacks queryParams — fetch single account for full data
+    if not token or not consumer_key:
+        acct_id = acct.get("id")
+        if acct_id:
+            try:
+                full_acct = _get_connected_account(acct_id)
+                query_params = (
+                    full_acct.get("data", {}).get("queryParams", {})
+                    or full_acct.get("params", {}).get("queryParams", {})
+                )
+                if not token:
+                    token = query_params.get("token")
+                if not consumer_key:
+                    consumer_key = query_params.get("key")
+            except Exception as e:
+                logger.warning("[Auth] failed to fetch full Trello account: %s", e)
+
     if not token:
-        return {"error": "No access_token or oauth_token in credentials. Check Composio connection status."}
+        return {"error": "No access_token found in Trello credentials. Check Composio connection status."}
 
     if token.endswith("..."):
         return {
             "error": "Access token is masked. Disable secret masking in "
                      "Composio project settings (Settings > Project Configuration).",
         }
-
-    consumer_key = _extract_consumer_key(acct)
     if not consumer_key:
         return {
             "error": (
-                "No consumer_key (API key) found in Trello credentials. "
-                "The Composio connected account may not include it. "
-                "Check the connected account state in Composio dashboard."
+                "No API key found in Trello credentials. "
+                "Check the connected account in Composio dashboard."
             ),
         }
 
