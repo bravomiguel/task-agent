@@ -26,7 +26,7 @@ class SkillMetadata(TypedDict):
 
 _SKILLS_SCRIPT = (
     'for d in {skills_dir}/*/; do '
-    '  f="$d/SKILL.md"; '
+    '  f="${{d}}SKILL.md"; '
     '  [ -f "$f" ] || continue; '
     '  echo "===SKILL_PATH:$f==="; '
     '  head -20 "$f"; '
