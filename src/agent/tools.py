@@ -954,6 +954,7 @@ def manage_auth(
         disconnect_slack_bot,
         initiate_service,
         list_connected_services,
+        service_status,
         slack_status,
     )
 
@@ -992,7 +993,8 @@ def manage_auth(
             if service in ("slack", "slack-bot"):
                 result = slack_status()
                 return _json.dumps(result)
-            return _json.dumps({"error": f"Status not implemented for {service}. Use 'list' to check all services."})
+            result = service_status(service)
+            return _json.dumps(result)
 
         elif action == "disconnect":
             if not service:

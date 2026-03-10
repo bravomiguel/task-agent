@@ -1,7 +1,7 @@
 """Runtime context middleware for assembling system prompt and injecting message context.
 
-Assembly order (mirrors OpenClaw):
-  STATIC_PART_01 → Skills → STATIC_PART_02 → Current Session → Project Context → STATIC_PART_03
+Assembly order:
+  STATIC_PART_01 → Skills → Connected Accounts → STATIC_PART_02 → Current Session → Project Context → STATIC_PART_03
 
 Also stamps human messages with a <current-datetime> tag.
 """
@@ -58,6 +58,7 @@ class RuntimeContextState(ModalSandboxState):
     prompt_files: NotRequired[dict[str, str]]
     skills_metadata: NotRequired[list[SkillMetadata]]
     skills_config: NotRequired[dict[str, bool]]
+    connected_accounts: NotRequired[list[dict]]
 
 
 class RuntimeContextMiddleware(AgentMiddleware[RuntimeContextState, Any]):
@@ -171,6 +172,24 @@ class RuntimeContextMiddleware(AgentMiddleware[RuntimeContextState, Any]):
         else:
             request.system_prompt = skills_section
 
+    def _inject_connected_accounts(self, request: ModelRequest) -> None:
+        """Inject connected accounts list below skills section."""
+        accounts = request.state.get("connected_accounts", [])
+        if not request.system_prompt:
+            return
+
+        if not accounts:
+            section = "\n\n## Connected Accounts\n\nNo external services connected. Use `manage_auth` to connect services."
+        else:
+            names = [a.get("display_name") or a.get("service") for a in accounts]
+            section = (
+                "\n\n## Connected Accounts\n\n"
+                f"The following services are connected: {', '.join(names)}.\n"
+                "Use `manage_auth` action `\"connect\"` with the service name to fetch "
+                "fresh credentials into the sandbox when a skill needs them."
+            )
+        request.system_prompt += section
+
     def _inject_project_context(self, request: ModelRequest) -> None:
         """Inject all prompt files as Project Context sections."""
         prompt_files = request.state.get("prompt_files", {})
@@ -202,28 +221,31 @@ class RuntimeContextMiddleware(AgentMiddleware[RuntimeContextState, Any]):
     def _inject_all(self, request: ModelRequest) -> None:
         """Assemble all prompt components in order.
 
-        Final order: STATIC_PART_01 → Skills → STATIC_PART_02 → Current Session
-                     → Project Context → STATIC_PART_03
+        Final order: STATIC_PART_01 → Skills → Connected Accounts → STATIC_PART_02
+                     → Current Session → Project Context → STATIC_PART_03
         STATIC_PART_01 is already set as request.system_prompt by the graph.
         """
         # 1. Skills (after STATIC_PART_01)
         self._inject_skills(request)
 
-        # 2. STATIC_PART_02 (Memory Recall, Workspace, HITL, File Reliability)
+        # 2. Connected Accounts (after Skills)
+        self._inject_connected_accounts(request)
+
+        # 3. STATIC_PART_02 (Memory Recall, Workspace, HITL, File Reliability)
         if request.system_prompt:
             request.system_prompt += STATIC_PART_02
 
-        # 3. Current Session (session ID)
+        # 4. Current Session (session ID)
         self._inject_system_prompt_context(request)
 
-        # 4. Project Context (AGENTS.md, SOUL.md, MEMORY.md, etc.)
+        # 5. Project Context (AGENTS.md, SOUL.md, MEMORY.md, etc.)
         self._inject_project_context(request)
 
-        # 5. Protocol (Heartbeats + Silent Replies — last, matching OpenClaw)
+        # 6. Protocol (Heartbeats + Silent Replies — last, matching OpenClaw)
         if request.system_prompt:
             request.system_prompt += STATIC_PART_03
 
-        # 6. Datetime stamp on human messages
+        # 7. Datetime stamp on human messages
         self._inject_datetime_tag(request.messages)
 
     def wrap_model_call(

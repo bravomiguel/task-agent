@@ -97,21 +97,36 @@ class SessionSetupMiddleware(AgentMiddleware[AgentState, Any]):
         )
         return head + marker + tail
 
-    def _load_prompt_files(self, sandbox_id: str, _retries: int = 3) -> dict[str, Any]:
-        """Read all .md files from /mnt/prompts/ + MEMORY.md in one sandbox call."""
-        for attempt in range(_retries):
-            try:
-                sandbox = modal.Sandbox.from_id(sandbox_id)
-                process = sandbox.exec(
-                    "bash", "-c",
-                    'for f in /mnt/prompts/*.md; do '
-                    '[ -f "$f" ] && echo "---FILE:$(basename $f)" && cat "$f"; '
-                    'done; '
-                    '[ -f /mnt/memory/MEMORY.md ] && '
-                    'echo "---FILE:MEMORY.md" && cat /mnt/memory/MEMORY.md; '
-                    'true',
-                    timeout=10,
-                )
+    def _load_prompt_files(self, sandbox_id: str) -> dict[str, Any]:
+        """Read all .md files from /mnt/prompts/ + MEMORY.md in one sandbox call.
+
+        Uses expected-count verification (like skills discovery) to retry
+        when the volume hasn't fully materialized yet.
+        """
+        try:
+            sandbox = modal.Sandbox.from_id(sandbox_id)
+
+            # Count expected .md files on volume
+            count_proc = sandbox.exec(
+                "bash", "-c",
+                'ls -1 /mnt/prompts/*.md 2>/dev/null | wc -l',
+                timeout=10,
+            )
+            count_proc.wait()
+            expected = int(count_proc.stdout.read().strip() or "0")
+
+            # Read all prompt files + MEMORY.md in one call
+            script = (
+                'for f in /mnt/prompts/*.md; do '
+                '[ -f "$f" ] && echo "---FILE:$(basename $f)" && cat "$f"; '
+                'done; '
+                '[ -f /mnt/memory/MEMORY.md ] && '
+                'echo "---FILE:MEMORY.md" && cat /mnt/memory/MEMORY.md; '
+                'true'
+            )
+
+            for attempt in range(3):
+                process = sandbox.exec("bash", "-c", script, timeout=15)
                 process.wait()
 
                 stdout = process.stdout.read()
@@ -139,13 +154,46 @@ class SessionSetupMiddleware(AgentMiddleware[AgentState, Any]):
                             content, self.MAX_FILE_CHARS, self.HEAD_RATIO, self.TAIL_RATIO,
                         )
 
-                if prompt_files:
-                    return {"prompt_files": prompt_files}
-                logger.warning("[SessionSetup] prompt files empty, retry %d/%d", attempt + 1, _retries)
-            except Exception as e:
-                logger.warning("[SessionSetup] failed to load prompt files (retry %d/%d): %s", attempt + 1, _retries, e)
-            time.sleep(0.5)
-        return {}
+                # Count prompt files only (exclude MEMORY.md from comparison)
+                prompt_count = sum(1 for k in prompt_files if k != "MEMORY.md")
+                if prompt_count >= expected or expected == 0:
+                    logger.info("[SessionSetup] loaded %d/%d prompt files", prompt_count, expected)
+                    if prompt_files:
+                        return {"prompt_files": prompt_files}
+
+                logger.info(
+                    "[SessionSetup] found %d/%d prompt files (attempt %d), waiting for volume sync...",
+                    prompt_count, expected, attempt + 1,
+                )
+                time.sleep(1)
+
+            logger.warning("[SessionSetup] returning %d/%d prompt files after retries", prompt_count, expected)
+            return {"prompt_files": prompt_files} if prompt_files else {}
+
+        except Exception as e:
+            logger.warning("[SessionSetup] failed to load prompt files: %s", e)
+            return {}
+
+    # -- Connected accounts (sync, runs in thread) ---------------------------
+
+    def _load_connected_accounts(self) -> dict[str, Any]:
+        """Fetch connected accounts from Composio for system prompt context."""
+        try:
+            from agent.auth import list_connected_services, vault_get_secret
+
+            services = list_connected_services()
+            # Also check slack-bot (vault-based, not Composio)
+            bot_token = vault_get_secret("slack_bot_token")
+            if bot_token:
+                services.append({
+                    "service": "slack-bot",
+                    "display_name": "Slack Bot",
+                    "status": "ACTIVE",
+                })
+            return {"connected_accounts": services}
+        except Exception as e:
+            logger.warning("[SessionSetup] failed to load connected accounts: %s", e)
+            return {}
 
     # -- Skills discovery (sync, runs in thread) -----------------------------
 
@@ -266,10 +314,11 @@ class SessionSetupMiddleware(AgentMiddleware[AgentState, Any]):
         if not sandbox_id:
             return updates or None
 
-        with ThreadPoolExecutor(max_workers=2) as pool:
+        with ThreadPoolExecutor(max_workers=3) as pool:
             futures = [
                 pool.submit(self._load_prompt_files, sandbox_id),
                 pool.submit(self._load_skills, sandbox_id),
+                pool.submit(self._load_connected_accounts),
             ]
             for future in futures:
                 try:
@@ -303,6 +352,7 @@ class SessionSetupMiddleware(AgentMiddleware[AgentState, Any]):
         results = await asyncio.gather(
             loop.run_in_executor(None, self._load_prompt_files, sandbox_id),
             loop.run_in_executor(None, self._load_skills, sandbox_id),
+            loop.run_in_executor(None, self._load_connected_accounts),
             self._setup_memory(state),
             return_exceptions=True,
         )
