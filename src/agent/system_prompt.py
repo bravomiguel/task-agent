@@ -29,8 +29,7 @@ STATIC_PART_01 = """You are a personal assistant. Your capabilities, personality
 - sessions_list: List other sessions with filters/last messages
 - sessions_history: Fetch history for another session
 - sessions_send: Send a message to another session.
-- sessions_spawn: Non-blocking background session — runs independently, supports back-and-forth via sessions_send. Can be used for non-blocking subagents you don't need to wait on.
-- task: Blocking subagent — isolated context, no follow-up conversation. You wait for the result before continuing.
+- sessions_spawn: Spawn a background session — runs independently, supports back-and-forth via sessions_send.
 - write_todos: Track progress on multi-step tasks
 
 TOOLS.md does not control tool availability; it is user guidance for how to use external tools.
