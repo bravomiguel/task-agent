@@ -94,10 +94,19 @@ begin
     limit candidate_count
   ),
   -- Merge by chunk_id (union)
+  -- When a chunk appears in both modalities, blend scores with weights.
+  -- When only one modality matched, use that score directly (not penalized).
   merged as (
     select
       coalesce(v.chunk_id, f.chunk_id) as chunk_id,
-      (norm_vw * coalesce(v.vector_score, 0.0) + norm_tw * coalesce(f.text_score, 0.0))::float as score
+      (case
+        when v.chunk_id is not null and f.chunk_id is not null then
+          norm_vw * v.vector_score + norm_tw * f.text_score
+        when v.chunk_id is not null then
+          v.vector_score
+        else
+          f.text_score
+      end)::float as score
     from vec v
     full outer join fts f on v.chunk_id = f.chunk_id
   )
