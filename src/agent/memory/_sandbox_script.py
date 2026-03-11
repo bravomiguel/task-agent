@@ -113,6 +113,36 @@ def _classify_source(path: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Robust table open helper
+# ---------------------------------------------------------------------------
+
+def _open_or_create_table(db, table_name: str, schema=None):
+    """Open a LanceDB table, recovering from corruption.
+
+    If the table exists but open_table fails (corrupted Lance files),
+    drop it and recreate. If drop also fails, nuke the entire .lancedb
+    directory and reconnect from scratch.
+    """
+    import shutil
+
+    if table_name in db.list_tables().tables:
+        try:
+            return db.open_table(table_name)
+        except Exception:
+            print(f"[lancedb] open_table failed, attempting drop+recreate", file=sys.stderr)
+            try:
+                db.drop_table(table_name)
+            except Exception:
+                print(f"[lancedb] drop_table also failed, nuking {DB_PATH}", file=sys.stderr)
+                shutil.rmtree(DB_PATH, ignore_errors=True)
+                db = __import__("lancedb").connect(DB_PATH)
+
+    if schema is not None:
+        return db.create_table(table_name, schema=schema)
+    return None
+
+
+# ---------------------------------------------------------------------------
 # sync
 # ---------------------------------------------------------------------------
 
@@ -143,17 +173,7 @@ def cmd_sync(args: argparse.Namespace) -> None:
 
     # -- connect ----------------------------------------------------------
     db = lancedb.connect(DB_PATH)
-
-    existing = db.list_tables().tables
-    if TABLE_NAME in existing:
-        try:
-            table = db.open_table(TABLE_NAME)
-        except Exception:
-            # Corrupted table — drop and recreate
-            db.drop_table(TABLE_NAME)
-            table = db.create_table(TABLE_NAME, schema=MemoryChunk)
-    else:
-        table = db.create_table(TABLE_NAME, schema=MemoryChunk)
+    table = _open_or_create_table(db, TABLE_NAME, MemoryChunk)
 
     # -- list memory and session files ------------------------------------
     current_files: dict[str, dict] = {}
@@ -337,7 +357,12 @@ def cmd_search(args: argparse.Namespace) -> None:
         json.dump({"results": [], "message": "No memory index found"}, sys.stdout)
         return
 
-    table = db.open_table(TABLE_NAME)
+    try:
+        table = db.open_table(TABLE_NAME)
+    except Exception as exc:
+        print(f"[search] open_table failed: {exc}", file=sys.stderr)
+        json.dump({"results": [], "error": f"Index corrupted, will rebuild on next sync: {exc}"}, sys.stdout)
+        return
     query = args.query
     max_results = args.max_results
     min_score = args.min_score
