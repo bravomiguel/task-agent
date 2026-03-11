@@ -85,12 +85,12 @@ begin
   fts as (
     select
       mc.chunk_id,
-      (1.0 / (1.0 + row_number() over (order by ts_rank_cd(mc.fts, websearch_to_tsquery('english', query_text)) desc) - 1))::float as text_score
+      (1.0 / (1.0 + row_number() over (order by ts_rank_cd(mc.fts, plainto_tsquery('english', query_text)) desc) - 1))::float as text_score
     from memory_chunks mc
     where
-      mc.fts @@ websearch_to_tsquery('english', query_text)
+      mc.fts @@ plainto_tsquery('english', query_text)
       and (source_filter is null or mc.source = source_filter)
-    order by ts_rank_cd(mc.fts, websearch_to_tsquery('english', query_text)) desc
+    order by ts_rank_cd(mc.fts, plainto_tsquery('english', query_text)) desc
     limit candidate_count
   ),
   -- Merge by chunk_id (union)
