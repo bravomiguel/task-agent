@@ -91,10 +91,21 @@ class HeartbeatConfig(BaseModel):
         return v
 
 
+VALID_CHANNELS = {"slack", "teams", "gmail", "outlook"}
+
+
+class ChannelsConfig(BaseModel):
+    slack: bool = True
+    teams: bool = True
+    gmail: bool = True
+    outlook: bool = True
+
+
 class UserConfig(BaseModel):
     timezone: str = DEFAULT_TIMEZONE  # IANA timezone — global user timezone
     heartbeat: HeartbeatConfig = HeartbeatConfig()
     skills: dict[str, bool | str] = {}  # missing/true = enabled; string = disabled (value is description)
+    channels: ChannelsConfig = ChannelsConfig()  # inbound event toggles per platform
 
     @field_validator("timezone")
     @classmethod
@@ -281,6 +292,8 @@ def apply_config_side_effects(
     """
     reconcile_heartbeat_cron(config)
     results: dict[str, Any] = {}
+    if patch and "channels" in patch:
+        _sync_channels_to_vault(config)
     if sandbox_id:
         _sync_timezone_to_user_md(sandbox_id, config.timezone)
         # Sync skills to volume based on patch
@@ -293,6 +306,18 @@ def apply_config_side_effects(
             if skill_results:
                 results["skills"] = skill_results
     return results or None
+
+
+def _sync_channels_to_vault(config: UserConfig) -> None:
+    """Sync channel on/off toggles to Supabase vault for edge functions."""
+    try:
+        from agent.auth import vault_set_secret
+
+        data = json.dumps(config.channels.model_dump())
+        vault_set_secret("inbound_channels", data)
+        logger.info("[Config] synced channels to vault: %s", data)
+    except Exception as e:
+        logger.warning("[Config] failed to sync channels to vault: %s", e)
 
 
 # ---------------------------------------------------------------------------

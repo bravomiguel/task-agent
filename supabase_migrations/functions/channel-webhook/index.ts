@@ -419,6 +419,32 @@ async function bufferAndFlush(
 }
 
 // ---------------------------------------------------------------------------
+// Inbound channel gate — check if platform is enabled via vault config
+// ---------------------------------------------------------------------------
+
+let _channelsCache: { config: Record<string, boolean>; expiresAt: number } | null = null;
+
+async function isChannelEnabled(platform: string): Promise<boolean> {
+  // Cache for 60 seconds to avoid hammering vault on every message
+  if (_channelsCache && Date.now() < _channelsCache.expiresAt) {
+    return _channelsCache.config[platform] !== false;
+  }
+
+  const raw = await getVaultSecret("inbound_channels");
+  if (raw) {
+    try {
+      const config = JSON.parse(raw) as Record<string, boolean>;
+      _channelsCache = { config, expiresAt: Date.now() + 60_000 };
+      return config[platform] !== false;
+    } catch {
+      // Invalid JSON — fall through to default (enabled)
+    }
+  }
+  // No config or parse error — all channels enabled by default
+  return true;
+}
+
+// ---------------------------------------------------------------------------
 // Composio handler — unified entry point for all Composio triggers
 // ---------------------------------------------------------------------------
 
@@ -476,12 +502,21 @@ async function handleComposio(req: Request): Promise<Response> {
   }
 
   if (SLACK_TRIGGERS.includes(routeKey)) {
+    if (!(await isChannelEnabled("slack"))) {
+      return jsonResponse({ ok: true, skipped: "channel_disabled", platform: "slack" });
+    }
     return handleSlackTrigger(data);
   }
   if (routeKey === "gmail_new_gmail_message" || routeKey === "googlesuper_new_message") {
+    if (!(await isChannelEnabled("gmail"))) {
+      return jsonResponse({ ok: true, skipped: "channel_disabled", platform: "gmail" });
+    }
     return handleGmailTrigger(data);
   }
   if (routeKey === "outlook_message_trigger") {
+    if (!(await isChannelEnabled("outlook"))) {
+      return jsonResponse({ ok: true, skipped: "channel_disabled", platform: "outlook" });
+    }
     return handleOutlookTrigger(data, metadata);
   }
 
@@ -661,6 +696,11 @@ async function handleSlackBot(req: Request): Promise<Response> {
   // signing secret is stored in vault — Slack sends this immediately on save)
   if (body.type === "url_verification") {
     return jsonResponse({ challenge: body.challenge as string });
+  }
+
+  // Check if Slack channel is enabled
+  if (!(await isChannelEnabled("slack"))) {
+    return jsonResponse({ ok: true, skipped: "channel_disabled", platform: "slack" });
   }
 
   // Check if bot is configured (token exists in vault)
@@ -983,6 +1023,11 @@ async function handleTeams(req: Request): Promise<Response> {
       status: 200,
       headers: { "Content-Type": "text/plain" },
     });
+  }
+
+  // Check if Teams channel is enabled (after validation — always allow validation)
+  if (!(await isChannelEnabled("teams"))) {
+    return jsonResponse({ ok: true, skipped: "channel_disabled", platform: "teams" });
   }
 
   // POST: Change notifications

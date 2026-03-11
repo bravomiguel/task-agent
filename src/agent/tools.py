@@ -651,12 +651,13 @@ def manage_config(
     patch: str = None,
     state: Annotated[dict, InjectedState] = None,
 ) -> str:
-    """View or update user configuration (timezone, heartbeat, skills, etc.).
+    """View or update user configuration (timezone, heartbeat, skills, channels, etc.).
 
     Use this tool (not manage_crons) to change heartbeat frequency or active hours.
     Use this tool to change user timezone — it auto-syncs to USER.md.
     Use this tool to check skill status (disabled skills have descriptions in config) and enable/disable them.
     Enabled skills are fetched immediately — read the returned path to use them.
+    Use this tool to toggle inbound message channels on/off (slack, teams, gmail, outlook).
 
     Args:
         action: "get" to read current config, "patch" to merge changes.
@@ -665,6 +666,8 @@ def manage_config(
             Example: '{"heartbeat": {"active_hours": {"start": "09:00", "end": "17:00"}}}'
             Example: '{"skills": {"notion": false}}' — disable a skill
             Example: '{"skills": {"notion": true}}' — re-enable a skill
+            Example: '{"channels": {"gmail": false}}' — disable Gmail inbound
+            Example: '{"channels": {"teams": true}}' — re-enable Teams inbound
             Use null to delete a key: '{"heartbeat": {"active_hours": null}}'
 
     Returns:
