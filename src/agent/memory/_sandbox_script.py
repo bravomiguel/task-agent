@@ -146,7 +146,12 @@ def cmd_sync(args: argparse.Namespace) -> None:
 
     existing = db.list_tables().tables
     if TABLE_NAME in existing:
-        table = db.open_table(TABLE_NAME)
+        try:
+            table = db.open_table(TABLE_NAME)
+        except Exception:
+            # Corrupted table — drop and recreate
+            db.drop_table(TABLE_NAME)
+            table = db.create_table(TABLE_NAME, schema=MemoryChunk)
     else:
         table = db.create_table(TABLE_NAME, schema=MemoryChunk)
 
