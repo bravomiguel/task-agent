@@ -52,11 +52,11 @@ def sync_memory_index(sandbox: modal.Sandbox) -> dict:
     """
     try:
         t0 = time.monotonic()
-        logger.info("[MemoryIndex] reloading volumes…")
-        sandbox.reload_volumes()
-        logger.info(
-            "[MemoryIndex] volumes reloaded in %.1fs", time.monotonic() - t0
-        )
+
+        # Skip reload_volumes() — the sandbox was just created with the volume
+        # mounted, so it already has the latest state.  reload_volumes() causes
+        # the volume to appear EMPTY while in progress, which is why the file
+        # listing was returning 0 files.
 
         # List and read all .md files from sandbox
         t1 = time.monotonic()
