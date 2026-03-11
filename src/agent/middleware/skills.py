@@ -6,6 +6,7 @@ in the sandbox. Used by SessionSetupMiddleware for skill discovery.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
@@ -23,21 +24,41 @@ class SkillMetadata(TypedDict):
     path: str
 
 
-
+# Single script that reads all SKILL.md frontmatter AND the manifest in one exec.
+# Outputs skill blocks first, then the manifest JSON after a separator.
 _SKILLS_SCRIPT = (
     'for d in {skills_dir}/*/; do '
     '  f="${{d}}SKILL.md"; '
     '  [ -f "$f" ] || continue; '
     '  echo "===SKILL_PATH:$f==="; '
     '  head -20 "$f"; '
-    'done'
+    'done; '
+    'echo "===MANIFEST==="; '
+    'cat {skills_dir}/_manifest/manifest.json 2>/dev/null || echo "[]"'
 )
 
 
-def _parse_skills_output(output: str) -> list[SkillMetadata]:
-    """Parse combined SKILL.md frontmatter output into metadata list."""
+def _parse_skills_output(output: str) -> tuple[list[SkillMetadata], list[dict[str, str]]]:
+    """Parse combined output into skill metadata list and manifest.
+
+    Returns:
+        Tuple of (skills on volume, manifest entries).
+    """
+    # Split manifest from skill blocks
+    manifest: list[dict[str, str]] = []
+    skill_output = output
+    if "===MANIFEST===" in output:
+        skill_output, manifest_raw = output.split("===MANIFEST===", 1)
+        manifest_raw = manifest_raw.strip()
+        if manifest_raw:
+            try:
+                manifest = json.loads(manifest_raw)
+            except json.JSONDecodeError as e:
+                logger.warning("[Skills] manifest JSON parse error: %s", e)
+
+    # Parse skill blocks
     skills: list[SkillMetadata] = []
-    for block in output.split("===SKILL_PATH:")[1:]:
+    for block in skill_output.split("===SKILL_PATH:")[1:]:
         try:
             separator_end = block.index("===\n")
         except ValueError:
@@ -62,27 +83,30 @@ def _parse_skills_output(output: str) -> list[SkillMetadata]:
                 description=metadata["description"],
                 path=skill_path,
             ))
-    return skills
+    return skills, manifest
 
 
-def _list_skills_from_sandbox(sandbox: modal.Sandbox, skills_dir: str = "/mnt/skills") -> list[SkillMetadata]:
+def _list_skills_from_sandbox(
+    sandbox: modal.Sandbox, skills_dir: str = "/mnt/skills",
+) -> tuple[list[SkillMetadata], list[dict[str, str]]]:
     """List all skills from the sandbox's /skills directory.
 
-    Uses a single sandbox.exec call to read all SKILL.md frontmatter at once.
-    Retries if the directory count exceeds parsed skills (volume still syncing).
+    Uses a single sandbox.exec call to read all SKILL.md frontmatter and the
+    manifest at once. Retries if the directory count exceeds parsed skills
+    (volume still syncing).
 
     Args:
         sandbox: Modal sandbox with skills baked into image
         skills_dir: Path to skills directory in sandbox
 
     Returns:
-        List of skill metadata
+        Tuple of (skills on volume, manifest entries).
     """
     try:
         # First, count how many skill dirs exist on the volume
         count_proc = sandbox.exec(
             "bash", "-c",
-            f'ls -1d {skills_dir}/*/ 2>/dev/null | wc -l',
+            f'ls -1d {skills_dir}/*/ 2>/dev/null | grep -v "/_manifest/" | wc -l',
             timeout=10,
         )
         count_proc.wait()
@@ -91,15 +115,16 @@ def _list_skills_from_sandbox(sandbox: modal.Sandbox, skills_dir: str = "/mnt/sk
         script = _SKILLS_SCRIPT.format(skills_dir=skills_dir)
 
         # Try up to 3 times, waiting for volume to fully sync
+        manifest: list[dict[str, str]] = []
         for attempt in range(3):
             process = sandbox.exec("bash", "-c", script, timeout=15)
             process.wait()
             output = process.stdout.read()
-            skills = _parse_skills_output(output)
+            skills, manifest = _parse_skills_output(output)
 
             if len(skills) >= expected or expected == 0:
-                logger.info("[Skills] loaded %d/%d skills", len(skills), expected)
-                return skills
+                logger.info("[Skills] loaded %d/%d skills, manifest=%d", len(skills), expected, len(manifest))
+                return skills, manifest
 
             logger.info(
                 "[Skills] found %d/%d skills (attempt %d), waiting for volume sync...",
@@ -109,7 +134,7 @@ def _list_skills_from_sandbox(sandbox: modal.Sandbox, skills_dir: str = "/mnt/sk
 
         # Return whatever we got on final attempt
         logger.warning("[Skills] returning %d/%d skills after retries", len(skills), expected)
-        return skills
+        return skills, manifest
 
     except Exception:
-        return []
+        return [], []

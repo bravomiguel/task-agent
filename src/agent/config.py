@@ -269,14 +269,143 @@ def reconcile_heartbeat_cron(config: UserConfig) -> None:
         logger.warning("[Config] failed to reconcile heartbeat cron: %s", e)
 
 
-def apply_config_side_effects(config: UserConfig, sandbox_id: str | None = None) -> None:
+def apply_config_side_effects(
+    config: UserConfig,
+    sandbox_id: str | None = None,
+    patch: dict | None = None,
+) -> dict[str, Any] | None:
     """Apply all side-effects for a config change.
 
     Called by manage_config tool after patch.
+    Returns side-effect results (e.g. enabled skill paths) or None.
     """
     reconcile_heartbeat_cron(config)
+    results: dict[str, Any] = {}
     if sandbox_id:
         _sync_timezone_to_user_md(sandbox_id, config.timezone)
+        # Sync skills to volume based on patch
+        if patch and "skills" in patch:
+            skill_results = _sync_skills_to_volume(sandbox_id, patch["skills"])
+            if skill_results:
+                results["skills"] = skill_results
+    return results or None
+
+
+# ---------------------------------------------------------------------------
+# Skill volume sync (enable → fetch from GitHub, disable → delete)
+# ---------------------------------------------------------------------------
+
+SKILLS_REPO = "bravomiguel/task-agent"
+SKILLS_REPO_DIR = "skills"
+SKILLS_VOLUME_DIR = "/mnt/skills"
+GITHUB_API_URL = "https://api.github.com"
+
+
+def _sync_skills_to_volume(
+    sandbox_id: str, skills_patch: dict[str, bool],
+) -> dict[str, Any]:
+    """Sync skill folders on the volume based on enable/disable changes.
+
+    Enable (true): fetch skill folder from GitHub repo → write to volume.
+    Disable (false): delete skill folder from volume.
+    Returns dict of skill_name → {status, path} for enabled skills.
+    """
+    import httpx
+
+    sandbox = modal.Sandbox.from_id(sandbox_id)
+    results: dict[str, Any] = {}
+
+    for skill_name, enabled in skills_patch.items():
+        if not isinstance(enabled, bool):
+            continue
+
+        skill_path = f"{SKILLS_VOLUME_DIR}/{skill_name}"
+
+        if not enabled:
+            # Delete skill from volume
+            try:
+                sandbox.exec(
+                    "bash", "-c", f"rm -rf {skill_path}",
+                    timeout=10,
+                ).wait()
+                sandbox.exec("bash", "-c", "sync", timeout=5).wait()
+                results[skill_name] = {"status": "disabled", "deleted": True}
+                logger.info("[Config] deleted skill %s from volume", skill_name)
+            except Exception as e:
+                logger.warning("[Config] failed to delete skill %s: %s", skill_name, e)
+                results[skill_name] = {"status": "error", "error": str(e)}
+            continue
+
+        # Enable: fetch from GitHub and write to volume
+        try:
+            repo_path = f"{SKILLS_REPO_DIR}/{skill_name}"
+            contents_url = (
+                f"{GITHUB_API_URL}/repos/{SKILLS_REPO}"
+                f"/contents/{repo_path}"
+            )
+            resp = httpx.get(contents_url, timeout=15)
+            if resp.status_code == 404:
+                results[skill_name] = {
+                    "status": "error",
+                    "error": f"Skill '{skill_name}' not found in repo.",
+                }
+                continue
+            resp.raise_for_status()
+            items = resp.json()
+
+            # Create skill directory
+            sandbox.exec(
+                "bash", "-c", f"mkdir -p {skill_path}",
+                timeout=5,
+            ).wait()
+
+            # Download each file (recursively handles directories)
+            _fetch_github_dir(sandbox, items, skill_path)
+
+            sandbox.exec("bash", "-c", "sync", timeout=5).wait()
+            results[skill_name] = {
+                "status": "enabled",
+                "path": f"{skill_path}/SKILL.md",
+            }
+            logger.info("[Config] fetched skill %s from GitHub to %s", skill_name, skill_path)
+
+        except Exception as e:
+            logger.warning("[Config] failed to fetch skill %s: %s", skill_name, e)
+            results[skill_name] = {"status": "error", "error": str(e)}
+
+    return results
+
+
+def _fetch_github_dir(sandbox, items: list[dict], dest_dir: str) -> None:
+    """Recursively fetch files from a GitHub directory listing into the sandbox."""
+    import httpx
+
+    for item in items:
+        name = item["name"]
+        dest_path = f"{dest_dir}/{name}"
+
+        if item["type"] == "file":
+            # Download raw file content
+            resp = httpx.get(item["download_url"], timeout=15)
+            resp.raise_for_status()
+            content = resp.text
+            # Write to sandbox
+            escaped = content.replace("'", "'\\''")
+            sandbox.exec(
+                "bash", "-c",
+                f"printf '%s' '{escaped}' > {dest_path}",
+                timeout=10,
+            ).wait()
+
+        elif item["type"] == "dir":
+            # Recurse into subdirectory
+            sandbox.exec(
+                "bash", "-c", f"mkdir -p {dest_path}",
+                timeout=5,
+            ).wait()
+            resp = httpx.get(item["url"], timeout=15)
+            resp.raise_for_status()
+            _fetch_github_dir(sandbox, resp.json(), dest_path)
 
 
 USER_MD_PATH = "/mnt/prompts/USER.md"

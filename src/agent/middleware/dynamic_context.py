@@ -8,10 +8,13 @@ Also stamps human messages with a <current-datetime> tag.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any, Callable, Awaitable, NotRequired
 
 from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
+
+logger = logging.getLogger(__name__)
 
 from agent.middleware.modal_sandbox import ModalSandboxState
 from agent.middleware.skills import SkillMetadata
@@ -58,6 +61,7 @@ class RuntimeContextState(ModalSandboxState):
     prompt_files: NotRequired[dict[str, str]]
     skills_metadata: NotRequired[list[SkillMetadata]]
     skills_config: NotRequired[dict[str, bool]]
+    skills_manifest: NotRequired[list[dict[str, str]]]
     connected_accounts: NotRequired[list[dict]]
 
 
@@ -127,32 +131,32 @@ class RuntimeContextMiddleware(AgentMiddleware[RuntimeContextState, Any]):
         self,
         skills: list[SkillMetadata],
         skills_config: dict[str, bool],
+        manifest: list[dict[str, str]] | None = None,
     ) -> str:
         """Format skills metadata for display in system prompt.
 
-        Enabled skills show full path for reading. Disabled skills are listed
-        but marked as unavailable this session.
+        Enabled skills (on volume) show full path for reading.
+        Disabled skills (in manifest but not on volume) are listed as available to enable.
         """
-        if not skills:
+        if not skills and not manifest:
             return "(No skills available yet. Skills will appear in /mnt/skills/ when added.)"
 
-        enabled = []
-        disabled = []
-        for skill in skills:
-            is_enabled = skills_config.get(skill["name"], True)  # missing = enabled
-            if is_enabled:
-                enabled.append(skill)
-            else:
-                disabled.append(skill)
+        # Skills on volume = enabled
+        enabled_names = {skill["name"] for skill in skills}
 
         lines = ["**Available Skills:**", ""]
-        for skill in enabled:
+        for skill in skills:
             lines.append(f"- **{skill['name']}**: {skill['description']}")
             lines.append(f"  → Read `{skill['path']}` for full instructions")
             lines.append("")
 
+        # Disabled = in manifest but not on volume
+        disabled = [
+            s for s in (manifest or [])
+            if s["name"] not in enabled_names
+        ]
         if disabled:
-            lines.append("**Disabled Skills** (not available this session — use `manage_config` to re-enable; takes effect next session):")
+            lines.append("**Disabled Skills** (use `manage_config` to enable):")
             lines.append("")
             for skill in disabled:
                 lines.append(f"- ~~{skill['name']}~~: {skill['description']}")
@@ -164,7 +168,14 @@ class RuntimeContextMiddleware(AgentMiddleware[RuntimeContextState, Any]):
         """Inject skills documentation into system prompt."""
         skills_metadata = request.state.get("skills_metadata", [])
         skills_config = request.state.get("skills_config", {})
-        skills_list = self._format_skills_list(skills_metadata, skills_config)
+        skills_manifest = request.state.get("skills_manifest")
+        logger.info(
+            "[RuntimeContext] skills: %d on volume, manifest=%s, config=%s",
+            len(skills_metadata),
+            len(skills_manifest) if skills_manifest else "None",
+            skills_config,
+        )
+        skills_list = self._format_skills_list(skills_metadata, skills_config, skills_manifest)
         skills_section = SKILLS_SYSTEM_PROMPT.format(skills_list=skills_list)
 
         if request.system_prompt:

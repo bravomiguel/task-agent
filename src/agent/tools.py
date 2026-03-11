@@ -693,7 +693,7 @@ def manage_config(
 
     Use this tool (not manage_crons) to change heartbeat frequency or active hours.
     Use this tool to change user timezone — it auto-syncs to USER.md.
-    Use this tool to enable/disable skills. Skill changes take effect on the next session.
+    Use this tool to enable/disable skills. Enabled skills are fetched immediately — read the returned path to use them.
 
     Args:
         action: "get" to read current config, "patch" to merge changes.
@@ -726,10 +726,15 @@ def manage_config(
             except _json.JSONDecodeError as e:
                 return f"Error: invalid JSON in patch: {e}"
 
-            # Write config, apply side-effects (cron reconcile, USER.md sync)
+            # Write config, apply side-effects (cron reconcile, USER.md sync, skill sync)
             new_config = patch_config(sandbox_id, patch_data)
-            apply_config_side_effects(new_config, sandbox_id=sandbox_id)
-            return _json.dumps({"config": new_config.model_dump(exclude_none=True)})
+            side_effects = apply_config_side_effects(
+                new_config, sandbox_id=sandbox_id, patch=patch_data,
+            )
+            result = {"config": new_config.model_dump(exclude_none=True)}
+            if side_effects:
+                result.update(side_effects)
+            return _json.dumps(result)
 
         else:
             return f"Error: unknown action '{action}'."

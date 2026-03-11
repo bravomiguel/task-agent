@@ -1,5 +1,5 @@
 ---
-name: rclone
+name: cloud-storage
 description: Cloud storage file management for Dropbox and Box via rclone. Use this when you need to list, upload, download, copy, or sync files in the user's Dropbox or Box account.
 ---
 
