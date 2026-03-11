@@ -693,7 +693,8 @@ def manage_config(
 
     Use this tool (not manage_crons) to change heartbeat frequency or active hours.
     Use this tool to change user timezone — it auto-syncs to USER.md.
-    Use this tool to enable/disable skills. Enabled skills are fetched immediately — read the returned path to use them.
+    Use this tool to check skill status (disabled skills have descriptions in config) and enable/disable them.
+    Enabled skills are fetched immediately — read the returned path to use them.
 
     Args:
         action: "get" to read current config, "patch" to merge changes.

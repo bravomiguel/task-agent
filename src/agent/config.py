@@ -94,7 +94,7 @@ class HeartbeatConfig(BaseModel):
 class UserConfig(BaseModel):
     timezone: str = DEFAULT_TIMEZONE  # IANA timezone — global user timezone
     heartbeat: HeartbeatConfig = HeartbeatConfig()
-    skills: dict[str, bool] = {}  # skill name → enabled; missing = enabled
+    skills: dict[str, bool | str] = {}  # missing/true = enabled; string = disabled (value is description)
 
     @field_validator("timezone")
     @classmethod
@@ -286,6 +286,10 @@ def apply_config_side_effects(
         # Sync skills to volume based on patch
         if patch and "skills" in patch:
             skill_results = _sync_skills_to_volume(sandbox_id, patch["skills"])
+            # Apply config updates (descriptions for disabled skills)
+            config_updates = skill_results.pop("_config_updates", None)
+            if config_updates:
+                patch_config(sandbox_id, {"skills": config_updates})
             if skill_results:
                 results["skills"] = skill_results
     return results or None
@@ -301,19 +305,43 @@ SKILLS_VOLUME_DIR = "/mnt/skills"
 GITHUB_API_URL = "https://api.github.com"
 
 
+def _read_skill_description(sandbox, skill_path: str) -> str:
+    """Read the description from a skill's SKILL.md frontmatter."""
+    import re
+
+    try:
+        process = sandbox.exec("head", "-20", f"{skill_path}/SKILL.md", timeout=5)
+        process.wait()
+        content = process.stdout.read()
+        if not content:
+            return ""
+        fm = re.match(r"^---\s*\n(.*?)\n---", content, re.DOTALL)
+        if fm:
+            for line in fm.group(1).splitlines():
+                m = re.match(r"^description:\s*(.+)$", line.strip())
+                if m:
+                    return m.group(1).strip()
+    except Exception:
+        pass
+    return ""
+
+
 def _sync_skills_to_volume(
-    sandbox_id: str, skills_patch: dict[str, bool],
+    sandbox_id: str, skills_patch: dict[str, bool | str],
 ) -> dict[str, Any]:
     """Sync skill folders on the volume based on enable/disable changes.
 
-    Enable (true): fetch skill folder from GitHub repo → write to volume.
-    Disable (false): delete skill folder from volume.
-    Returns dict of skill_name → {status, path} for enabled skills.
+    Enable (true): fetch skill folder from GitHub repo → write to volume,
+        clear description from config.
+    Disable (false): read description from SKILL.md, delete folder from volume,
+        store description in config.
+    Returns dict with status per skill and config_updates to apply.
     """
     import httpx
 
     sandbox = modal.Sandbox.from_id(sandbox_id)
     results: dict[str, Any] = {}
+    config_updates: dict[str, bool | str] = {}
 
     for skill_name, enabled in skills_patch.items():
         if not isinstance(enabled, bool):
@@ -322,6 +350,9 @@ def _sync_skills_to_volume(
         skill_path = f"{SKILLS_VOLUME_DIR}/{skill_name}"
 
         if not enabled:
+            # Read description before deleting
+            description = _read_skill_description(sandbox, skill_path)
+
             # Delete skill from volume
             try:
                 sandbox.exec(
@@ -329,6 +360,9 @@ def _sync_skills_to_volume(
                     timeout=10,
                 ).wait()
                 sandbox.exec("bash", "-c", "sync", timeout=5).wait()
+                # Store description in config (string = disabled)
+                if description:
+                    config_updates[skill_name] = description
                 results[skill_name] = {"status": "disabled", "deleted": True}
                 logger.info("[Config] deleted skill %s from volume", skill_name)
             except Exception as e:
@@ -363,6 +397,8 @@ def _sync_skills_to_volume(
             _fetch_github_dir(sandbox, items, skill_path)
 
             sandbox.exec("bash", "-c", "sync", timeout=5).wait()
+            # Clear from config (true = enabled, will be removed on next clean)
+            config_updates[skill_name] = True
             results[skill_name] = {
                 "status": "enabled",
                 "path": f"{skill_path}/SKILL.md",
@@ -372,6 +408,10 @@ def _sync_skills_to_volume(
         except Exception as e:
             logger.warning("[Config] failed to fetch skill %s: %s", skill_name, e)
             results[skill_name] = {"status": "error", "error": str(e)}
+
+    # Apply config updates (description strings for disabled, true for enabled)
+    if config_updates:
+        results["_config_updates"] = config_updates
 
     return results
 

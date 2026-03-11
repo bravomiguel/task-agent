@@ -49,42 +49,4 @@ for d in "${dirs[@]}"; do
   "$MODAL" volume put user-dev "$d" "$VOLUME_PATH/$name" --force
 done
 
-# Generate manifest.json from all skills (uses Python for proper JSON escaping)
-echo "Generating manifest.json..."
-MANIFEST_TMP="$(mktemp)"
-python3 -c "
-import json, re, pathlib, sys
-
-skills_dir = pathlib.Path(sys.argv[1])
-manifest = []
-for skill_dir in sorted(skills_dir.iterdir()):
-    if not skill_dir.is_dir() or skill_dir.name == '__pycache__':
-        continue
-    skill_file = skill_dir / 'SKILL.md'
-    if not skill_file.exists():
-        continue
-    # Parse YAML frontmatter
-    text = skill_file.read_text()
-    fm = re.match(r'^---\s*\n(.*?)\n---', text, re.DOTALL)
-    if not fm:
-        continue
-    meta = {}
-    for line in fm.group(1).splitlines():
-        m = re.match(r'^(\w+):\s*(.+)$', line.strip())
-        if m:
-            meta[m.group(1)] = m.group(2).strip()
-    if 'name' in meta and 'description' in meta:
-        manifest.append({'name': meta['name'], 'description': meta['description']})
-
-json.dump(manifest, open(sys.argv[2], 'w'))
-print(f'  {len(manifest)} skills')
-" "$SKILLS_DIR" "$MANIFEST_TMP"
-# Upload into _manifest/ directory so it's picked up by folder count check
-MANIFEST_DIR="$(mktemp -d)"
-mkdir -p "$MANIFEST_DIR/_manifest"
-mv "$MANIFEST_TMP" "$MANIFEST_DIR/_manifest/manifest.json"
-"$MODAL" volume rm user-dev "$VOLUME_PATH/_manifest" -r 2>/dev/null || true
-"$MODAL" volume put user-dev "$MANIFEST_DIR/_manifest" "$VOLUME_PATH/_manifest" --force
-rm -rf "$MANIFEST_DIR"
-
 echo "Done."

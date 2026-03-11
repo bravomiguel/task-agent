@@ -201,11 +201,9 @@ class SessionSetupMiddleware(AgentMiddleware[AgentState, Any]):
         for attempt in range(_retries):
             try:
                 sandbox = modal.Sandbox.from_id(sandbox_id)
-                skills, manifest = _list_skills_from_sandbox(sandbox, self._skills_path)
+                skills = _list_skills_from_sandbox(sandbox, self._skills_path)
                 if skills:
                     updates: dict[str, Any] = {"skills_metadata": skills}
-                    if manifest:
-                        updates["skills_manifest"] = manifest
                     # Load skills config so dynamic_context can tag enabled/disabled
                     try:
                         from agent.config import load_config
