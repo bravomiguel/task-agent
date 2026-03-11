@@ -66,6 +66,18 @@ SERVICE_REGISTRY: dict[str, dict[str, Any]] = {
         "auth_config_id": "ac_TpHKphOBjNNM",
         "token_file": f"{AUTH_DIR}/microsoft_token",
     },
+    "dropbox": {
+        "display_name": "Dropbox",
+        "composio_slug": "dropbox",
+        "auth_config_id": "ac_-o_uJgBYEFth",
+        "token_file": f"{AUTH_DIR}/dropbox_token",
+    },
+    "box": {
+        "display_name": "Box",
+        "composio_slug": "box",
+        "auth_config_id": "ac_H_xB3rSDTfVg",
+        "token_file": f"{AUTH_DIR}/box_token",
+    },
 }
 
 # Reverse map: composio toolkit slug → our service name
@@ -433,6 +445,62 @@ def _bootstrap_microsoft(sandbox, acct: dict) -> dict[str, Any]:
     }
 
 
+def _bootstrap_dropbox(sandbox, acct: dict) -> dict[str, Any]:
+    """Bootstrap Dropbox auth in the sandbox."""
+    token = _extract_access_token(acct)
+    if not token:
+        return {"error": "No access_token in credentials. Check Composio connection status."}
+
+    if token.endswith("..."):
+        return {
+            "error": "Access token is masked. Disable secret masking in "
+                     "Composio project settings (Settings > Project Configuration).",
+        }
+
+    token_file = SERVICE_REGISTRY["dropbox"]["token_file"]
+    _write_token_to_sandbox(sandbox, token, token_file)
+
+    return {
+        "status": "connected",
+        "service": "dropbox",
+        "token_file": token_file,
+        "usage": (
+            f"Token written to {token_file}. Use with rclone:\n"
+            f"  export RCLONE_CONFIG_DROPBOX_TYPE=dropbox\n"
+            f"  export RCLONE_CONFIG_DROPBOX_TOKEN='{{\"access_token\":\"'$(cat {token_file})'\",\"token_type\":\"bearer\"}}'\n"
+            f"  rclone ls dropbox:"
+        ),
+    }
+
+
+def _bootstrap_box(sandbox, acct: dict) -> dict[str, Any]:
+    """Bootstrap Box auth in the sandbox."""
+    token = _extract_access_token(acct)
+    if not token:
+        return {"error": "No access_token in credentials. Check Composio connection status."}
+
+    if token.endswith("..."):
+        return {
+            "error": "Access token is masked. Disable secret masking in "
+                     "Composio project settings (Settings > Project Configuration).",
+        }
+
+    token_file = SERVICE_REGISTRY["box"]["token_file"]
+    _write_token_to_sandbox(sandbox, token, token_file)
+
+    return {
+        "status": "connected",
+        "service": "box",
+        "token_file": token_file,
+        "usage": (
+            f"Token written to {token_file}. Use with rclone:\n"
+            f"  export RCLONE_CONFIG_BOX_TYPE=box\n"
+            f"  export RCLONE_CONFIG_BOX_TOKEN='{{\"access_token\":\"'$(cat {token_file})'\",\"token_type\":\"bearer\"}}'\n"
+            f"  rclone ls box:"
+        ),
+    }
+
+
 _BOOTSTRAP_FUNCTIONS = {
     "google": _bootstrap_google,
     "github": _bootstrap_github,
@@ -441,6 +509,8 @@ _BOOTSTRAP_FUNCTIONS = {
     "slack": _bootstrap_slack,
     "teams": _bootstrap_teams,
     "microsoft": _bootstrap_microsoft,
+    "dropbox": _bootstrap_dropbox,
+    "box": _bootstrap_box,
 }
 
 
