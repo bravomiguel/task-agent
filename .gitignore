@@ -170,3 +170,4 @@ uv.lock
 # Supabase CLI cache
 supabase_migrations/.temp/
 supabase_migrations/supabase/
+supabase/
