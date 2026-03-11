@@ -8,7 +8,6 @@ import mimetypes
 import os
 import re
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Annotated, Any, Literal
 
 import httpx
@@ -136,16 +135,6 @@ def view_image(
 # Memory search
 # ---------------------------------------------------------------------------
 
-_MEMORY_SCRIPT_PATH = Path(__file__).parent / "memory" / "_sandbox_script.py"
-_memory_script_cache: str | None = None
-
-
-def _load_memory_script() -> str:
-    global _memory_script_cache
-    if _memory_script_cache is None:
-        _memory_script_cache = _MEMORY_SCRIPT_PATH.read_text()
-    return _memory_script_cache
-
 
 @tool
 def memory_search(
@@ -165,43 +154,16 @@ def memory_search(
         JSON with results array containing path, startLine, endLine, score, snippet, source.
         Use read_file to get full context for any relevant result.
     """
-    if state is None:
-        return "Error: Could not access state."
-
-    sandbox_id = state.get("modal_sandbox_id")
-    if not sandbox_id:
-        return "Error: No sandbox available."
-
-    script = _load_memory_script()
+    import json as _json
+    from agent.memory.store import search_memory
 
     try:
-        sandbox = modal.Sandbox.from_id(sandbox_id)
-        sandbox.reload_volumes()
-
-        process = sandbox.exec(
-            "python3", "-", "search",
-            "--query", query,
-            "--max-results", str(max_results),
-            "--min-score", str(min_score),
-            timeout=30,
+        result = search_memory(
+            query=query,
+            max_results=max_results,
+            min_score=min_score,
         )
-        process.stdin.write(script.encode())
-        process.stdin.write_eof()
-        process.stdin.drain()
-        process.wait()
-
-        stdout = process.stdout.read()
-        stderr = process.stderr.read()
-
-        if stderr:
-            logger.warning("[MemorySearch] stderr: %s", stderr[:500])
-
-        if process.returncode != 0:
-            logger.warning("[MemorySearch] failed (rc=%d): %s", process.returncode, stderr[:500])
-            return f"Error searching memory: {stderr[:200]}"
-
-        return stdout
-
+        return _json.dumps(result)
     except Exception as exc:
         logger.warning("[MemorySearch] error: %s", exc)
         return f"Error searching memory: {exc}"
