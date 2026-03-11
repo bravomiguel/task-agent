@@ -200,6 +200,32 @@ async function dispatchItem(item: Record<string, unknown>): Promise<{ dispatched
     runInput.channel_platform = "slack";
     runInput.channel_id = channelId;
     runInput.channel_metadata = meta;
+  } else if (source === "teams") {
+    const chatId = (meta.chat_id as string) ?? "";
+    const teamId = (meta.team_id as string) ?? "";
+    const channelId = (meta.channel_id as string) ?? "";
+    const chatType = (meta.chat_type as string) ?? "chat";
+    const isChannel = chatType === "channel";
+    const attrs = [
+      `type="channel-message"`,
+      `platform="teams"`,
+    ];
+    if (isChannel) {
+      attrs.push(`team_id="${teamId}"`);
+      attrs.push(`channel_id="${channelId}"`);
+    } else {
+      attrs.push(`chat_id="${chatId}"`);
+    }
+    attrs.push(`chat_type="${chatType}"`);
+    const ids = meta.sender_ids as string[] | undefined;
+    const names = meta.senders as string[] | undefined;
+    const isDm = chatType === "chat";
+    if (names) attrs.push(`${isDm ? "sender" : "senders"}="${names.join(",")}"`);
+    if (ids) attrs.push(`${isDm ? "sender_id" : "sender_ids"}="${ids.join(",")}"`);
+    message = `<system-message ${attrs.join(" ")}>\n${combinedText}\n</system-message>`;
+    runInput.channel_platform = "teams";
+    runInput.channel_id = isChannel ? `team:${teamId}/channel:${channelId}` : chatId;
+    runInput.channel_metadata = meta;
   } else if (source === "email") {
     const emailSource = (meta.email_source as string) ?? "email";
     const sender = (meta.sender as string) ?? "";

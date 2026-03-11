@@ -5,9 +5,15 @@
  *   POST /channel-webhook/composio   — All Composio triggers (Slack, Gmail, Outlook)
  *   POST /channel-webhook/slack      — Alias for /composio (backwards compat)
  *   POST /channel-webhook/slack-bot  — Slack Events API (bot events, direct from Slack)
+ *   GET  /channel-webhook/teams      — Microsoft Graph subscription validation
+ *   POST /channel-webhook/teams      — Microsoft Graph change notifications (Teams messages)
  *
  * Composio sends all triggers to a single webhook URL. The handler inspects
  * payload.type to route: slack triggers → buffer+flush, email triggers → direct queue.
+ *
+ * Teams uses Microsoft Graph change notifications (subscriptions). The webhook
+ * receives lightweight notifications, then fetches full message content via
+ * Graph API using a Composio-managed Microsoft token.
  *
  * Required env vars:
  *   COMPOSIO_WEBHOOK_SECRET — HMAC secret for Composio signature verification
@@ -16,6 +22,9 @@
  *
  * Slack signing secret is stored per-user in Supabase vault (not as env var)
  * and looked up at request time.
+ *
+ * Teams webhook secret (clientState) is stored in vault as "teams_webhook_secret".
+ * Teams Composio connection ID is stored in vault as "teams_composio_connection_id".
  */
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
@@ -772,6 +781,410 @@ async function handleSlackBot(req: Request): Promise<Response> {
 }
 
 // ---------------------------------------------------------------------------
+// Teams: Microsoft Graph change notifications
+// ---------------------------------------------------------------------------
+
+const TEAMS_DEBOUNCE_MS = 5_000;
+// Microsoft Graph often sends 2-3 duplicate notifications per message,
+// spaced ~3-4 seconds apart. DM debounce must exceed that gap.
+const TEAMS_DM_DEBOUNCE_MS = 5_000;
+
+let _teamsTokenCache: { token: string; connectionId: string; expiresAt: number } | null = null;
+
+/**
+ * Get the Microsoft access token via Composio connected account.
+ * Connection ID is stored in vault as "teams_composio_connection_id".
+ */
+async function getTeamsAccessToken(): Promise<string | null> {
+  // Return cached token if still valid (cache for 5 minutes)
+  if (_teamsTokenCache && Date.now() < _teamsTokenCache.expiresAt) {
+    return _teamsTokenCache.token;
+  }
+
+  // Look up connection ID from vault
+  const connectionId = await getVaultSecret("teams_composio_connection_id");
+  if (!connectionId) {
+    console.error("[channel-webhook/teams] teams_composio_connection_id not in vault");
+    return null;
+  }
+
+  const token = await fetchComposioAccessToken(connectionId);
+  if (token) {
+    _teamsTokenCache = { token, connectionId, expiresAt: Date.now() + 5 * 60 * 1000 };
+  }
+  return token;
+}
+
+let _teamsUserId: string | null = null;
+
+/**
+ * Get the connected user's Microsoft Teams user ID (from /me).
+ * Cached for the lifetime of the edge function invocation.
+ */
+async function getConnectedTeamsUserId(accessToken: string): Promise<string | null> {
+  if (_teamsUserId) return _teamsUserId;
+
+  try {
+    const resp = await fetch("https://graph.microsoft.com/v1.0/me", {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+    });
+    if (!resp.ok) return null;
+    const user = await resp.json();
+    _teamsUserId = user.id ?? null;
+    console.log(`[channel-webhook/teams] connected user: ${user.displayName} (${_teamsUserId})`);
+    return _teamsUserId;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Parse resource string from Microsoft Graph change notification.
+ * Formats:
+ *   chats('{chatId}')/messages('{messageId}')
+ *   chats/{chatId}/messages/{messageId}
+ *   teams('{teamId}')/channels('{channelId}')/messages('{messageId}')
+ *   teams/{teamId}/channels/{channelId}/messages/{messageId}
+ */
+function parseTeamsResource(resource: string): {
+  chatId?: string;
+  messageId?: string;
+  teamId?: string;
+  channelId?: string;
+} | null {
+  // chats('{id}')/messages('{id}')
+  const chatMatch = resource.match(/chats\('([^']+)'\)\/messages\('([^']+)'\)/);
+  if (chatMatch) return { chatId: chatMatch[1], messageId: chatMatch[2] };
+
+  // chats/{id}/messages/{id}
+  const chatAlt = resource.match(/chats\/([^/]+)\/messages\/([^/]+)/);
+  if (chatAlt) return { chatId: chatAlt[1], messageId: chatAlt[2] };
+
+  // teams('{id}')/channels('{id}')/messages('{id}')
+  const channelMatch = resource.match(
+    /teams\('([^']+)'\)\/channels\('([^']+)'\)\/messages\('([^']+)'\)/,
+  );
+  if (channelMatch) return { teamId: channelMatch[1], channelId: channelMatch[2], messageId: channelMatch[3] };
+
+  // teams/{id}/channels/{id}/messages/{id}
+  const channelAlt = resource.match(/teams\/([^/]+)\/channels\/([^/]+)\/messages\/([^/]+)/);
+  if (channelAlt) return { teamId: channelAlt[1], channelId: channelAlt[2], messageId: channelAlt[3] };
+
+  return null;
+}
+
+interface TeamsMessageResult {
+  id: string;
+  senderName: string;
+  senderId: string;
+  text: string;
+  messageType: string;
+  createdDateTime: string;
+  mentions: Array<{ mentioned?: { user?: { id?: string } } }>;
+}
+
+/**
+ * Fetch a Teams chat message from Microsoft Graph API.
+ */
+async function fetchTeamsChatMessage(
+  chatId: string,
+  messageId: string,
+  accessToken: string,
+): Promise<TeamsMessageResult | null> {
+  try {
+    const resp = await fetch(
+      `https://graph.microsoft.com/v1.0/chats/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(messageId)}`,
+      { headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" } },
+    );
+    if (!resp.ok) {
+      console.error(`[channel-webhook/teams] fetch chat message failed: ${resp.status}`);
+      return null;
+    }
+    const msg = await resp.json();
+    return parseGraphMessage(msg, chatId);
+  } catch (e) {
+    console.error(`[channel-webhook/teams] fetch chat message error:`, e);
+    return null;
+  }
+}
+
+/**
+ * Fetch a Teams channel message from Microsoft Graph API.
+ */
+async function fetchTeamsChannelMessage(
+  teamId: string,
+  channelId: string,
+  messageId: string,
+  accessToken: string,
+): Promise<TeamsMessageResult | null> {
+  try {
+    const resp = await fetch(
+      `https://graph.microsoft.com/v1.0/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(messageId)}`,
+      { headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" } },
+    );
+    if (!resp.ok) {
+      console.error(`[channel-webhook/teams] fetch channel message failed: ${resp.status}`);
+      return null;
+    }
+    const msg = await resp.json();
+    return parseGraphMessage(msg, `${teamId}:${channelId}`);
+  } catch (e) {
+    console.error(`[channel-webhook/teams] fetch channel message error:`, e);
+    return null;
+  }
+}
+
+function parseGraphMessage(msg: Record<string, unknown>, locationId: string): TeamsMessageResult {
+  const from = msg.from as Record<string, unknown> | undefined;
+  const user = (from?.user ?? {}) as Record<string, unknown>;
+  const body = (msg.body ?? {}) as Record<string, unknown>;
+  const content = (body.content as string) ?? "";
+  const contentType = (body.contentType as string) ?? "text";
+
+  return {
+    id: (msg.id as string) ?? "",
+    senderName: (user.displayName as string) ?? "Unknown",
+    senderId: (user.id as string) ?? "",
+    text: contentType === "html" ? stripHtmlTags(content) : content,
+    messageType: (msg.messageType as string) ?? "message",
+    createdDateTime: (msg.createdDateTime as string) ?? "",
+    mentions: (msg.mentions ?? []) as TeamsMessageResult["mentions"],
+  };
+}
+
+function stripHtmlTags(html: string): string {
+  return html
+    .replace(/<[^>]*>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .trim();
+}
+
+/**
+ * Handle Teams webhook — GET for validation, POST for change notifications.
+ */
+async function handleTeams(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+
+  // GET: Microsoft Graph subscription validation
+  if (req.method === "GET") {
+    const validationToken = url.searchParams.get("validationToken");
+    if (!validationToken) {
+      return jsonResponse({ error: "Missing validationToken" }, 400);
+    }
+    console.log("[channel-webhook/teams] validation request, returning token");
+    return new Response(validationToken, {
+      status: 200,
+      headers: { "Content-Type": "text/plain" },
+    });
+  }
+
+  // POST: Change notifications
+  const rawBody = await req.text();
+
+  // Check for validation token in POST (Microsoft sometimes sends as POST)
+  const validationToken = url.searchParams.get("validationToken");
+  if (validationToken) {
+    return new Response(validationToken, {
+      status: 200,
+      headers: { "Content-Type": "text/plain" },
+    });
+  }
+
+  let body: Record<string, unknown>;
+  try {
+    body = JSON.parse(rawBody);
+  } catch {
+    return new Response("Invalid JSON", { status: 400 });
+  }
+
+  const notifications = (body.value ?? []) as Array<Record<string, unknown>>;
+  if (notifications.length === 0) {
+    return jsonResponse({ ok: true, skipped: "no_notifications" });
+  }
+
+  // Verify clientState from vault
+  const webhookSecret = await getVaultSecret("teams_webhook_secret");
+
+  // Get access token for fetching messages
+  const accessToken = await getTeamsAccessToken();
+  if (!accessToken) {
+    console.error("[channel-webhook/teams] no access token available");
+    return jsonResponse({ ok: false, error: "token_unavailable" }, 500);
+  }
+
+  // Get connected user ID for mention filtering in channels
+  const connectedUserId = await getConnectedTeamsUserId(accessToken);
+
+  let processed = 0;
+  let skipped = 0;
+
+  for (const notification of notifications) {
+    // Validate clientState
+    if (webhookSecret && notification.clientState !== webhookSecret) {
+      console.warn("[channel-webhook/teams] invalid clientState, skipping");
+      skipped++;
+      continue;
+    }
+
+    // Only process "created" messages
+    if (notification.changeType !== "created") {
+      skipped++;
+      continue;
+    }
+
+    const resource = (notification.resource as string) ?? "";
+    const resourceInfo = parseTeamsResource(resource);
+    if (!resourceInfo || !resourceInfo.messageId) {
+      console.error(`[channel-webhook/teams] failed to parse resource: ${resource}`);
+      skipped++;
+      continue;
+    }
+
+    const { chatId, messageId, teamId, channelId } = resourceInfo;
+    const isChannelMessage = !!teamId && !!channelId;
+
+    // Fetch the full message
+    let message: TeamsMessageResult | null;
+    if (isChannelMessage) {
+      message = await fetchTeamsChannelMessage(teamId!, channelId!, messageId!, accessToken);
+    } else {
+      message = await fetchTeamsChatMessage(chatId!, messageId!, accessToken);
+    }
+
+    if (!message) {
+      console.error(`[channel-webhook/teams] failed to fetch message ${messageId}`);
+      skipped++;
+      continue;
+    }
+
+    // Skip system messages
+    if (message.messageType !== "message") {
+      skipped++;
+      continue;
+    }
+
+    // Skip own messages
+    if (connectedUserId && message.senderId === connectedUserId) {
+      skipped++;
+      continue;
+    }
+
+    // Skip empty messages
+    if (!message.text.trim()) {
+      skipped++;
+      continue;
+    }
+
+    // For channel messages: only process if connected user is @mentioned
+    if (isChannelMessage && connectedUserId) {
+      const isMentioned = message.mentions.some(
+        (m) => m.mentioned?.user?.id === connectedUserId,
+      );
+      if (!isMentioned) {
+        skipped++;
+        continue;
+      }
+    }
+
+    console.log(
+      `[channel-webhook/teams] ${isChannelMessage ? "channel" : "chat"} message from ${message.senderName}: ${message.text.substring(0, 80)}`,
+    );
+
+    // Buffer key: teams:{chatId} or teams:{teamId}:{channelId}
+    const locationId = isChannelMessage ? `${teamId}:${channelId}` : chatId!;
+    const bufferKey = `teams:${locationId}`;
+    const chatType = isChannelMessage ? "channel" : "chat";
+    const priority = chatType === "chat" ? 1 : 2;
+    const debounceMs = chatType === "chat" ? TEAMS_DM_DEBOUNCE_MS : TEAMS_DEBOUNCE_MS;
+
+    // Insert into buffer (reuse message_ts metadata key for dedup compatibility)
+    const inserted = await insertBuffer({
+      source: "teams",
+      buffer_key: bufferKey,
+      sender: message.senderId,
+      sender_name: message.senderName,
+      message_text: message.text,
+      metadata: {
+        message_ts: message.id, // Teams message ID in message_ts for dedup index
+        message_id: message.id,
+        chat_id: isChannelMessage ? undefined : chatId,
+        team_id: isChannelMessage ? teamId : undefined,
+        channel_id: isChannelMessage ? channelId : undefined,
+        chat_type: chatType,
+        priority,
+        created_date_time: message.createdDateTime,
+      },
+    });
+
+    if (!inserted) {
+      skipped++;
+      continue;
+    }
+
+    const insertedAt = inserted.created_at as string;
+
+    // Debounce — wait, then check if newer messages arrived
+    await new Promise((r) => setTimeout(r, debounceMs));
+
+    const hasNewer = await checkNewerMessages(bufferKey, insertedAt);
+    if (hasNewer) {
+      console.log(`[channel-webhook/teams] ${bufferKey} debounce: newer messages, skipping flush`);
+      processed++;
+      continue;
+    }
+
+    // Flush — atomically grab all buffered messages
+    const flushedRows = await flushBuffer(bufferKey);
+    if (flushedRows.length === 0) {
+      processed++;
+      continue;
+    }
+
+    // Combine into batch and insert into dispatch queue
+    const senders = new Set<string>();
+    const senderIds = new Set<string>();
+    const lines: string[] = [];
+
+    for (const row of flushedRows) {
+      const name = (row.sender_name as string) || (row.sender as string);
+      senders.add(name);
+      if (row.sender) senderIds.add(row.sender as string);
+      lines.push(`[${name}] ${row.message_text}`);
+    }
+
+    const combinedText = lines.join("\n");
+
+    await insertQueue({
+      source: "teams",
+      priority,
+      buffer_key: bufferKey,
+      combined_text: combinedText,
+      metadata: {
+        chat_id: isChannelMessage ? undefined : chatId,
+        team_id: isChannelMessage ? teamId : undefined,
+        channel_id: isChannelMessage ? channelId : undefined,
+        chat_type: chatType,
+        senders: [...senders],
+        sender_ids: [...senderIds],
+        message_count: flushedRows.length,
+      },
+    });
+
+    console.log(`[channel-webhook/teams] ${bufferKey} flushed ${flushedRows.length} messages to queue`);
+    processed++;
+  }
+
+  return jsonResponse({ ok: true, processed, skipped });
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -801,12 +1214,21 @@ function jsonResponse(data: Record<string, unknown>, status = 200): Response {
 // ---------------------------------------------------------------------------
 
 serve(async (req: Request) => {
+  const url = new URL(req.url);
+  const path = url.pathname;
+
+  // Teams accepts GET (validation) and POST (notifications)
+  if (path.endsWith("/teams")) {
+    if (req.method !== "GET" && req.method !== "POST") {
+      return new Response("Method Not Allowed", { status: 405 });
+    }
+    return handleTeams(req);
+  }
+
+  // All other routes are POST only
   if (req.method !== "POST") {
     return new Response("Method Not Allowed", { status: 405 });
   }
-
-  const url = new URL(req.url);
-  const path = url.pathname;
 
   if (path.endsWith("/slack-bot")) {
     return handleSlackBot(req);
