@@ -651,7 +651,7 @@ NODE_PATH="$(npm root -g)" node your-script.js 2>&1
 These libraries have been globally installed and are available to use:
 
 - `pptxgenjs`
-- `playwright`
+- `playwright-core`
 
 ### ⚠️ IMPORTANT: How To Use html2pptx
 

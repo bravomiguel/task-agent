@@ -8,7 +8,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-MODAL="$PROJECT_DIR/.venv/bin/modal"
+MODAL="$PROJECT_DIR/venv/bin/modal"
 
 KEEPFILE=$(mktemp)
 touch "$KEEPFILE"

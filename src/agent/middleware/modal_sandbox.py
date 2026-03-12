@@ -67,21 +67,13 @@ rclone_image = (
     )
     # Node.js global packages for presentation/document creation
     .run_commands(
-        # Install Node.js packages globally
-        "npm install -g pptxgenjs playwright react-icons react react-dom docx",
-        # Install Playwright browsers (chromium for HTML rendering)
-        "npx playwright install chromium",
-        "npx playwright install-deps chromium",
-    )
-    # Install sharp globally (dependency for html2pptx, which agent extracts locally per skill instructions)
-    .run_commands(
-        "npm install -g sharp",
+        "npm install -g pptxgenjs react-icons react react-dom docx sharp",
     )
     # Browser automation: agent-browser CLI + Kernel CLI (for stealth/headed escalation)
+    # agent-browser bundles playwright-core; its install command downloads matching Chromium
     .run_commands(
         "npm install -g agent-browser @onkernel/cli",
-        # Download Chromium for agent-browser (separate from Playwright's copy)
-        "agent-browser install",
+        "agent-browser install --with-deps",
     )
     # Install rclone for Google Drive sync
     .run_commands(

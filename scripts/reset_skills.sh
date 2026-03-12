@@ -11,7 +11,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 SKILLS_DIR="$PROJECT_DIR/skills"
-MODAL="$PROJECT_DIR/.venv/bin/modal"
+MODAL="$PROJECT_DIR/venv/bin/modal"
 VOLUME_PATH="/skills"
 
 if [ $# -eq 0 ]; then

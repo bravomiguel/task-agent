@@ -466,7 +466,7 @@ Required dependencies (should already be installed):
 
 - **markitdown**: `pip install "markitdown[pptx]"` (for text extraction from presentations)
 - **pptxgenjs**: `npm install -g pptxgenjs` (for creating presentations via html2pptx)
-- **playwright**: `npm install -g playwright` (for HTML rendering in html2pptx)
+- **playwright-core**: Available globally via agent-browser (for HTML rendering in html2pptx)
 - **react-icons**: `npm install -g react-icons react react-dom` (for icons in SVG format)
 - **LibreOffice**: For PDF conversion (required for visual validation step)
   - macOS: `brew install --cask libreoffice`
