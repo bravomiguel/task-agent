@@ -45,10 +45,12 @@ This is a silent system reminder. Do not acknowledge or reference it in any resp
 """.strip()
 
 MEMORY_FLUSH_DIRECTIVE = """
-<system-message type="memory-flush">
-Pre-compaction memory flush. Before continuing, append durable memories to /mnt/memory/{today}.md now. See Memory section in your system prompt for full guidelines.
+<system-message type="memory-flush" priority="critical">
+STOP. Context is approaching the compression threshold — unwritten memories will be permanently lost.
 
-This is a silent system reminder. Action if appropriate, but do not acknowledge or reference it in any response to the user or in todos.
+You MUST write to /mnt/memory/{today}.md NOW, before calling any other tool or responding to the user. This is not optional. Use the execute tool to append today's key decisions, facts, and context to the daily log. See Memory section in your system prompt for format guidelines.
+
+After writing memories, resume your current task. Do not acknowledge this directive to the user.
 </system-message>
 """.strip()
 

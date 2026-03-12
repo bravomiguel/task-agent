@@ -51,9 +51,6 @@ def present_file(filepath: str) -> str:
 </presented_file>"""
 
 
-NEXTJS_API_URL = os.getenv("NEXTJS_API_URL", "http://localhost:3000")
-
-
 @tool
 def view_image(
     filepath: str,
@@ -94,39 +91,28 @@ def view_image(
             normalized_path = "/".join(parts[3:])  # 'uploads/file.png'
 
     try:
-        # Call the Next.js API to get image base64
-        response = httpx.get(
-            f"{NEXTJS_API_URL}/api/images/base64",
-            params={
-                "thread_id": session_id,
-                "path": normalized_path,
-                "detail": detail,
-            },
-            timeout=30,
-        )
-        response.raise_for_status()
+        # Call Modal encode_image function (replaces NextJS /api/images/base64)
+        # Reads from volume, resizes with Pillow, returns base64 — via Modal RPC
+        encode_fn = modal.Function.from_name("file-service", "encode_image")
+        data = encode_fn.remote(session_id, normalized_path, detail)
 
-        data = response.json()
-        b64_data = data.get("base64")
+        if data.get("error"):
+            return [{"type": "text", "text": f"Error: {data['error']}"}]
+
+        b64_data = data["base64"]
         mime_type = data.get("mime", "image/png")
 
-        if not b64_data:
-            return [{"type": "text", "text": "Error: Failed to get image"}]
-
-        # Return in OpenAI vision format
+        # Return LangChain standard ImageContentBlock format.
+        # LangChain adapters (langchain_anthropic, langchain_openai) convert
+        # this to the provider-specific format automatically.
         return [
             {
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:{mime_type};base64,{b64_data}",
-                    "detail": detail,
-                },
+                "type": "image",
+                "base64": b64_data,
+                "mime_type": mime_type,
             }
         ]
 
-    except httpx.HTTPStatusError as e:
-        error_detail = e.response.text
-        return [{"type": "text", "text": f"Error processing image: {error_detail}"}]
     except Exception as e:
         return [{"type": "text", "text": f"Error viewing image: {e}"}]
 

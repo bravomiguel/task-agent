@@ -7,7 +7,7 @@ import modal
 from typing import Optional
 
 # Create Modal image with FastAPI for web endpoints
-image = modal.Image.debian_slim().pip_install("fastapi[standard]")
+image = modal.Image.debian_slim().pip_install("fastapi[standard]", "Pillow")
 
 # Create Modal app
 app = modal.App("file-service", image=image)
@@ -377,11 +377,70 @@ def get_sandbox_files(session_id: str, sandbox_id: str) -> dict:
         }
 
 
-# Web endpoint for health check
+# ---------------------------------------------------------------------------
+# Web endpoints
+# ---------------------------------------------------------------------------
+
 @app.function()
 @modal.fastapi_endpoint(method="GET")
 def health():
     """Health check endpoint"""
     return {"status": "healthy", "service": "file-service"}
+
+
+_MAX_IMAGE_DIM = {"low": 512, "auto": 1024, "high": 2048}
+
+
+@app.function(volumes={"/mnt": volume})
+def encode_image(session_id: str, file_path: str, detail: str = "auto") -> dict:
+    """Read an image from volume, resize if needed, return base64.
+
+    Ported from NextJS /api/images/base64 endpoint (sharp → Pillow).
+
+    Args:
+        session_id: Session ID
+        file_path: Path to image relative to session folder
+        detail: Resize tier — "low" (512), "auto" (1024), "high" (2048)
+
+    Returns:
+        Dictionary with 'base64' (base64 encoded content) and 'mime' (MIME type),
+        or 'error' string on failure.
+    """
+    import base64
+    import mimetypes
+    from io import BytesIO
+    from PIL import Image
+
+    try:
+        volume.reload()
+        full_path = f"/session-storage/{session_id}/{file_path}"
+        content_bytes = b"".join(volume.read_file(full_path))
+
+        # Check MIME type
+        mime_type, _ = mimetypes.guess_type(file_path)
+        if not mime_type or not mime_type.startswith("image/"):
+            return {"error": "File is not an image"}
+
+        # Resize if exceeds max dimension for detail level (matches sharp logic)
+        max_dim = _MAX_IMAGE_DIM.get(detail, 1024)
+        img = Image.open(BytesIO(content_bytes))
+        w, h = img.size
+        output_mime = f"image/{(img.format or 'PNG').lower()}"
+
+        if w > max_dim or h > max_dim:
+            img.thumbnail((max_dim, max_dim), Image.LANCZOS)
+            buf = BytesIO()
+            img.save(buf, format="JPEG", quality=80)
+            content_bytes = buf.getvalue()
+            output_mime = "image/jpeg"
+
+        return {
+            "base64": base64.b64encode(content_bytes).decode("ascii"),
+            "mime": output_mime,
+        }
+    except FileNotFoundError:
+        return {"error": f"File not found: {file_path}"}
+    except Exception as e:
+        return {"error": str(e)}
 
 
