@@ -304,6 +304,9 @@ def web_fetch(
     """
     start = time.time()
 
+    # Clamp max_chars to hard cap
+    max_chars = min(max(max_chars, 100), MAX_CHARS)
+
     # Check cache
     ck = _cache_key(url, extract_mode, max_chars)
     cached = _cache_get(ck)
