@@ -22,6 +22,80 @@ For command syntax and options, run `agent-browser --help` or `agent-browser <co
 
 Use separate `execute` calls when you need to read snapshot output before acting. Chain with `&&` when you don't need intermediate output.
 
+## Choosing a Browser Mode
+
+You have three browser modes. Choose the right one **before the first request** to a site — some sites will flag or ban accounts on the first sign of bot activity, so you may not get a second chance.
+
+### Risk assessment
+
+**Before navigating to any site**, assess the bot-detection risk:
+
+- **Low risk** — Internal tools, dashboards, documentation sites, simple web apps, public APIs, government sites, most SaaS admin panels. These rarely have bot detection.
+- **High risk** — Major social platforms (LinkedIn, Facebook, Instagram, X/Twitter), banking/financial sites, e-commerce with anti-scraping (Amazon, eBay), ticketing sites, any site known to actively detect and ban bot accounts.
+
+**IMPORTANT:** High-risk sites (especially LinkedIn, Facebook, banking) can permanently ban accounts on bot detection. Never attempt local headless Chrome on these — go straight to Kernel stealth. When in doubt, treat a site as high risk.
+
+### Decision ladder
+
+| Risk | First visit | Subsequent visits |
+|------|------------|-------------------|
+| **Low risk** | Local headless | Local headless (with saved auth state) |
+| **Low risk, blocked** | Escalate to Kernel stealth | Kernel stealth (stay on Kernel for this site) |
+| **High risk** | Kernel stealth | Kernel stealth (always) |
+| **Login needed** | Kernel headed (human-in-the-loop) → Kernel stealth | Kernel stealth (with saved auth state) |
+
+Key principle: **once a site needs Kernel, always use Kernel for that site.** Do not fall back to local headless — the same bot detection that required Kernel will block local Chrome even with valid auth cookies.
+
+### 1. Local headless (default — low-risk sites)
+```bash
+agent-browser open https://docs.example.com
+agent-browser snapshot -i
+```
+
+### 2. Kernel stealth (high-risk sites, or after local headless is blocked)
+```bash
+KERNEL_STEALTH=true agent-browser -p kernel open https://linkedin.com/feed
+agent-browser snapshot -i
+# ... automation as normal ...
+agent-browser close
+```
+
+### 3. Kernel headed (human-in-the-loop login)
+
+Use when the user needs to interact directly (login, MFA, CAPTCHA). After login, always drop to Kernel stealth — not local headless.
+
+**Step 1: Create Kernel headed session**
+```bash
+BROWSER_JSON=$(kernel browsers create --save-changes -o json 2>/dev/null)
+LIVE_VIEW=$(echo "$BROWSER_JSON" | jq -r '.browser_live_view_url')
+CDP_URL=$(echo "$BROWSER_JSON" | jq -r '.cdp_ws_url')
+SESSION_ID=$(echo "$BROWSER_JSON" | jq -r '.session_id')
+echo "LIVE_VIEW_URL: $LIVE_VIEW"
+```
+
+Surface the live view URL to the user and ask them to complete the login.
+
+**Step 2: After user confirms login, extract auth state**
+```bash
+bash /mnt/skills/browser/save_kernel_auth.sh "$CDP_URL" /mnt/browser-profiles/site-name.json
+```
+
+**Step 3: Close the Kernel headed session**
+```bash
+kernel browsers delete "$SESSION_ID"
+```
+
+**Step 4: Future visits use Kernel stealth with saved state**
+```bash
+KERNEL_STEALTH=true agent-browser -p kernel state load /mnt/browser-profiles/site-name.json
+KERNEL_STEALTH=true agent-browser -p kernel open https://site.com/dashboard
+agent-browser snapshot -i
+```
+
+### When state expires
+
+If cookies expire and the site requires re-login, repeat the Kernel headed flow to refresh the state file. Then continue with Kernel stealth.
+
 ## Auth Persistence
 
 Auth state persists on the Modal volume at `/mnt/browser-profiles/`. Two approaches:
@@ -48,60 +122,6 @@ agent-browser open https://site.com
 ```
 
 Profile naming convention: use the site or service name (e.g. `/mnt/browser-profiles/gmail`, `/mnt/browser-profiles/github`).
-
-## Kernel Escalation
-
-The default local Chromium works for most sites. Escalate to Kernel cloud browsers only when:
-- **Stealth mode**: site has bot detection, CAPTCHAs, or blocks headless browsers
-- **Headed browser**: user needs to log in manually, solve MFA, or see the browser live
-
-### Stealth mode
-```bash
-KERNEL_STEALTH=true agent-browser -p kernel open https://protected-site.com
-agent-browser snapshot -i
-# ... automation as normal ...
-
-# Save state locally so future runs use local Chrome
-agent-browser state save /mnt/browser-profiles/protected-site.json
-agent-browser close
-```
-
-### Headed browser with live view (human-in-the-loop)
-
-When the user needs to interact with the browser directly (login, MFA, CAPTCHA):
-
-**Step 1: Create Kernel headed session**
-```bash
-BROWSER_JSON=$(kernel browsers create --save-changes -o json 2>/dev/null)
-LIVE_VIEW=$(echo "$BROWSER_JSON" | jq -r '.browser_live_view_url')
-CDP_URL=$(echo "$BROWSER_JSON" | jq -r '.cdp_ws_url')
-SESSION_ID=$(echo "$BROWSER_JSON" | jq -r '.session_id')
-echo "LIVE_VIEW_URL: $LIVE_VIEW"
-```
-
-Surface the live view URL to the user and ask them to complete the login.
-
-**Step 2: After user confirms login, extract auth state to Modal volume**
-```bash
-bash /mnt/skills/browser/save_kernel_auth.sh "$CDP_URL" /mnt/browser-profiles/site-name.json
-```
-
-The script tries `agent-browser --cdp` first, then falls back to direct CDP WebSocket extraction via Node.js. Both produce Playwright-compatible storage state JSON.
-
-**Step 3: Close the Kernel session**
-```bash
-kernel browsers delete "$SESSION_ID"
-```
-
-**Step 4: Future sessions use local Chrome with saved state**
-```bash
-agent-browser state load /mnt/browser-profiles/site-name.json
-agent-browser open https://site.com/dashboard
-agent-browser snapshot -i
-```
-
-### When state expires
-If cookies expire and local Chrome gets logged out, repeat the headed flow to refresh the state file.
 
 ## Tips
 

@@ -79,7 +79,7 @@ rclone_image = (
     )
     # Browser automation: agent-browser CLI + Kernel CLI (for stealth/headed escalation)
     .run_commands(
-        "npm install -g agent-browser @onkernel/cli ws",
+        "npm install -g agent-browser @onkernel/cli",
         # Download Chromium for agent-browser (separate from Playwright's copy)
         "agent-browser install",
     )
