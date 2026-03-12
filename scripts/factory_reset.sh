@@ -16,6 +16,18 @@ trap "rm -f $KEEPFILE" EXIT
 
 echo "=== Factory Reset ==="
 
+# Step 0: Truncate Supabase memory index (pgvector)
+echo "Truncating memory_chunks in Supabase..."
+"$PROJECT_DIR/venv/bin/python" -c "
+import os
+from dotenv import load_dotenv
+load_dotenv(os.path.join('$PROJECT_DIR', '.env'))
+from supabase import create_client
+sb = create_client(os.environ['SUPABASE_URL'], os.environ['SUPABASE_SERVICE_KEY'])
+sb.table('memory_chunks').delete().neq('id', 0).execute()
+print('  memory_chunks truncated')
+" 2>&1 || echo "  Warning: failed to truncate memory_chunks (table may not exist yet)"
+
 # Step 1: Wipe LangGraph threads (local dev storage)
 echo "Wiping LangGraph threads..."
 rm -rf "$PROJECT_DIR/.langgraph_api"
