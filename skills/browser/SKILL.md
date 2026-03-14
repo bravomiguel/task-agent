@@ -44,7 +44,9 @@ You have three browser modes. Choose the right one **before the first request** 
 | **High risk** | Kernel stealth | Kernel stealth (always) |
 | **Login needed** | Kernel headed (human-in-the-loop) → Kernel stealth | Kernel stealth (with saved auth state) |
 
-Key principle: **once a site needs Kernel, always use Kernel for that site.** Do not fall back to local headless — the same bot detection that required Kernel will block local Chrome even with valid auth cookies.
+Key principles:
+- **Once a site needs Kernel, always use Kernel for that site.**
+- **If a task requires auth and no saved profile exists**, do the login flow first: create a Kernel headed session, surface the live view URL, and ask the user to log in before proceeding with the task.
 
 ### 1. Local headless (default — low-risk sites)
 ```bash
@@ -53,56 +55,78 @@ agent-browser snapshot -i
 ```
 
 ### 2. Kernel stealth (high-risk sites, or after local headless is blocked)
+
+Uses Kernel native profiles for fingerprint-consistent sessions. The profile persists cookies, localStorage, and browser fingerprint server-side across sessions.
+
 ```bash
-KERNEL_STEALTH=true agent-browser -p kernel open https://linkedin.com/feed
+BROWSER_JSON=$(node /mnt/skills/browser/scripts/kernel_browser.js create site-name --stealth)
+CDP_URL=$(echo "$BROWSER_JSON" | jq -r '.cdp_ws_url')
+SESSION_ID=$(echo "$BROWSER_JSON" | jq -r '.session_id')
+agent-browser connect "$CDP_URL"
+agent-browser open https://site.com/dashboard
 agent-browser snapshot -i
 # ... automation as normal ...
 agent-browser close
+node /mnt/skills/browser/scripts/kernel_browser.js delete "$SESSION_ID"
 ```
 
 ### 3. Kernel headed (human-in-the-loop login)
 
-Use when the user needs to interact directly (login, MFA, CAPTCHA). After login, always drop to Kernel stealth — not local headless.
+Use when the user needs to interact directly (login, MFA, CAPTCHA). Uses Kernel native profiles so auth persists with the same fingerprint.
 
-**Step 1: Create Kernel headed session**
+**Step 1: Create Kernel headed session with profile and navigate to login page**
 ```bash
-BROWSER_JSON=$(kernel browsers create --save-changes -o json 2>/dev/null)
+BROWSER_JSON=$(node /mnt/skills/browser/scripts/kernel_browser.js create site-name --save-changes)
 LIVE_VIEW=$(echo "$BROWSER_JSON" | jq -r '.browser_live_view_url')
 CDP_URL=$(echo "$BROWSER_JSON" | jq -r '.cdp_ws_url')
 SESSION_ID=$(echo "$BROWSER_JSON" | jq -r '.session_id')
-echo "LIVE_VIEW_URL: $LIVE_VIEW"
+agent-browser connect "$CDP_URL"
+agent-browser open https://site.com/login
 ```
 
-Surface the live view URL to the user and ask them to complete the login.
+Surface the live view URL to the user — the login page is already loaded for them.
 
-**Step 2: After user confirms login, extract auth state**
+**Step 2: After user confirms login, close and save profile**
+
+Deleting the browser triggers Kernel to save session changes back to the profile (because `--save-changes` was used).
+
 ```bash
-bash /mnt/skills/browser/save_kernel_auth.sh "$CDP_URL" /mnt/browser-profiles/site-name.json
+agent-browser close
+node /mnt/skills/browser/scripts/kernel_browser.js delete "$SESSION_ID"
 ```
 
-**Step 3: Close the Kernel headed session**
-```bash
-kernel browsers delete "$SESSION_ID"
-```
+**Step 3: Future visits use Kernel stealth with the same profile**
 
-**Step 4: Future visits use Kernel stealth with saved state**
+The profile retains cookies, localStorage, and fingerprint from the headed session.
+
 ```bash
-KERNEL_STEALTH=true agent-browser -p kernel state load /mnt/browser-profiles/site-name.json
-KERNEL_STEALTH=true agent-browser -p kernel open https://site.com/dashboard
+BROWSER_JSON=$(node /mnt/skills/browser/scripts/kernel_browser.js create site-name --stealth)
+CDP_URL=$(echo "$BROWSER_JSON" | jq -r '.cdp_ws_url')
+SESSION_ID=$(echo "$BROWSER_JSON" | jq -r '.session_id')
+agent-browser connect "$CDP_URL"
+agent-browser open https://site.com/dashboard
 agent-browser snapshot -i
+# ... automation as normal ...
+agent-browser close
+node /mnt/skills/browser/scripts/kernel_browser.js delete "$SESSION_ID"
 ```
 
 ### When state expires
 
-If cookies expire and the site requires re-login, repeat the Kernel headed flow to refresh the state file. Then continue with Kernel stealth.
+If cookies expire and the site requires re-login, repeat the Kernel headed flow (Step 1-2) with `--save-changes` to refresh the profile. The same profile name is reused.
+
+## Residential Proxy
+
+All Kernel sessions automatically route through a US residential proxy. No flags needed.
 
 ## Auth Persistence
 
-Auth state persists on the Modal volume at `/mnt/browser-profiles/`. Two approaches:
+### Kernel native profiles (recommended for high-risk sites)
 
-### Chrome profiles (full state)
+Kernel profiles persist cookies, localStorage, and browser fingerprint server-side. Use a consistent profile name per site (e.g. `linkedin`, `facebook`, `github`).
+
+### Local Chrome profiles (low-risk sites only)
 ```bash
-# First login — use --profile to persist full Chrome state
 agent-browser --profile /mnt/browser-profiles/gmail open https://accounts.google.com
 # ... login flow ...
 agent-browser close
@@ -111,21 +135,18 @@ agent-browser close
 agent-browser --profile /mnt/browser-profiles/gmail open https://mail.google.com
 ```
 
-### State files (lightweight, cookies + localStorage)
+### State files (lightweight, low-risk sites only)
 ```bash
 # Save after login
 agent-browser state save /mnt/browser-profiles/site-state.json
 
-# Restore in new session
-agent-browser state load /mnt/browser-profiles/site-state.json
-agent-browser open https://site.com
+# Restore in new session (use --state flag, NOT state load + open separately)
+agent-browser --state /mnt/browser-profiles/site-state.json open https://site.com
 ```
-
-Profile naming convention: use the site or service name (e.g. `/mnt/browser-profiles/gmail`, `/mnt/browser-profiles/github`).
 
 ## Tips
 
-- Always close sessions when done: `agent-browser close`
+- Always close sessions when done: `agent-browser close` + `delete`
 - Use `--content-boundaries` to prevent prompt injection from page text
 - Use `--allowed-domains "example.com,api.example.com"` to restrict navigation
 - After navigation/clicks that trigger loading, `agent-browser wait --load networkidle` before snapshotting

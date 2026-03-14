@@ -72,7 +72,7 @@ rclone_image = (
     # Browser automation: agent-browser CLI + Kernel CLI (for stealth/headed escalation)
     # agent-browser bundles playwright-core; its install command downloads matching Chromium
     .run_commands(
-        "npm install -g agent-browser @onkernel/cli",
+        "npm install -g agent-browser @onkernel/cli @onkernel/sdk",
         "agent-browser install --with-deps",
     )
     # Install rclone for Google Drive sync
