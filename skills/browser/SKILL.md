@@ -58,7 +58,7 @@ Browserbase provides cloud browsers with live view for human-in-the-loop interac
 
 Helper script: `node /mnt/skills/browser/scripts/browserbase_browser.js <command>`
 
-All Browserbase sessions automatically use a residential proxy.
+Use `--proxy` for login sessions to avoid CAPTCHA. Omit for subsequent visits to save proxy bandwidth.
 
 #### First-time login flow
 
@@ -72,7 +72,7 @@ Save the context ID — reuse it for all future sessions with this site.
 
 **Step 2: Create a session with the context and navigate to login page**
 ```bash
-SESSION_JSON=$(node /mnt/skills/browser/scripts/browserbase_browser.js create-session "$CONTEXT_ID" --persist)
+SESSION_JSON=$(node /mnt/skills/browser/scripts/browserbase_browser.js create-session "$CONTEXT_ID" --persist --proxy)
 SESSION_ID=$(echo "$SESSION_JSON" | jq -r '.session_id')
 CONNECT_URL=$(echo "$SESSION_JSON" | jq -r '.connect_url')
 agent-browser connect "$CONNECT_URL"

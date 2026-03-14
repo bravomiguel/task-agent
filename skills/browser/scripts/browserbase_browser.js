@@ -2,11 +2,11 @@
 // Browserbase browser manager for context-based cookie persistence.
 // Usage:
 //   node browserbase_browser.js create-context <name>
-//   node browserbase_browser.js create-session <context-id> [--persist]
+//   node browserbase_browser.js create-session <context-id> [--persist] [--proxy]
 //   node browserbase_browser.js live-view <session-id>
 //   node browserbase_browser.js close-session <session-id>
 //
-// All sessions use a residential proxy by default.
+// Use --proxy for login sessions to avoid CAPTCHA. Omit for subsequent visits to save cost.
 // Requires BROWSERBASE_API_KEY and BROWSERBASE_PROJECT_ID env vars.
 // Outputs JSON to stdout. Errors go to stderr.
 
@@ -29,12 +29,12 @@ async function createContext(name) {
   console.log(JSON.stringify({ context_id: data.id, name }));
 }
 
-async function createSession(contextId, persist) {
+async function createSession(contextId, persist, proxy) {
   const body = {
     projectId: PROJECT_ID,
-    proxies: true,
     browserSettings: {},
   };
+  if (proxy) body.proxies = true;
   if (contextId) {
     body.browserSettings.context = { id: contextId, persist: !!persist };
   }
@@ -92,7 +92,8 @@ async function main() {
     case "create-session": {
       const contextId = args[0];
       const persist = args.includes("--persist");
-      await createSession(contextId, persist);
+      const proxy = args.includes("--proxy");
+      await createSession(contextId, persist, proxy);
       break;
     }
     case "live-view": {
