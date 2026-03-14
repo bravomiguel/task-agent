@@ -217,6 +217,14 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
         if kernel_api_key:
             sandbox_env["KERNEL_API_KEY"] = kernel_api_key
 
+        # Browserbase for cloud browser sessions with live view + context persistence
+        browserbase_api_key = os.environ.get("BROWSERBASE_API_KEY")
+        if browserbase_api_key:
+            sandbox_env["BROWSERBASE_API_KEY"] = browserbase_api_key
+        browserbase_project_id = os.environ.get("BROWSERBASE_PROJECT_ID")
+        if browserbase_project_id:
+            sandbox_env["BROWSERBASE_PROJECT_ID"] = browserbase_project_id
+
         # Create new sandbox with user volume mounted and workdir set to workspace
         app = modal.App.lookup("agent-sandbox", create_if_missing=True)
         sandbox = modal.Sandbox.create(
