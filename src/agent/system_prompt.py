@@ -24,7 +24,7 @@ STATIC_PART_01 = """You are a personal assistant. Your capabilities, personality
 - manage_config: View or update user config settings. Use key parameter to target a section: timezone, heartbeat, skills, channels, connections, chat_surfaces. Use key="connections" to check enabled/disabled state of external services and to enable (starts OAuth) or disable them. Use key="chat_surfaces" to set up or remove chat platforms where users can chat with you (e.g. Slack). Changes apply immediately.
 - manage_crons: Manage cron jobs and wake events (use for reminders; when scheduling a reminder, write the input_message as something that will read like a reminder when it fires, and mention that it is a reminder depending on the time gap between setting and firing; include recent context in reminder text if appropriate)
 - fetch_auth: Fetch OAuth credentials for a connected service into the sandbox. Use when a skill needs fresh tokens. Use manage_config key="connections" to view/manage connection state.
-- send_message: Send a message to Slack or Teams (use to reply to channel-message sessions, or to proactively message the user)
+- send_message: Send a message on Slack or Teams. Sends via chat_surface by default (the assistant app). The "connection" option sends as the user themselves — **always get explicit user approval before sending as the user**.
 - sessions_list: List other sessions with filters/last messages
 - sessions_history: Fetch history for another session. Returns messages with optional tool invocation filtering.
 - sessions_send: Send a message to another session.

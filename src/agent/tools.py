@@ -1127,24 +1127,24 @@ _MSG_SENDERS: dict[str, callable] = {
 }
 
 
-def _resolve_slack_token(sandbox, as_identity: str | None) -> str:
-    """Resolve the Slack token based on identity preference.
+def _resolve_slack_token(sandbox, via: str | None) -> str:
+    """Resolve the Slack token based on via preference.
 
-    Priority: explicit as_identity > bot if token exists > user OAuth fallback.
+    Priority: explicit via > chat_surface if token exists > connection OAuth.
     """
     from agent.auth import vault_get_secret, SLACK_BOT_TOKEN_SECRET
 
-    use_bot = as_identity == "bot" or as_identity is None
+    use_chat_surface = via == "chat_surface" or via is None
 
-    if use_bot:
+    if use_chat_surface:
         token = vault_get_secret(SLACK_BOT_TOKEN_SECRET)
         if token:
             return token
-        if as_identity == "bot":
-            raise RuntimeError('Bot token not found in vault. Run manage_config key="chat_surfaces" to set up Slack first.')
-        # Fall through to user token
+        if via == "chat_surface":
+            raise RuntimeError('Chat surface token not found. Run manage_config key="chat_surfaces" to set up Slack first.')
+        # Fall through to connection token
 
-    # User OAuth token from sandbox
+    # User OAuth token from sandbox (connection)
     return _read_token_from_sandbox(sandbox, _MSG_TOKEN_FILES["slack"])
 
 
@@ -1154,7 +1154,7 @@ def send_message(
     recipient: str,
     text: str,
     thread_ts: str = None,
-    as_identity: Literal["bot", "user"] = None,
+    via: Literal["chat_surface", "connection"] = None,
     state: Annotated[dict, InjectedState] = None,
 ) -> str:
     """Send a message to a user or channel on Slack or Microsoft Teams.
@@ -1171,8 +1171,13 @@ def send_message(
         thread_ts: (Slack only) Thread timestamp to reply in-thread. Use the
             thread_ts from the inbound channel-message to keep the conversation
             in the same thread.
-        as_identity: (Slack only) Send as "bot" (xoxb- token) or "user"
-            (Composio OAuth). Default: bot if bot_enabled, otherwise user.
+        via: (Slack only) How to send the message:
+            - "chat_surface" — sends as the assistant app (set up via manage_config key="chat_surfaces").
+              This is the default and preferred option.
+            - "connection" — sends as the user themselves via their OAuth token.
+              **SENSITIVE**: This posts as the actual user, not the assistant. Always get
+              explicit user approval before using this option. Never assume the user wants
+              messages sent under their name.
 
     Returns:
         JSON with send status and message details.
@@ -1188,7 +1193,7 @@ def send_message(
     try:
         sandbox = modal.Sandbox.from_id(sandbox_id)
         if platform == "slack":
-            token = _resolve_slack_token(sandbox, as_identity)
+            token = _resolve_slack_token(sandbox, via)
         else:
             token_file = _MSG_TOKEN_FILES.get(platform)
             token = _read_token_from_sandbox(sandbox, token_file)
