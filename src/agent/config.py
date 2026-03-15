@@ -91,6 +91,9 @@ class HeartbeatConfig(BaseModel):
         return v
 
 
+# TODO: Migrate UserProfile and HeartbeatConfig to Supabase users table.
+# manage_config interface stays the same — only the backing store changes.
+
 class UserProfile(BaseModel):
     """User profile — expandable over time."""
     timezone: str = DEFAULT_TIMEZONE  # IANA timezone
