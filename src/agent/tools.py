@@ -646,7 +646,7 @@ def manage_config(
     - **connections**: External service integrations (Google, GitHub, Slack, etc.).
       GET returns all available services with enabled/disabled status (live from Composio).
       PATCH to enable starts OAuth flow and returns auth URL. PATCH to disable disconnects.
-    - **chat_surfaces**: Chat platform bot setup (Slack bot, Teams bot, etc.).
+    - **chat_surfaces**: Chat platforms where the user can chat with you (Slack, Teams, etc.).
       GET returns all available surfaces with enabled/disabled status.
       PATCH to enable returns setup instructions. PATCH to disable removes credentials.
     - **channels**: Inbound event toggles per platform (slack, teams, gmail, outlook).

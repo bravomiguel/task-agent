@@ -598,7 +598,7 @@ def connect_slack_bot(
     signing_secret: str | None = None,
     owner_slack_id: str | None = None,
 ) -> dict[str, Any]:
-    """Handle the Slack bot connection flow.
+    """Handle the Slack chat surface setup flow.
 
     Phase 1 (token=None): Return manifest + setup instructions.
     Phase 2 (token provided): Verify token, store token + signing secret + owner ID in vault.
@@ -612,7 +612,7 @@ def connect_slack_bot(
         return {
             "status": "setup_required",
             "message": (
-                "To set up the Slack bot:\n\n"
+                "To set up Slack so you can chat with me there:\n\n"
                 "1. Go to https://api.slack.com/apps → **Create New App** → **From a manifest**\n"
                 "2. Select your workspace, switch to **YAML** tab, and paste this manifest:\n\n"
                 f"```yaml\n{manifest}\n```\n\n"
@@ -622,9 +622,12 @@ def connect_slack_bot(
                 "6. Go to **Basic Information** (left sidebar) → **App Credentials** → copy the **Signing Secret**\n"
                 "7. Copy your **Slack member ID**: click your profile picture (bottom-left) → "
                 "**Profile** → click the **⋮** (three dots) → **Copy member ID**\n"
-                "8. Give me the bot token, signing secret, and your member ID and I'll finish the setup.\n\n"
+                "8. Give me the token, signing secret, and your member ID and I'll finish the setup.\n\n"
                 "**AGENT NOTE**: Before showing this manifest to the user, replace \"AI Assistant\" "
-                "with your own name (from IDENTITY.md) in both the `name` and `display_name` fields."
+                "with your own name (from IDENTITY.md) in both the `name` and `display_name` fields. "
+                "When talking to the user about this, use 'chat with me on Slack' language — "
+                "avoid saying 'bot' or 'Slack bot'. The technical terms in the manifest are fine, "
+                "but your conversation with the user should frame this as setting up Slack as a chat surface."
             ),
             "manifest": manifest,
             "webhook_url": webhook_url,
@@ -674,16 +677,15 @@ def connect_slack_bot(
 
     return {
         "status": "connected",
-        "service": "slack-bot",
+        "service": "slack",
         "bot_user_id": bot_user_id,
         "owner_user_id": owner_slack_id,
         "team": data.get("team"),
         "bot_name": data.get("user"),
         "message": (
-            f"Slack bot connected! Bot user: {data.get('user')} ({bot_user_id}), "
-            f"workspace: {data.get('team')}, owner: {owner_slack_id}. "
-            f"Only you can DM this bot. "
-            f"Add it to channels with /invite @{data.get('user')}."
+            f"Slack chat surface is set up! You can now chat with me on Slack. "
+            f"Workspace: {data.get('team')}, your member ID: {owner_slack_id}. "
+            f"DM me directly, or add me to channels with /invite @{data.get('user')}."
         ),
     }
 
