@@ -660,8 +660,8 @@ def manage_config(
             If omitted, operates on the full config (connections/chat_surfaces excluded).
         patch: JSON string for patch action.
             For connections: '{"google": "enabled"}' or '{"slack": "disabled"}'
-            For chat_surfaces: '{"slack-bot": "enabled"}' or '{"slack-bot": "disabled"}'
-              To complete slack-bot setup: '{"slack-bot": {"token": "xoxb-...", "signing_secret": "...", "owner_slack_id": "U..."}}'
+            For chat_surfaces: '{"slack": "enabled"}' or '{"slack": "disabled"}'
+              To complete Slack setup: '{"slack": {"token": "xoxb-...", "signing_secret": "...", "owner_slack_id": "U..."}}'
             For other keys: standard config merge patch.
 
     Returns:
@@ -720,7 +720,7 @@ def manage_config(
 # -- Connections handler (Composio-backed) --
 
 _CHAT_SURFACE_REGISTRY = {
-    "slack-bot": {"display_name": "Slack Bot"},
+    "slack": {"display_name": "Slack"},
 }
 
 
@@ -779,8 +779,8 @@ def _handle_chat_surfaces(action: str, patch_str: str | None) -> str:
         result = {}
         # Slack bot
         bot_token = vault_get_secret("slack_bot_token")
-        result["slack-bot"] = {
-            "display_name": "Slack Bot",
+        result["slack"] = {
+            "display_name": "Slack",
             "status": "enabled" if bot_token else "disabled",
         }
         return _json.dumps(result)
@@ -795,7 +795,7 @@ def _handle_chat_surfaces(action: str, patch_str: str | None) -> str:
 
         results = {}
         for surface, desired in patch_data.items():
-            if surface == "slack-bot":
+            if surface == "slack":
                 if isinstance(desired, dict):
                     # Phase 2: credentials provided
                     result = connect_slack_bot(
@@ -1141,7 +1141,7 @@ def _resolve_slack_token(sandbox, as_identity: str | None) -> str:
         if token:
             return token
         if as_identity == "bot":
-            raise RuntimeError('Bot token not found in vault. Run manage_config key="chat_surfaces" to set up slack-bot first.')
+            raise RuntimeError('Bot token not found in vault. Run manage_config key="chat_surfaces" to set up Slack first.')
         # Fall through to user token
 
     # User OAuth token from sandbox

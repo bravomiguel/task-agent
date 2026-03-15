@@ -28,7 +28,7 @@ For direct Slack API calls (beyond what `send_message` provides), get a token fi
 
 ```bash
 # Bot token (if bot is connected)
-manage_config action="get" key="chat_surfaces"  # check if slack-bot is set up
+manage_config action="get" key="chat_surfaces"  # check if Slack chat surface is set up
 
 # User token (Composio OAuth)
 fetch_auth service="slack"  # writes to /workspace/.auth/slack_token
