@@ -11,8 +11,8 @@ Use the Notion API to create/read/update pages, data sources (databases), and bl
 
 Before using any Notion commands, set up auth for this session:
 
-1. `manage_auth` tool with action `"list"` — check if Notion is connected
-2. `manage_auth` tool with action `"connect"`, service `"notion"` — fetch token
+1. `manage_config` tool with action `"get"`, key `"connections"` — check connection status
+2. `fetch_auth` tool with service `"notion"` — fetch token
 3. Token is written to `/workspace/.auth/notion_token`
 
 Set the token for API calls:
@@ -21,7 +21,7 @@ Set the token for API calls:
 NOTION_KEY=$(cat /workspace/.auth/notion_token)
 ```
 
-Run this before any Notion command. If you get a 401 error, re-run `manage_auth connect notion` to refresh the token.
+Run this before any Notion command. If you get a 401 error, re-run `fetch_auth service="notion"` to refresh the token.
 
 **Important:** The user must share target pages/databases with the integration (in Notion: click "..." on a page, then "Connect to" and select the integration).
 

@@ -11,8 +11,8 @@ Manage Trello boards, lists, and cards via the Trello REST API.
 
 Before using any Trello commands, set up auth for this session:
 
-1. `manage_auth` tool with action `"list"` — check if Trello is connected
-2. `manage_auth` tool with action `"connect"`, service `"trello"` — fetch credentials
+1. `manage_config` tool with action `"get"`, key `"connections"` — check connection status
+2. `fetch_auth` tool with service `"trello"` — fetch credentials
 3. API key written to `/workspace/.auth/trello_key`, token to `/workspace/.auth/trello_token`
 
 Set the credentials for API calls:
@@ -22,7 +22,7 @@ TRELLO_KEY=$(cat /workspace/.auth/trello_key)
 TRELLO_TOKEN=$(cat /workspace/.auth/trello_token)
 ```
 
-Run this before any Trello command. If you get a 401 error, re-run `manage_auth connect trello` to refresh.
+Run this before any Trello command. If you get a 401 error, re-run `fetch_auth service="trello"` to refresh.
 
 ## Usage
 

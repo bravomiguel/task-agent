@@ -11,11 +11,11 @@ Access Microsoft 365 services — Email (Outlook), Calendar, OneDrive, To Do tas
 
 Before using any Microsoft commands, set up auth for this session:
 
-1. `manage_auth` tool with action `"list"` — check if Microsoft is connected
-2. `manage_auth` tool with action `"connect"`, service `"microsoft"` — fetch credentials
+1. `manage_config` tool with action `"get"`, key `"connections"` — check connection status
+2. `fetch_auth` tool with service `"microsoft"` — fetch credentials
 3. Token written to `/workspace/.auth/microsoft_token`
 
-If you get a 401 error, re-run `manage_auth connect microsoft` to refresh the token.
+If you get a 401 error, re-run `fetch_auth service="microsoft"` to refresh the token.
 
 ## CLI Usage
 
@@ -144,5 +144,5 @@ User: "What's on my to do list?"
 - When sending email, confirm recipient and content with the user before sending
 - Mail search uses Microsoft's KQL syntax: `from:name`, `subject:keyword`, `hasAttachments:true`
 - For tasks, list available task lists first so user can choose the right one
-- Token expires after ~1 hour; re-run `manage_auth connect microsoft` to refresh
+- Token expires after ~1 hour; re-run `fetch_auth service="microsoft"` to refresh
 - Requires Composio auth config with scopes: Mail.ReadWrite, Mail.Send, Calendars.ReadWrite, Contacts.ReadWrite, Files.ReadWrite, Tasks.ReadWrite, User.Read

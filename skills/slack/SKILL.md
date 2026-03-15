@@ -28,10 +28,10 @@ For direct Slack API calls (beyond what `send_message` provides), get a token fi
 
 ```bash
 # Bot token (if bot is connected)
-manage_auth action="connect" service="slack-bot"  # token is in vault, not filesystem
+manage_config action="get" key="chat_surfaces"  # check if slack-bot is set up
 
 # User token (Composio OAuth)
-manage_auth action="connect" service="slack"  # writes to /workspace/.auth/slack_token
+fetch_auth service="slack"  # writes to /workspace/.auth/slack_token
 export SLACK_TOKEN=$(cat /workspace/.auth/slack_token)
 ```
 

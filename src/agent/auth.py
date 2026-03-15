@@ -723,6 +723,33 @@ def slack_status() -> dict[str, Any]:
     }
 
 
+def disconnect_service(service: str) -> dict[str, Any]:
+    """Disconnect a Composio-backed service by deleting its connected account."""
+    if service not in SERVICE_REGISTRY:
+        available = ", ".join(SERVICE_REGISTRY.keys())
+        return {"error": f"Unknown service: {service!r}. Available: {available}"}
+
+    svc_config = SERVICE_REGISTRY[service]
+    try:
+        accounts = _list_composio_accounts()
+        acct = _find_account_by_slug(accounts, svc_config["composio_slug"])
+        if not acct:
+            return {"status": "already_disconnected", "service": service}
+
+        acct_id = acct.get("id")
+        if acct_id:
+            resp = httpx.delete(
+                f"{COMPOSIO_API_URL}/connected_accounts/{acct_id}",
+                headers=_composio_headers(),
+                timeout=15,
+            )
+            resp.raise_for_status()
+
+        return {"status": "disconnected", "service": service, "display_name": svc_config["display_name"]}
+    except Exception as e:
+        return {"error": f"Failed to disconnect {service}: {e}"}
+
+
 def service_status(service: str) -> dict[str, Any]:
     """Return connection status for any Composio-backed service."""
     if service not in SERVICE_REGISTRY:

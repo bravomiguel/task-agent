@@ -11,8 +11,8 @@ Manage Dropbox and Box files via rclone CLI.
 
 Before using rclone, set up auth for the target service:
 
-1. `manage_auth` tool with action `"list"` — check if Dropbox/Box is connected
-2. `manage_auth` tool with action `"connect"`, service `"dropbox"` or `"box"` — fetch token
+1. `manage_config` tool with action `"get"`, key `"connections"` — check connection status
+2. `fetch_auth` tool with service `"dropbox"` or `"box"` — fetch token
 3. Token is written to `/workspace/.auth/dropbox_token` or `/workspace/.auth/box_token`
 
 ### Dropbox setup
@@ -29,7 +29,7 @@ export RCLONE_CONFIG_BOX_TYPE=box
 export RCLONE_CONFIG_BOX_TOKEN='{"access_token":"'$(cat /workspace/.auth/box_token)'","token_type":"bearer"}'
 ```
 
-Run the exports before any rclone command. If you get auth errors, re-run `manage_auth connect <service>` to refresh the token, then re-export.
+Run the exports before any rclone command. If you get auth errors, re-run `fetch_auth service="<service>"` to refresh the token, then re-export.
 
 ## Install
 

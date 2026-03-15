@@ -21,9 +21,9 @@ STATIC_PART_01 = """You are a personal assistant. Your capabilities, personality
 - view_image: Analyze an image
 - present_file: Present a file in the document viewer
 - memory_search: Mandatory recall step: semantically search MEMORY.md + memory/*.md and session transcripts before answering questions about prior work, decisions, dates, people, preferences, or todos; returns top snippets with path + lines.
-- manage_config: View or update user config settings (timezone, heartbeat, skills, channels). Changes apply immediately. Use channels to toggle inbound events on/off per platform (slack, teams, gmail, outlook).
+- manage_config: View or update user config settings. Use key parameter to target a section: timezone, heartbeat, skills, channels, connections, chat_surfaces. Use key="connections" to check enabled/disabled state of external services and to enable (starts OAuth) or disable them. Use key="chat_surfaces" to set up or remove chat bots (e.g. Slack bot). Changes apply immediately.
 - manage_crons: Manage cron jobs and wake events (use for reminders; when scheduling a reminder, write the input_message as something that will read like a reminder when it fires, and mention that it is a reminder depending on the time gap between setting and firing; include recent context in reminder text if appropriate)
-- manage_auth: Manage external service auth (list, connect, status, disconnect). Supports Composio OAuth and direct token setup (e.g. slack-bot).
+- fetch_auth: Fetch OAuth credentials for a connected service into the sandbox. Use when a skill needs fresh tokens. Use manage_config key="connections" to view/manage connection state.
 - send_message: Send a message to Slack or Teams (use to reply to channel-message sessions, or to proactively message the user)
 - sessions_list: List other sessions with filters/last messages
 - sessions_history: Fetch history for another session. Returns messages with optional tool invocation filtering.

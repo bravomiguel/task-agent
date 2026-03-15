@@ -634,30 +634,38 @@ def _parse_every_schedule(interval_str: str) -> str:
 @tool
 def manage_config(
     action: Literal["get", "patch"],
+    key: str = None,
     patch: str = None,
     state: Annotated[dict, InjectedState] = None,
 ) -> str:
-    """View or update user configuration (timezone, heartbeat, skills, channels, etc.).
+    """View or update user configuration.
 
-    Use this tool (not manage_crons) to change heartbeat frequency or active hours.
-    Use this tool to change user timezone — it auto-syncs to USER.md.
-    Use this tool to check skill status (disabled skills have descriptions in config) and enable/disable them.
-    Enabled skills are fetched immediately — read the returned path to use them.
-    Use this tool to toggle inbound message channels on/off (slack, teams, gmail, outlook).
+    Supports these config keys: timezone, heartbeat, skills, channels, connections, chat_surfaces.
+    Use key parameter to read/write a specific section instead of the full config.
+
+    - **connections**: External service integrations (Google, GitHub, Slack, etc.).
+      GET returns all available services with enabled/disabled status (live from Composio).
+      PATCH to enable starts OAuth flow and returns auth URL. PATCH to disable disconnects.
+    - **chat_surfaces**: Chat platform bot setup (Slack bot, Teams bot, etc.).
+      GET returns all available surfaces with enabled/disabled status.
+      PATCH to enable returns setup instructions. PATCH to disable removes credentials.
+    - **channels**: Inbound event toggles per platform (slack, teams, gmail, outlook).
+    - **heartbeat**: Heartbeat frequency and active hours.
+    - **skills**: Skill enable/disable with descriptions.
+    - **timezone**: IANA timezone string (auto-syncs to USER.md).
 
     Args:
-        action: "get" to read current config, "patch" to merge changes.
-        patch: JSON string of partial config to merge (required for patch).
-            Example: '{"timezone": "Europe/London"}'
-            Example: '{"heartbeat": {"active_hours": {"start": "09:00", "end": "17:00"}}}'
-            Example: '{"skills": {"notion": false}}' — disable a skill
-            Example: '{"skills": {"notion": true}}' — re-enable a skill
-            Example: '{"channels": {"gmail": false}}' — disable Gmail inbound
-            Example: '{"channels": {"teams": true}}' — re-enable Teams inbound
-            Use null to delete a key: '{"heartbeat": {"active_hours": null}}'
+        action: "get" to read, "patch" to update.
+        key: Optional config section to target (e.g. "connections", "heartbeat").
+            If omitted, operates on the full config (connections/chat_surfaces excluded).
+        patch: JSON string for patch action.
+            For connections: '{"google": "enabled"}' or '{"slack": "disabled"}'
+            For chat_surfaces: '{"slack-bot": "enabled"}' or '{"slack-bot": "disabled"}'
+              To complete slack-bot setup: '{"slack-bot": {"token": "xoxb-...", "signing_secret": "...", "owner_slack_id": "U..."}}'
+            For other keys: standard config merge patch.
 
     Returns:
-        Current or updated config as JSON.
+        Current or updated config/status as JSON.
     """
     from agent.config import apply_config_side_effects, load_config, patch_config
 
@@ -666,9 +674,23 @@ def manage_config(
         return "Error: no sandbox available."
 
     try:
+        # --- Connections (live from Composio, not stored in config.json) ---
+        if key == "connections":
+            return _handle_connections(action, patch)
+
+        # --- Chat surfaces (vault-backed, not stored in config.json) ---
+        if key == "chat_surfaces":
+            return _handle_chat_surfaces(action, patch)
+
+        # --- Standard config keys (file-backed) ---
         if action == "get":
             config = load_config(sandbox_id)
-            return _json.dumps(config.model_dump(exclude_none=True) or {})
+            data = config.model_dump(exclude_none=True) or {}
+            if key:
+                if key not in data:
+                    return f"Error: unknown config key '{key}'."
+                return _json.dumps({key: data[key]})
+            return _json.dumps(data)
 
         elif action == "patch":
             if not patch:
@@ -678,7 +700,6 @@ def manage_config(
             except _json.JSONDecodeError as e:
                 return f"Error: invalid JSON in patch: {e}"
 
-            # Write config, apply side-effects (cron reconcile, USER.md sync, skill sync)
             new_config = patch_config(sandbox_id, patch_data)
             side_effects = apply_config_side_effects(
                 new_config, sandbox_id=sandbox_id, patch=patch_data,
@@ -694,6 +715,109 @@ def manage_config(
     except Exception as e:
         logger.warning("[manage_config] %s failed: %s", action, e)
         return f"Error: {action} failed: {e}"
+
+
+# -- Connections handler (Composio-backed) --
+
+_CHAT_SURFACE_REGISTRY = {
+    "slack-bot": {"display_name": "Slack Bot"},
+}
+
+
+def _handle_connections(action: str, patch_str: str | None) -> str:
+    from agent.auth import (
+        SERVICE_REGISTRY,
+        disconnect_service,
+        initiate_service,
+        list_connected_services,
+    )
+
+    if action == "get":
+        connected = list_connected_services()
+        connected_names = {s["service"] for s in connected if s.get("status") == "ACTIVE"}
+        result = {}
+        for svc, cfg in SERVICE_REGISTRY.items():
+            result[svc] = {
+                "display_name": cfg["display_name"],
+                "status": "enabled" if svc in connected_names else "disabled",
+            }
+        return _json.dumps(result)
+
+    elif action == "patch":
+        if not patch_str:
+            return "Error: patch is required."
+        try:
+            patch_data = _json.loads(patch_str)
+        except _json.JSONDecodeError as e:
+            return f"Error: invalid JSON: {e}"
+
+        results = {}
+        for service, desired in patch_data.items():
+            if desired == "enabled":
+                result = initiate_service(service)
+                results[service] = result
+            elif desired == "disabled":
+                result = disconnect_service(service)
+                results[service] = result
+            else:
+                results[service] = {"error": f"Invalid value '{desired}'. Use 'enabled' or 'disabled'."}
+        return _json.dumps(results)
+
+    return f"Error: unknown action '{action}'."
+
+
+# -- Chat surfaces handler (vault-backed) --
+
+def _handle_chat_surfaces(action: str, patch_str: str | None) -> str:
+    from agent.auth import (
+        connect_slack_bot,
+        disconnect_slack_bot,
+        vault_get_secret,
+    )
+
+    if action == "get":
+        result = {}
+        # Slack bot
+        bot_token = vault_get_secret("slack_bot_token")
+        result["slack-bot"] = {
+            "display_name": "Slack Bot",
+            "status": "enabled" if bot_token else "disabled",
+        }
+        return _json.dumps(result)
+
+    elif action == "patch":
+        if not patch_str:
+            return "Error: patch is required."
+        try:
+            patch_data = _json.loads(patch_str)
+        except _json.JSONDecodeError as e:
+            return f"Error: invalid JSON: {e}"
+
+        results = {}
+        for surface, desired in patch_data.items():
+            if surface == "slack-bot":
+                if isinstance(desired, dict):
+                    # Phase 2: credentials provided
+                    result = connect_slack_bot(
+                        token=desired.get("token"),
+                        signing_secret=desired.get("signing_secret"),
+                        owner_slack_id=desired.get("owner_slack_id"),
+                    )
+                    results[surface] = result
+                elif desired == "enabled":
+                    # Phase 1: return setup instructions
+                    result = connect_slack_bot(token=None)
+                    results[surface] = result
+                elif desired == "disabled":
+                    result = disconnect_slack_bot()
+                    results[surface] = result
+                else:
+                    results[surface] = {"error": f"Invalid value '{desired}'."}
+            else:
+                results[surface] = {"error": f"Unknown chat surface '{surface}'."}
+        return _json.dumps(results)
+
+    return f"Error: unknown action '{action}'."
 
 
 def _is_heartbeat_job(sb, *, job_id: int = None, job_name: str = None) -> bool:
@@ -870,103 +994,33 @@ def manage_crons(
 
 
 @tool
-def manage_auth(
-    action: Literal["list", "initiate", "connect", "status", "disconnect"],
-    service: str = None,
-    token: str = None,
-    signing_secret: str = None,
-    owner_slack_id: str = None,
+def fetch_auth(
+    service: str,
     state: Annotated[dict, InjectedState] = None,
 ) -> str:
-    """Manage external service authentication (Google Workspace, GitHub, Slack, etc.).
+    """Fetch OAuth credentials for a connected service into the sandbox.
 
-    Uses Composio for OAuth credentials. Also supports direct token setup
-    for Slack bot (service="slack-bot").
-
-    Actions:
-      - "list": Check which services the user has connected.
-      - "initiate": Start an OAuth flow for a service. Returns an auth URL
-        the user must open in their browser. After they finish, call "connect".
-      - "connect": Fetch fresh credentials and set them up in the sandbox.
-        For "slack-bot": first call without token to get setup instructions,
-        then call again with token, signing_secret, and owner_slack_id.
-      - "status": Get detailed status for a service (e.g. "slack" returns
-        both bot and user OAuth status).
-      - "disconnect": Remove credentials for a service (e.g. "slack-bot").
+    Call this when a skill needs fresh credentials for an already-connected service.
+    Use manage_config with key="connections" to view/enable/disable connections.
 
     Args:
-        action: "list", "initiate", "connect", "status", or "disconnect".
-        service: Service name (e.g. "google", "github", "slack", "slack-bot").
-        token: (slack-bot only) The bot token (xoxb-...) provided by the user.
-        signing_secret: (slack-bot only) The Slack app signing secret.
-        owner_slack_id: (slack-bot only) The owner's Slack member ID (starts with U).
+        service: Service name (e.g. "google", "github", "slack", "teams").
 
     Returns:
-        JSON with service status, auth URL, setup instructions, or result.
+        JSON with token file path and usage instructions.
     """
-    from agent.auth import (
-        SERVICE_REGISTRY,
-        connect_service,
-        connect_slack_bot,
-        disconnect_slack_bot,
-        initiate_service,
-        list_connected_services,
-        service_status,
-        slack_status,
-    )
+    from agent.auth import connect_service
+
+    sandbox_id = state.get("modal_sandbox_id") if state else None
+    if not sandbox_id:
+        return "Error: no sandbox available."
 
     try:
-        if action == "list":
-            services = list_connected_services()
-            available = list(SERVICE_REGISTRY.keys()) + ["slack-bot"]
-            return _json.dumps({
-                "connected": services,
-                "available_services": available,
-            })
-
-        elif action == "initiate":
-            if not service:
-                return "Error: service is required for initiate action."
-            if service == "slack-bot":
-                return "Error: slack-bot uses direct token setup, not OAuth. Use action='connect' service='slack-bot'."
-            result = initiate_service(service)
-            return _json.dumps(result)
-
-        elif action == "connect":
-            if not service:
-                return "Error: service is required for connect action."
-            if service == "slack-bot":
-                result = connect_slack_bot(token, signing_secret, owner_slack_id=owner_slack_id)
-                return _json.dumps(result)
-            sandbox_id = state.get("modal_sandbox_id") if state else None
-            if not sandbox_id:
-                return "Error: no sandbox available."
-            result = connect_service(service, sandbox_id)
-            return _json.dumps(result)
-
-        elif action == "status":
-            if not service:
-                return "Error: service is required for status action."
-            if service in ("slack", "slack-bot"):
-                result = slack_status()
-                return _json.dumps(result)
-            result = service_status(service)
-            return _json.dumps(result)
-
-        elif action == "disconnect":
-            if not service:
-                return "Error: service is required for disconnect action."
-            if service == "slack-bot":
-                result = disconnect_slack_bot()
-                return _json.dumps(result)
-            return _json.dumps({"error": f"Disconnect not implemented for {service}."})
-
-        else:
-            return f"Error: unknown action '{action}'."
-
+        result = connect_service(service, sandbox_id)
+        return _json.dumps(result)
     except Exception as e:
-        logger.warning("[manage_auth] %s failed: %s", action, e)
-        return f"Error: {action} failed: {e}"
+        logger.warning("[fetch_auth] %s failed: %s", service, e)
+        return f"Error: fetch_auth for {service} failed: {e}"
 
 
 # ---------------------------------------------------------------------------
@@ -989,7 +1043,7 @@ def _read_token_from_sandbox(sandbox, token_file: str) -> str:
         stderr = process.stderr.read()
         raise RuntimeError(
             f"Token not found at {token_file}. "
-            f"Run manage_auth connect first. ({stderr})"
+            f"Run fetch_auth first. ({stderr})"
         )
     return process.stdout.read().strip()
 
@@ -1087,7 +1141,7 @@ def _resolve_slack_token(sandbox, as_identity: str | None) -> str:
         if token:
             return token
         if as_identity == "bot":
-            raise RuntimeError("Bot token not found in vault. Run manage_auth connect slack-bot first.")
+            raise RuntimeError("Bot token not found in vault. Run manage_config key="chat_surfaces" to set up slack-bot first.")
         # Fall through to user token
 
     # User OAuth token from sandbox
@@ -1141,7 +1195,7 @@ def send_message(
     except Exception as e:
         return _json.dumps({
             "status": "error",
-            "error": f"Failed to read {platform} token: {e}. Run manage_auth connect {platform} first.",
+            "error": f"Failed to read {platform} token: {e}. Run fetch_auth service=\"{platform}\" first.",
         })
 
     try:
