@@ -789,13 +789,31 @@ def _handle_chat_surfaces(action: str, patch_str: str | None) -> str:
     import os
     from agent.auth import disconnect_slack_chat_surface, vault_get_secret
 
+    supabase_url = os.environ.get("SUPABASE_URL", "")
+
+    CHAT_SURFACES = {
+        "slack": {
+            "display_name": "Slack",
+            "vault_key": "slack_bot_token",
+            "install_url": f"{supabase_url}/functions/v1/slack-oauth/install",
+            "disconnect_fn": disconnect_slack_chat_surface,
+        },
+        "teams": {
+            "display_name": "Teams",
+            "vault_key": "teams_bot_app_id",
+            "install_url": f"{supabase_url}/functions/v1/teams-bot-oauth/install",
+            "disconnect_fn": lambda: _disconnect_teams_chat_surface(),
+        },
+    }
+
     if action == "get":
         result = {}
-        bot_token = vault_get_secret("slack_bot_token")
-        result["slack"] = {
-            "display_name": "Slack",
-            "status": "enabled" if bot_token else "disabled",
-        }
+        for name, cfg in CHAT_SURFACES.items():
+            token = vault_get_secret(cfg["vault_key"])
+            result[name] = {
+                "display_name": cfg["display_name"],
+                "status": "enabled" if token else "disabled",
+            }
         return _json.dumps(result)
 
     elif action == "patch":
@@ -808,30 +826,35 @@ def _handle_chat_surfaces(action: str, patch_str: str | None) -> str:
 
         results = {}
         for surface, desired in patch_data.items():
-            if surface == "slack":
-                if desired == "enabled":
-                    # Return the "Add to Slack" install URL
-                    supabase_url = os.environ.get("SUPABASE_URL", "")
-                    install_url = f"{supabase_url}/functions/v1/slack-oauth/install"
-                    results[surface] = {
-                        "status": "setup_required",
-                        "install_url": install_url,
-                        "message": (
-                            "To set up Slack so you can chat with me there, "
-                            "click this link and authorize the app in your workspace. "
-                            "Once done, come back and let me know."
-                        ),
-                    }
-                elif desired == "disabled":
-                    result = disconnect_slack_chat_surface()
-                    results[surface] = result
-                else:
-                    results[surface] = {"error": f"Invalid value '{desired}'. Use 'enabled' or 'disabled'."}
+            if surface not in CHAT_SURFACES:
+                results[surface] = {"error": f"Unknown chat surface '{surface}'. Available: {', '.join(CHAT_SURFACES)}"}
+                continue
+
+            cfg = CHAT_SURFACES[surface]
+            if desired == "enabled":
+                results[surface] = {
+                    "status": "setup_required",
+                    "install_url": cfg["install_url"],
+                    "message": (
+                        f"To set up {cfg['display_name']} so you can chat with me there, "
+                        f"click this link and authorize the app. "
+                        f"Once done, come back and let me know."
+                    ),
+                }
+            elif desired == "disabled":
+                results[surface] = cfg["disconnect_fn"]()
             else:
-                results[surface] = {"error": f"Unknown chat surface '{surface}'."}
+                results[surface] = {"error": f"Invalid value '{desired}'. Use 'enabled' or 'disabled'."}
         return _json.dumps(results)
 
     return f"Error: unknown action '{action}'."
+
+
+def _disconnect_teams_chat_surface() -> dict:
+    from agent.auth import vault_delete_secret
+    for key in ["teams_bot_app_id", "teams_bot_app_secret", "teams_bot_tenant_id"]:
+        vault_delete_secret(key)
+    return {"status": "disconnected", "service": "teams"}
 
 
 # -- Skills handler (volume-backed) --
