@@ -322,7 +322,7 @@ SKILLS_REGISTRY: dict[str, str] = {
 }
 
 # Core skills enabled by default on factory reset
-CORE_SKILLS = {"docx", "pdf", "pptx", "weather", "xlsx"}
+CORE_SKILLS = {"browser", "docx", "pdf", "pptx", "weather", "xlsx"}
 
 
 # ---------------------------------------------------------------------------

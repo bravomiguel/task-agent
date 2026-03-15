@@ -96,7 +96,7 @@ echo "Uploading scripts..."
 
 # Step 9: Restore core skills only (weather, docx, pdf, pptx, xlsx)
 echo "Restoring core skills..."
-"$SCRIPT_DIR/reset_skills.sh" weather docx pdf pptx xlsx
+"$SCRIPT_DIR/reset_skills.sh" browser weather docx pdf pptx xlsx
 
 # Step 10: Reset heartbeat cron
 echo "Resetting heartbeat cron..."
