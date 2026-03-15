@@ -786,15 +786,11 @@ def _handle_connections(action: str, patch_str: str | None) -> str:
 # -- Chat surfaces handler (vault-backed) --
 
 def _handle_chat_surfaces(action: str, patch_str: str | None) -> str:
-    from agent.auth import (
-        connect_slack_bot,
-        disconnect_slack_bot,
-        vault_get_secret,
-    )
+    import os
+    from agent.auth import disconnect_slack_chat_surface, vault_get_secret
 
     if action == "get":
         result = {}
-        # Slack bot
         bot_token = vault_get_secret("slack_bot_token")
         result["slack"] = {
             "display_name": "Slack",
@@ -813,23 +809,24 @@ def _handle_chat_surfaces(action: str, patch_str: str | None) -> str:
         results = {}
         for surface, desired in patch_data.items():
             if surface == "slack":
-                if isinstance(desired, dict):
-                    # Phase 2: credentials provided
-                    result = connect_slack_bot(
-                        token=desired.get("token"),
-                        signing_secret=desired.get("signing_secret"),
-                        owner_slack_id=desired.get("owner_slack_id"),
-                    )
-                    results[surface] = result
-                elif desired == "enabled":
-                    # Phase 1: return setup instructions
-                    result = connect_slack_bot(token=None)
-                    results[surface] = result
+                if desired == "enabled":
+                    # Return the "Add to Slack" install URL
+                    supabase_url = os.environ.get("SUPABASE_URL", "")
+                    install_url = f"{supabase_url}/functions/v1/slack-oauth/install"
+                    results[surface] = {
+                        "status": "setup_required",
+                        "install_url": install_url,
+                        "message": (
+                            "To set up Slack so you can chat with me there, "
+                            "click this link and authorize the app in your workspace. "
+                            "Once done, come back and let me know."
+                        ),
+                    }
                 elif desired == "disabled":
-                    result = disconnect_slack_bot()
+                    result = disconnect_slack_chat_surface()
                     results[surface] = result
                 else:
-                    results[surface] = {"error": f"Invalid value '{desired}'."}
+                    results[surface] = {"error": f"Invalid value '{desired}'. Use 'enabled' or 'disabled'."}
             else:
                 results[surface] = {"error": f"Unknown chat surface '{surface}'."}
         return _json.dumps(results)

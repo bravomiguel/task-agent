@@ -703,151 +703,15 @@ SLACK_BOT_TOKEN_SECRET = "slack_bot_token"
 SLACK_SIGNING_SECRET_NAME = "slack_signing_secret"
 
 
-def _build_slack_manifest(webhook_url: str, app_name: str = "AI Assistant") -> str:
-    """Generate a Slack App manifest YAML with the webhook URL pre-filled."""
-    return f"""display_information:
-  name: "{app_name}"
-  description: "Personal AI assistant bot"
-features:
-  app_home:
-    messages_tab_enabled: true
-    messages_tab_read_only_enabled: false
-  bot_user:
-    display_name: "{app_name}"
-    always_online: true
-oauth_config:
-  scopes:
-    bot:
-      - chat:write
-      - channels:read
-      - channels:history
-      - groups:read
-      - groups:history
-      - im:read
-      - im:history
-      - mpim:read
-      - mpim:history
-      - app_mentions:read
-      - users:read
-      - reactions:write
-settings:
-  event_subscriptions:
-    request_url: "{webhook_url}"
-    bot_events:
-      - message.im
-      - message.channels
-      - message.groups
-      - message.mpim
-      - app_mention
-  org_deploy_enabled: false
-  socket_mode_enabled: false
-  token_rotation_enabled: false"""
-
-
-def connect_slack_bot(
-    token: str | None,
-    signing_secret: str | None = None,
-    owner_slack_id: str | None = None,
-) -> dict[str, Any]:
-    """Handle the Slack chat surface setup flow.
-
-    Phase 1 (token=None): Return manifest + setup instructions.
-    Phase 2 (token provided): Verify token, store token + signing secret + owner ID in vault.
-    """
-    import os
-    supabase_url = os.environ.get("SUPABASE_URL", "")
-    webhook_url = f"{supabase_url}/functions/v1/channel-webhook/slack-bot"
-
-    if not token:
-        manifest = _build_slack_manifest(webhook_url)
-        return {
-            "status": "setup_required",
-            "message": (
-                "To set up Slack so you can chat with me there:\n\n"
-                "1. Go to https://api.slack.com/apps → **Create New App** → **From a manifest**\n"
-                "2. Select your workspace, switch to **YAML** tab, and paste this manifest:\n\n"
-                f"```yaml\n{manifest}\n```\n\n"
-                "3. Click **Create**\n"
-                "4. Go to **Install App** (left sidebar) → **Install to Workspace** → **Allow**\n"
-                "5. Copy the **Bot User OAuth Token** (starts with `xoxb-`) shown on the page\n"
-                "6. Go to **Basic Information** (left sidebar) → **App Credentials** → copy the **Signing Secret**\n"
-                "7. Copy your **Slack member ID**: click your profile picture (bottom-left) → "
-                "**Profile** → click the **⋮** (three dots) → **Copy member ID**\n"
-                "8. Give me the token, signing secret, and your member ID and I'll finish the setup.\n\n"
-                "**AGENT NOTE**: Before showing this manifest to the user, replace \"AI Assistant\" "
-                "with your own name (from IDENTITY.md) in both the `name` and `display_name` fields. "
-                "When talking to the user about this, use 'chat with me on Slack' language — "
-                "avoid saying 'bot' or 'Slack bot'. The technical terms in the manifest are fine, "
-                "but your conversation with the user should frame this as setting up Slack as a chat surface."
-            ),
-            "manifest": manifest,
-            "webhook_url": webhook_url,
-        }
-
-    # Phase 2: verify and store
-    if not token.startswith("xoxb-"):
-        return {"status": "error", "error": "Invalid token format. Bot tokens start with xoxb-"}
-
-    if not signing_secret:
-        return {
-            "status": "error",
-            "error": (
-                "Signing secret is required. Find it in your Slack app settings: "
-                "Basic Information → App Credentials → Signing Secret."
-            ),
-        }
-
-    if not owner_slack_id:
-        return {
-            "status": "error",
-            "error": (
-                "Owner Slack member ID is required. In Slack, click your profile picture → "
-                "Profile → ⋮ (three dots) → Copy member ID."
-            ),
-        }
-
-    # Verify via auth.test
-    resp = httpx.post(
-        "https://slack.com/api/auth.test",
-        headers={"Authorization": f"Bearer {token}"},
-        timeout=10,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-
-    if not data.get("ok"):
-        return {"status": "error", "error": f"Token verification failed: {data.get('error', 'unknown')}"}
-
-    bot_user_id = data.get("user_id", "")
-
-    # Store token, bot_user_id, signing secret, and owner ID in vault
-    vault_set_secret(SLACK_BOT_TOKEN_SECRET, token)
-    vault_set_secret("slack_bot_user_id", bot_user_id)
-    vault_set_secret(SLACK_SIGNING_SECRET_NAME, signing_secret)
-    vault_set_secret("slack_bot_owner_id", owner_slack_id)
-
-    return {
-        "status": "connected",
-        "service": "slack",
-        "bot_user_id": bot_user_id,
-        "owner_user_id": owner_slack_id,
-        "team": data.get("team"),
-        "bot_name": data.get("user"),
-        "message": (
-            f"Slack chat surface is set up! You can now chat with me on Slack. "
-            f"Workspace: {data.get('team')}, your member ID: {owner_slack_id}. "
-            f"DM me directly, or add me to channels with /invite @{data.get('user')}."
-        ),
-    }
-
-
-def disconnect_slack_bot() -> dict[str, Any]:
-    """Remove Slack bot token, signing secret, bot_user_id, and owner_id from vault."""
+def disconnect_slack_chat_surface() -> dict[str, Any]:
+    """Remove all Slack chat surface credentials from vault."""
     vault_delete_secret(SLACK_BOT_TOKEN_SECRET)
     vault_delete_secret("slack_bot_user_id")
     vault_delete_secret(SLACK_SIGNING_SECRET_NAME)
     vault_delete_secret("slack_bot_owner_id")
-    return {"status": "disconnected", "service": "slack-bot"}
+    return {"status": "disconnected", "service": "slack"}
+
+
 
 
 def slack_status() -> dict[str, Any]:
