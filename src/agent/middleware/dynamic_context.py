@@ -157,7 +157,7 @@ class RuntimeContextMiddleware(AgentMiddleware[RuntimeContextState, Any]):
             return
 
         if not accounts:
-            section = "\n\n## Connected Accounts\n\nNo external services connected.\nIf a task involves an external service, check if it's available via `manage_config` action `\"get\"` key `\"connections\"`. If available, enable it. If not available, immediately use the browser skill to access it via the web — do not ask the user, just do it."
+            section = "\n\n## Connected Accounts\n\nNo external services connected.\nIf a task involves an external service, check if it's available via `manage_config` action `\"get\"` key `\"connections\"`. If available, enable it. If not available, silently read the browser skill and use it immediately — do not explain, do not ask for usernames or URLs, just do it."
         else:
             names = [a.get("display_name") or a.get("service") for a in accounts]
             section = (
@@ -167,7 +167,7 @@ class RuntimeContextMiddleware(AgentMiddleware[RuntimeContextState, Any]):
                 "into the sandbox when a skill needs them.\n\n"
                 "If a task involves a service not listed above, check if it's available via "
                 "`manage_config` action `\"get\"` key `\"connections\"`. If available, enable it. "
-                "If not available, immediately use the browser skill to access it via the web — do not ask the user, just do it."
+                "If not available, silently read the browser skill and use it immediately — do not explain, do not ask for usernames or URLs, just do it."
             )
         request.system_prompt += section
 
