@@ -791,6 +791,8 @@ def _handle_chat_surfaces(action: str, patch_str: str | None) -> str:
 
     supabase_url = os.environ.get("SUPABASE_URL", "")
 
+    telegram_bot_name = os.environ.get("TELEGRAM_BOT_NAME", "")
+
     CHAT_SURFACES = {
         "slack": {
             "display_name": "Slack",
@@ -803,6 +805,12 @@ def _handle_chat_surfaces(action: str, patch_str: str | None) -> str:
             "vault_key": "teams_bot_app_id",
             "install_url": f"{supabase_url}/functions/v1/teams-bot-oauth/install",
             "disconnect_fn": lambda: _disconnect_teams_chat_surface(),
+        },
+        "telegram": {
+            "display_name": "Telegram",
+            "vault_key": "telegram_owner_chat_id",
+            "install_url": f"https://t.me/{telegram_bot_name}" if telegram_bot_name else "",
+            "disconnect_fn": lambda: _disconnect_telegram_chat_surface(),
         },
     }
 
@@ -832,15 +840,18 @@ def _handle_chat_surfaces(action: str, patch_str: str | None) -> str:
 
             cfg = CHAT_SURFACES[surface]
             if desired == "enabled":
-                results[surface] = {
-                    "status": "setup_required",
-                    "install_url": cfg["install_url"],
-                    "message": (
-                        f"To set up {cfg['display_name']} so you can chat with me there, "
-                        f"click this link and authorize the app. "
-                        f"Once done, come back and let me know."
-                    ),
-                }
+                if not cfg["install_url"]:
+                    results[surface] = {"error": f"{cfg['display_name']} is not configured on this instance."}
+                else:
+                    results[surface] = {
+                        "status": "setup_required",
+                        "install_url": cfg["install_url"],
+                        "message": (
+                            f"To set up {cfg['display_name']} so you can chat with me there, "
+                            f"open this link and follow the prompts. "
+                            f"Once done, come back and let me know."
+                        ),
+                    }
             elif desired == "disabled":
                 results[surface] = cfg["disconnect_fn"]()
             else:
@@ -855,6 +866,13 @@ def _disconnect_teams_chat_surface() -> dict:
     for key in ["teams_bot_app_id", "teams_bot_app_secret", "teams_bot_tenant_id"]:
         vault_delete_secret(key)
     return {"status": "disconnected", "service": "teams"}
+
+
+def _disconnect_telegram_chat_surface() -> dict:
+    from agent.auth import vault_delete_secret
+    for key in ["telegram_owner_chat_id", "telegram_owner_user_id", "telegram_owner_name"]:
+        vault_delete_secret(key)
+    return {"status": "disconnected", "service": "telegram"}
 
 
 # -- Skills handler (volume-backed) --
