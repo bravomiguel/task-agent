@@ -19,6 +19,10 @@ const LANGGRAPH_API_URL = Deno.env.get("LANGGRAPH_API_URL") ?? "";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 
+function escapeAttr(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 // ---------------------------------------------------------------------------
 // Supabase REST helpers
 // ---------------------------------------------------------------------------
@@ -246,6 +250,40 @@ async function dispatchItem(item: Record<string, unknown>): Promise<{ dispatched
     if (bcc) attrs.push(`bcc="${bcc}"`);
     message = `<system-message ${attrs.join(" ")}>\n${combinedText}\n</system-message>`;
     runInput.channel_platform = emailSource;
+    runInput.channel_metadata = meta;
+  } else if (source === "meeting") {
+    const meetingId = (meta.meeting_id as string) ?? "";
+    const title = (meta.title as string) ?? "";
+    const duration = meta.duration as number | null;
+    const startedAt = (meta.started_at as string) ?? "";
+    const endedAt = (meta.ended_at as string) ?? "";
+    const meetingSource = (meta.source as string) ?? "calendar";
+    const platform = (meta.meeting_platform as string) ?? "unknown";
+    const calendarEmail = (meta.calendar_email as string) ?? "";
+    const attendees = (meta.attendees as Array<Record<string, string>>) ?? [];
+
+    const attrs = [
+      `type="meeting-transcript"`,
+      `meeting_id="${meetingId}"`,
+      `title="${escapeAttr(title)}"`,
+      `platform="${platform}"`,
+      `source="${meetingSource}"`,
+    ];
+    if (startedAt) attrs.push(`started_at="${startedAt}"`);
+    if (endedAt) attrs.push(`ended_at="${endedAt}"`);
+    if (duration != null) attrs.push(`duration_seconds="${duration}"`);
+    if (calendarEmail) attrs.push(`calendar_email="${calendarEmail}"`);
+
+    let attendeesBlock = "";
+    if (attendees.length > 0) {
+      const attendeeLines = attendees
+        .map((a) => `  <attendee status="${a.status ?? "unknown"}">${escapeAttr(a.name ?? "")}</attendee>`)
+        .join("\n");
+      attendeesBlock = `\n<attendees>\n${attendeeLines}\n</attendees>\n`;
+    }
+
+    message = `<system-message ${attrs.join(" ")}>${attendeesBlock}\n${combinedText}\n</system-message>`;
+    runInput.channel_platform = "meeting";
     runInput.channel_metadata = meta;
   } else {
     // Cron, heartbeat, subagent, sessions-send — combined_text is pre-formatted

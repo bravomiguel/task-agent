@@ -7,6 +7,7 @@
  *   POST /channel-webhook/slack-bot  — Slack Events API (bot events, direct from Slack)
  *   GET  /channel-webhook/teams      — Microsoft Graph subscription validation
  *   POST /channel-webhook/teams      — Microsoft Graph change notifications (Teams messages)
+ *   POST /channel-webhook/meetings   — Meeting transcripts from Electron app
  *
  * Composio sends all triggers to a single webhook URL. The handler inspects
  * payload.type to route: slack triggers → buffer+flush, email triggers → direct queue.
@@ -419,28 +420,28 @@ async function bufferAndFlush(
 }
 
 // ---------------------------------------------------------------------------
-// Inbound channel gate — check if platform is enabled via vault config
+// Inbound source gate — check if platform is enabled via vault config
 // ---------------------------------------------------------------------------
 
-let _channelsCache: { config: Record<string, boolean>; expiresAt: number } | null = null;
+let _inboundCache: { config: Record<string, boolean>; expiresAt: number } | null = null;
 
-async function isChannelEnabled(platform: string): Promise<boolean> {
+async function isInboundEnabled(platform: string): Promise<boolean> {
   // Cache for 60 seconds to avoid hammering vault on every message
-  if (_channelsCache && Date.now() < _channelsCache.expiresAt) {
-    return _channelsCache.config[platform] !== false;
+  if (_inboundCache && Date.now() < _inboundCache.expiresAt) {
+    return _inboundCache.config[platform] !== false;
   }
 
-  const raw = await getVaultSecret("inbound_channels");
+  const raw = await getVaultSecret("inbound_sources");
   if (raw) {
     try {
       const config = JSON.parse(raw) as Record<string, boolean>;
-      _channelsCache = { config, expiresAt: Date.now() + 60_000 };
+      _inboundCache = { config, expiresAt: Date.now() + 60_000 };
       return config[platform] !== false;
     } catch {
       // Invalid JSON — fall through to default (enabled)
     }
   }
-  // No config or parse error — all channels enabled by default
+  // No config or parse error — all sources enabled by default
   return true;
 }
 
@@ -502,19 +503,19 @@ async function handleComposio(req: Request): Promise<Response> {
   }
 
   if (SLACK_TRIGGERS.includes(routeKey)) {
-    if (!(await isChannelEnabled("slack"))) {
+    if (!(await isInboundEnabled("slack"))) {
       return jsonResponse({ ok: true, skipped: "channel_disabled", platform: "slack" });
     }
     return handleSlackTrigger(data);
   }
   if (routeKey === "gmail_new_gmail_message" || routeKey === "googlesuper_new_message") {
-    if (!(await isChannelEnabled("gmail"))) {
+    if (!(await isInboundEnabled("gmail"))) {
       return jsonResponse({ ok: true, skipped: "channel_disabled", platform: "gmail" });
     }
     return handleGmailTrigger(data);
   }
   if (routeKey === "outlook_message_trigger") {
-    if (!(await isChannelEnabled("outlook"))) {
+    if (!(await isInboundEnabled("outlook"))) {
       return jsonResponse({ ok: true, skipped: "channel_disabled", platform: "outlook" });
     }
     return handleOutlookTrigger(data, metadata);
@@ -699,7 +700,7 @@ async function handleSlackBot(req: Request): Promise<Response> {
   }
 
   // Check if Slack channel is enabled
-  if (!(await isChannelEnabled("slack"))) {
+  if (!(await isInboundEnabled("slack"))) {
     return jsonResponse({ ok: true, skipped: "channel_disabled", platform: "slack" });
   }
 
@@ -1026,7 +1027,7 @@ async function handleTeams(req: Request): Promise<Response> {
   }
 
   // Check if Teams channel is enabled (after validation — always allow validation)
-  if (!(await isChannelEnabled("teams"))) {
+  if (!(await isInboundEnabled("teams"))) {
     return jsonResponse({ ok: true, skipped: "channel_disabled", platform: "teams" });
   }
 
@@ -1255,6 +1256,87 @@ function jsonResponse(data: Record<string, unknown>, status = 200): Response {
 }
 
 // ---------------------------------------------------------------------------
+// Meetings handler — receives transcripts from Electron app
+// ---------------------------------------------------------------------------
+
+async function handleMeetings(req: Request): Promise<Response> {
+  let body: Record<string, unknown>;
+  try {
+    body = await req.json();
+  } catch {
+    return jsonResponse({ error: "Invalid JSON" }, 400);
+  }
+
+  const id = body.id as string;
+  const title = body.title as string;
+  const transcript = body.transcript as string;
+  const userId = body.userId as string;
+  const startedAt = body.startedAt as string;
+
+  if (!id || !title || !transcript || !userId || !startedAt) {
+    return jsonResponse({ error: "Missing required fields: id, title, transcript, userId, startedAt" }, 400);
+  }
+
+  // Check if meetings inbound source is enabled
+  if (!(await isInboundEnabled("meetings"))) {
+    return jsonResponse({ ok: false, reason: "meetings inbound source is disabled" });
+  }
+
+  // Store in meetings table
+  const meetingRow = {
+    id,
+    user_id: userId,
+    title,
+    transcript,
+    duration: body.duration ?? null,
+    started_at: startedAt,
+    ended_at: body.endedAt ?? null,
+    source: body.source ?? "calendar",
+    calendar_event_id: body.calendarEventId ?? null,
+    calendar_email: body.calendarEmail ?? null,
+    meeting_url: body.meetingUrl ?? null,
+    meeting_platform: body.meetingPlatform ?? null,
+    attendees: body.attendees ?? [],
+  };
+
+  const storeResp = await fetch(`${SUPABASE_URL}/rest/v1/meetings`, {
+    method: "POST",
+    headers: {
+      ...supabaseHeaders(),
+      "Prefer": "return=representation,resolution=merge-duplicates",
+    },
+    body: JSON.stringify(meetingRow),
+  });
+
+  if (!storeResp.ok) {
+    const text = await storeResp.text();
+    console.error(`[channel-webhook] meetings store failed ${storeResp.status}: ${text}`);
+    return jsonResponse({ error: "Failed to store meeting" }, 500);
+  }
+
+  // Insert into inbound queue (no debounce — like email, single complete payload)
+  await insertQueue({
+    source: "meeting",
+    priority: 2,
+    combined_text: transcript,
+    metadata: {
+      meeting_id: id,
+      title,
+      duration: body.duration ?? null,
+      started_at: startedAt,
+      ended_at: body.endedAt ?? null,
+      source: body.source ?? "calendar",
+      meeting_platform: body.meetingPlatform ?? null,
+      attendees: body.attendees ?? [],
+      calendar_email: body.calendarEmail ?? null,
+    },
+  });
+
+  console.log(`[channel-webhook] meeting ${id} stored and queued`);
+  return jsonResponse({ ok: true, meeting_id: id });
+}
+
+// ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
 
@@ -1280,6 +1362,9 @@ serve(async (req: Request) => {
   }
   if (path.endsWith("/composio") || path.endsWith("/slack")) {
     return handleComposio(req);
+  }
+  if (path.endsWith("/meetings")) {
+    return handleMeetings(req);
   }
 
   return jsonResponse({ error: "Unknown route" }, 404);
