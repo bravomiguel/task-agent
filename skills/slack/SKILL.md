@@ -24,14 +24,9 @@ send_message(platform="slack", recipient="C01234567", text="As user", as_identit
 
 ## Common API Operations
 
-For direct Slack API calls (beyond what `send_message` provides), get a token first:
+For direct Slack API calls (beyond what `send_message` provides), set the token:
 
 ```bash
-# Bot token (if bot is connected)
-manage_config action="get" key="chat_surfaces"  # check if Slack chat surface is set up
-
-# User token (Composio OAuth)
-python3 /mnt/scripts/fetch_auth.py slack  # writes to /workspace/.auth/slack_token
 export SLACK_TOKEN=$(cat /workspace/.auth/slack_token)
 ```
 

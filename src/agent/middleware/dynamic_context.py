@@ -157,6 +157,7 @@ class RuntimeContextMiddleware(AgentMiddleware[RuntimeContextState, Any]):
             "Before using a connected service, fetch fresh credentials:\n"
             "  `python3 /mnt/scripts/fetch_auth.py <service>`\n"
             "Example: `python3 /mnt/scripts/fetch_auth.py google`\n"
+            "If you get a 401 error, re-run the script to refresh the token.\n"
         )
         config_lines = (
             "Use `manage_config` to discover and manage:\n"

@@ -27,19 +27,11 @@ Use the `gh` CLI to interact with GitHub repositories, issues, PRs, and CI.
 
 ## Authentication
 
-Before using any gh commands, set up auth for this session:
-
-1. `manage_config` tool with action `"get"`, key `"connections"` — check connection status
-2. `python3 /mnt/scripts/fetch_auth.py github` — fetch token
-3. Token is written to `/workspace/.auth/github_token`
-
-Set the token for gh:
+Before using any gh commands, set the token:
 
 ```bash
 export GH_TOKEN=$(cat /workspace/.auth/github_token)
 ```
-
-Run this export before any gh command. If you get a 401 error, re-run `python3 /mnt/scripts/fetch_auth.py github` to refresh the token, then re-export.
 
 ## Pull Requests
 

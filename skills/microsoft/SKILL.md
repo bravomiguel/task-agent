@@ -9,13 +9,7 @@ Access Microsoft 365 services — Email (Outlook), Calendar, OneDrive, To Do tas
 
 ## Authentication
 
-Before using any Microsoft commands, set up auth for this session:
-
-1. `manage_config` tool with action `"get"`, key `"connections"` — check connection status
-2. `python3 /mnt/scripts/fetch_auth.py microsoft` — fetch credentials
-3. Token written to `/workspace/.auth/microsoft_token`
-
-If you get a 401 error, re-run `python3 /mnt/scripts/fetch_auth.py microsoft` to refresh the token.
+Token location: `/workspace/.auth/microsoft_token`
 
 ## CLI Usage
 
@@ -144,5 +138,5 @@ User: "What's on my to do list?"
 - When sending email, confirm recipient and content with the user before sending
 - Mail search uses Microsoft's KQL syntax: `from:name`, `subject:keyword`, `hasAttachments:true`
 - For tasks, list available task lists first so user can choose the right one
-- Token expires after ~1 hour; re-run `python3 /mnt/scripts/fetch_auth.py microsoft` to refresh
+- Token expires after ~1 hour; refresh credentials if you get a 401
 - Requires Composio auth config with scopes: Mail.ReadWrite, Mail.Send, Calendars.ReadWrite, Contacts.ReadWrite, Files.ReadWrite, Tasks.ReadWrite, User.Read

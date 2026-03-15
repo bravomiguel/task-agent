@@ -9,19 +9,11 @@ Send messages and interact with Microsoft Teams via the Microsoft Graph API.
 
 ## Authentication
 
-Before using any Teams commands, set up auth for this session:
-
-1. `manage_config` tool with action `"get"`, key `"connections"` — check connection status
-2. `python3 /mnt/scripts/fetch_auth.py teams` — fetch token
-3. Token is written to `/workspace/.auth/teams_token`
-
-Set the token for API calls:
+Before using any Teams commands, set the token:
 
 ```bash
 TEAMS_TOKEN=$(cat /workspace/.auth/teams_token)
 ```
-
-Run this before any Teams command. If you get a 401 error, re-run `python3 /mnt/scripts/fetch_auth.py teams` to refresh.
 
 ## Sending Messages
 
