@@ -90,11 +90,15 @@ echo "Restoring default config..."
 echo "Restoring default prompts..."
 "$SCRIPT_DIR/reset_prompts.sh"
 
-# Step 8: Restore core skills only (weather, docx, pdf, pptx, xlsx)
+# Step 8: Upload scripts to volume
+echo "Uploading scripts..."
+"$MODAL" volume put user-dev "$SCRIPT_DIR/fetch_auth.py" /scripts/fetch_auth.py --force
+
+# Step 9: Restore core skills only (weather, docx, pdf, pptx, xlsx)
 echo "Restoring core skills..."
 "$SCRIPT_DIR/reset_skills.sh" weather docx pdf pptx xlsx
 
-# Step 9: Reset heartbeat cron
+# Step 10: Reset heartbeat cron
 echo "Resetting heartbeat cron..."
 "$PYTHON" "$SCRIPT_DIR/reset_heartbeat_cron.py"
 
