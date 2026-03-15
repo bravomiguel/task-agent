@@ -53,19 +53,19 @@ agent-browser open https://site.com/login
 
 Surface the live view URL to the user. The login page is already loaded.
 
-**Step 2: Monitor login progress**
+**Step 2: Start login watchdog and wait for user**
 
-While the user is logging in, poll with `agent-browser snapshot -i` every **10 seconds**. Compare each snapshot to the previous one:
+Start the watchdog in the background — it monitors the login page and auto-kills the session if the user abandons it (1 minute of inactivity).
 
-- **Progress detected** (fields filled, page changed, 2FA prompt) — keep waiting
-- **Logged-in content visible** (feed, dashboard, profile) — login succeeded, proceed to Step 3 immediately
-- **No change for 1 minute** — user likely abandoned, close the session immediately and inform them it timed out
+```bash
+node /mnt/skills/browser/scripts/login_watchdog.js "$SESSION_ID" &
+```
 
-This avoids wasting money on abandoned sessions and removes the need for the user to confirm login manually.
+Then wait for the user to confirm they've logged in. Do not poll yourself.
 
 **Step 3: Close headed session and save profile**
 
-As soon as login is detected, close the headed session immediately. Do NOT continue browsing in the headed session — it costs 8x more than headless.
+Once the user confirms login, close the headed session immediately. Do NOT continue browsing in the headed session — it costs 8x more than headless.
 
 ```bash
 agent-browser close
