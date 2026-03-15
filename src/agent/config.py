@@ -91,21 +91,9 @@ class HeartbeatConfig(BaseModel):
         return v
 
 
-VALID_CHANNELS = {"slack", "teams", "gmail", "outlook"}
-
-
-class ChannelsConfig(BaseModel):
-    slack: bool = True
-    teams: bool = True
-    gmail: bool = True
-    outlook: bool = True
-
-
-class UserConfig(BaseModel):
-    timezone: str = DEFAULT_TIMEZONE  # IANA timezone — global user timezone
-    heartbeat: HeartbeatConfig = HeartbeatConfig()
-    skills: dict[str, bool | str] = {}  # missing/true = enabled; string = disabled (value is description)
-    channels: ChannelsConfig = ChannelsConfig()  # inbound event toggles per platform
+class UserProfile(BaseModel):
+    """User profile — expandable over time."""
+    timezone: str = DEFAULT_TIMEZONE  # IANA timezone
 
     @field_validator("timezone")
     @classmethod
@@ -113,6 +101,16 @@ class UserConfig(BaseModel):
         if v not in available_timezones():
             raise ValueError(f'Unknown timezone "{v}"')
         return v
+
+
+class UserConfig(BaseModel):
+    """Config stored in config.json. Only user profile and heartbeat.
+
+    Skills, connections, channels, and chat_surfaces are live from external
+    sources (volume, Composio, vault) — not stored here.
+    """
+    user: UserProfile = UserProfile()
+    heartbeat: HeartbeatConfig = HeartbeatConfig()
 
 
 # ---------------------------------------------------------------------------
@@ -201,7 +199,7 @@ def _build_heartbeat_body(config: UserConfig, job_id: int) -> dict:
         "once": False,
         "job_id": job_id,
         "schedule_type": "cron",
-        "timezone": config.timezone,
+        "timezone": config.user.timezone,
         "active_hours_start": config.heartbeat.active_hours.start,
         "active_hours_end": config.heartbeat.active_hours.end,
     }
@@ -271,7 +269,7 @@ def reconcile_heartbeat_cron(config: UserConfig) -> None:
         }).execute()
         logger.info(
             "[Config] synced heartbeat body: tz=%s hours=%s-%s",
-            config.timezone,
+            config.user.timezone,
             config.heartbeat.active_hours.start,
             config.heartbeat.active_hours.end,
         )
@@ -288,36 +286,40 @@ def apply_config_side_effects(
     """Apply all side-effects for a config change.
 
     Called by manage_config tool after patch.
-    Returns side-effect results (e.g. enabled skill paths) or None.
+    Config.json only holds user + heartbeat now.
     """
     reconcile_heartbeat_cron(config)
-    results: dict[str, Any] = {}
-    if patch and "channels" in patch:
-        _sync_channels_to_vault(config)
-    if sandbox_id:
-        _sync_timezone_to_user_md(sandbox_id, config.timezone)
-        # Sync skills to volume based on patch
-        if patch and "skills" in patch:
-            skill_results = _sync_skills_to_volume(sandbox_id, patch["skills"])
-            # Apply config updates (descriptions for disabled skills)
-            config_updates = skill_results.pop("_config_updates", None)
-            if config_updates:
-                patch_config(sandbox_id, {"skills": config_updates})
-            if skill_results:
-                results["skills"] = skill_results
-    return results or None
+    if sandbox_id and patch and "user" in patch and "timezone" in patch.get("user", {}):
+        _sync_timezone_to_user_md(sandbox_id, config.user.timezone)
+    return None
 
 
-def _sync_channels_to_vault(config: UserConfig) -> None:
-    """Sync channel on/off toggles to Supabase vault for edge functions."""
-    try:
-        from agent.auth import vault_set_secret
+# ---------------------------------------------------------------------------
+# Skills registry — all known skills with descriptions
+# ---------------------------------------------------------------------------
 
-        data = json.dumps(config.channels.model_dump())
-        vault_set_secret("inbound_channels", data)
-        logger.info("[Config] synced channels to vault: %s", data)
-    except Exception as e:
-        logger.warning("[Config] failed to sync channels to vault: %s", e)
+SKILLS_REGISTRY: dict[str, str] = {
+    "browser": "Browser automation via agent-browser CLI. Use for web scraping, form filling, site interaction, checking dashboards, logging into sites, and any task requiring a web browser.",
+    "cloud-storage": "Cloud storage file management for Dropbox and Box via rclone.",
+    "docx": "Comprehensive document creation, editing, and analysis with support for tracked changes, comments, and formatting preservation.",
+    "gemini": "Gemini CLI for one-shot Q&A, summaries, and generation.",
+    "github": "GitHub operations via gh CLI: issues, PRs, CI runs, code review, API queries.",
+    "google": "Google Workspace CLI for Gmail, Calendar, Drive, Contacts, Sheets, and Docs via gog.",
+    "microsoft": "Microsoft 365 — Outlook mail, Calendar, OneDrive, To Do tasks, and Contacts via MS Graph API.",
+    "notion": "Notion API for creating and managing pages, databases, and blocks.",
+    "openai-image-gen": "Batch-generate images via OpenAI Images API.",
+    "openai-whisper-api": "Transcribe audio via OpenAI Audio Transcriptions API (Whisper).",
+    "pdf": "Comprehensive PDF manipulation toolkit for extracting text, creating PDFs, merging/splitting documents, and handling forms.",
+    "pptx": "Presentation creation, editing, and analysis.",
+    "slack": "Send messages and interact with Slack workspaces.",
+    "teams": "Send messages and interact with Microsoft Teams via the Graph API.",
+    "trello": "Manage Trello boards, lists, and cards via the Trello REST API.",
+    "weather": "Get current weather and forecasts via Open-Meteo. No API key needed.",
+    "xlsx": "Comprehensive spreadsheet creation, editing, and analysis with support for formulas, formatting, and visualization.",
+}
+
+# Core skills enabled by default on factory reset
+CORE_SKILLS = {"docx", "pdf", "pptx", "weather", "xlsx"}
 
 
 # ---------------------------------------------------------------------------
@@ -351,94 +353,48 @@ def _read_skill_description(sandbox, skill_path: str) -> str:
     return ""
 
 
-def _sync_skills_to_volume(
-    sandbox_id: str, skills_patch: dict[str, bool | str],
+def sync_skill_to_volume(
+    sandbox_id: str, skill_name: str, enable: bool,
 ) -> dict[str, Any]:
-    """Sync skill folders on the volume based on enable/disable changes.
+    """Enable or disable a single skill on the volume.
 
-    Enable (true): fetch skill folder from GitHub repo → write to volume,
-        clear description from config.
-    Disable (false): read description from SKILL.md, delete folder from volume,
-        store description in config.
-    Returns dict with status per skill and config_updates to apply.
+    Enable: fetch skill folder from GitHub repo → write to volume.
+    Disable: delete folder from volume.
     """
     import httpx
 
     sandbox = modal.Sandbox.from_id(sandbox_id)
-    results: dict[str, Any] = {}
-    config_updates: dict[str, bool | str] = {}
+    skill_path = f"{SKILLS_VOLUME_DIR}/{skill_name}"
 
-    for skill_name, enabled in skills_patch.items():
-        if not isinstance(enabled, bool):
-            continue
-
-        skill_path = f"{SKILLS_VOLUME_DIR}/{skill_name}"
-
-        if not enabled:
-            # Read description before deleting
-            description = _read_skill_description(sandbox, skill_path)
-
-            # Delete skill from volume
-            try:
-                sandbox.exec(
-                    "bash", "-c", f"rm -rf {skill_path}",
-                    timeout=10,
-                ).wait()
-                sandbox.exec("bash", "-c", "sync", timeout=5).wait()
-                # Store description in config (string = disabled)
-                if description:
-                    config_updates[skill_name] = description
-                results[skill_name] = {"status": "disabled", "deleted": True}
-                logger.info("[Config] deleted skill %s from volume", skill_name)
-            except Exception as e:
-                logger.warning("[Config] failed to delete skill %s: %s", skill_name, e)
-                results[skill_name] = {"status": "error", "error": str(e)}
-            continue
-
-        # Enable: fetch from GitHub and write to volume
+    if not enable:
         try:
-            repo_path = f"{SKILLS_REPO_DIR}/{skill_name}"
-            contents_url = (
-                f"{GITHUB_API_URL}/repos/{SKILLS_REPO}"
-                f"/contents/{repo_path}"
-            )
-            resp = httpx.get(contents_url, timeout=15)
-            if resp.status_code == 404:
-                results[skill_name] = {
-                    "status": "error",
-                    "error": f"Skill '{skill_name}' not found in repo.",
-                }
-                continue
-            resp.raise_for_status()
-            items = resp.json()
-
-            # Create skill directory
-            sandbox.exec(
-                "bash", "-c", f"mkdir -p {skill_path}",
-                timeout=5,
-            ).wait()
-
-            # Download each file (recursively handles directories)
-            _fetch_github_dir(sandbox, items, skill_path)
-
+            sandbox.exec("bash", "-c", f"rm -rf {skill_path}", timeout=10).wait()
             sandbox.exec("bash", "-c", "sync", timeout=5).wait()
-            # Clear from config (true = enabled, will be removed on next clean)
-            config_updates[skill_name] = True
-            results[skill_name] = {
-                "status": "enabled",
-                "path": f"{skill_path}/SKILL.md",
-            }
-            logger.info("[Config] fetched skill %s from GitHub to %s", skill_name, skill_path)
-
+            logger.info("[Config] deleted skill %s from volume", skill_name)
+            return {"status": "disabled", "skill": skill_name}
         except Exception as e:
-            logger.warning("[Config] failed to fetch skill %s: %s", skill_name, e)
-            results[skill_name] = {"status": "error", "error": str(e)}
+            logger.warning("[Config] failed to delete skill %s: %s", skill_name, e)
+            return {"status": "error", "error": str(e)}
 
-    # Apply config updates (description strings for disabled, true for enabled)
-    if config_updates:
-        results["_config_updates"] = config_updates
+    # Enable: fetch from GitHub and write to volume
+    try:
+        repo_path = f"{SKILLS_REPO_DIR}/{skill_name}"
+        contents_url = f"{GITHUB_API_URL}/repos/{SKILLS_REPO}/contents/{repo_path}"
+        resp = httpx.get(contents_url, timeout=15)
+        if resp.status_code == 404:
+            return {"status": "error", "error": f"Skill '{skill_name}' not found in repo."}
+        resp.raise_for_status()
+        items = resp.json()
 
-    return results
+        sandbox.exec("bash", "-c", f"mkdir -p {skill_path}", timeout=5).wait()
+        _fetch_github_dir(sandbox, items, skill_path)
+        sandbox.exec("bash", "-c", "sync", timeout=5).wait()
+        logger.info("[Config] fetched skill %s from GitHub to %s", skill_name, skill_path)
+        return {"status": "enabled", "skill": skill_name, "path": f"{skill_path}/SKILL.md"}
+
+    except Exception as e:
+        logger.warning("[Config] failed to fetch skill %s: %s", skill_name, e)
+        return {"status": "error", "error": str(e)}
 
 
 def _fetch_github_dir(sandbox, items: list[dict], dest_dir: str) -> None:
@@ -478,7 +434,7 @@ _TZ_LINE_RE = re.compile(r"^(- \*\*Timezone\*\*:).*$", re.MULTILINE)
 
 
 def _sync_timezone_to_user_md(sandbox_id: str, timezone: str) -> None:
-    """Update the Timezone line in USER.md to match config.timezone."""
+    """Update the Timezone line in USER.md to match config.user.timezone."""
     try:
         sandbox = modal.Sandbox.from_id(sandbox_id)
         process = sandbox.exec("cat", USER_MD_PATH, timeout=5)

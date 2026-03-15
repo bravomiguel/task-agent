@@ -203,17 +203,7 @@ class SessionSetupMiddleware(AgentMiddleware[AgentState, Any]):
                 sandbox = modal.Sandbox.from_id(sandbox_id)
                 skills = _list_skills_from_sandbox(sandbox, self._skills_path)
                 if skills:
-                    updates: dict[str, Any] = {"skills_metadata": skills}
-                    # Load skills config so dynamic_context can tag enabled/disabled
-                    try:
-                        from agent.config import load_config
-
-                        config = load_config(sandbox_id)
-                        if config.skills:
-                            updates["skills_config"] = config.skills
-                    except Exception as e:
-                        logger.warning("[SessionSetup] failed to load skills config: %s", e)
-                    return updates
+                    return {"skills_metadata": skills}
                 logger.warning("[SessionSetup] skills empty, retry %d/%d", attempt + 1, _retries)
             except Exception as e:
                 logger.warning("[SessionSetup] failed to load skills (retry %d/%d): %s", attempt + 1, _retries, e)

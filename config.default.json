@@ -1,17 +1,12 @@
 {
-  "timezone": "UTC",
+  "user": {
+    "timezone": "UTC"
+  },
   "heartbeat": {
     "every": "30m",
     "active_hours": {
       "start": "09:00",
       "end": "21:00"
     }
-  },
-  "skills": {},
-  "channels": {
-    "slack": true,
-    "teams": true,
-    "gmail": true,
-    "outlook": true
   }
 }

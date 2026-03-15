@@ -640,29 +640,33 @@ def manage_config(
 ) -> str:
     """View or update user configuration.
 
-    Supports these config keys: timezone, heartbeat, skills, channels, connections, chat_surfaces.
+    Supports these config keys: user, heartbeat, skills, channels, connections, chat_surfaces.
     Use key parameter to read/write a specific section instead of the full config.
 
+    - **user**: User profile (timezone, expandable). Timezone auto-syncs to USER.md.
     - **connections**: External service integrations (Google, GitHub, Slack, etc.).
       GET returns all available services with enabled/disabled status (live from Composio).
       PATCH to enable starts OAuth flow and returns auth URL. PATCH to disable disconnects.
+      Triggers are automatically set up/torn down when connections are enabled/disabled.
     - **chat_surfaces**: Chat platforms where the user can chat with you (Slack, Teams, etc.).
       GET returns all available surfaces with enabled/disabled status.
       PATCH to enable returns setup instructions. PATCH to disable removes credentials.
     - **channels**: Inbound event toggles per platform (slack, teams, gmail, outlook).
     - **heartbeat**: Heartbeat frequency and active hours.
-    - **skills**: Skill enable/disable with descriptions.
-    - **timezone**: IANA timezone string (auto-syncs to USER.md).
+    - **skills**: Skill enable/disable — each skill has enabled flag and description.
+      All skills are always visible. PATCH '{"skills": {"browser": {"enabled": true}}}' to enable.
 
     Args:
         action: "get" to read, "patch" to update.
         key: Optional config section to target (e.g. "connections", "heartbeat").
             If omitted, operates on the full config (connections/chat_surfaces excluded).
         patch: JSON string for patch action.
+            For user: '{"user": {"timezone": "Europe/London"}}'
+            For skills: '{"skills": {"browser": {"enabled": true}}}'
+            For channels: '{"channels": {"gmail": true}}'
             For connections: '{"google": "enabled"}' or '{"slack": "disabled"}'
             For chat_surfaces: '{"slack": "enabled"}' or '{"slack": "disabled"}'
               To complete Slack setup: '{"slack": {"token": "xoxb-...", "signing_secret": "...", "owner_slack_id": "U..."}}'
-            For other keys: standard config merge patch.
 
     Returns:
         Current or updated config/status as JSON.
@@ -674,15 +678,17 @@ def manage_config(
         return "Error: no sandbox available."
 
     try:
-        # --- Connections (live from Composio, not stored in config.json) ---
+        # --- Live keys (not stored in config.json) ---
         if key == "connections":
             return _handle_connections(action, patch)
-
-        # --- Chat surfaces (vault-backed, not stored in config.json) ---
+        if key == "channels":
+            return _handle_channels(action, patch)
+        if key == "skills":
+            return _handle_skills(action, patch, sandbox_id)
         if key == "chat_surfaces":
             return _handle_chat_surfaces(action, patch)
 
-        # --- Standard config keys (file-backed) ---
+        # --- File-backed config (user + heartbeat only) ---
         if action == "get":
             config = load_config(sandbox_id)
             data = config.model_dump(exclude_none=True) or {}
@@ -718,11 +724,6 @@ def manage_config(
 
 
 # -- Connections handler (Composio-backed) --
-
-_CHAT_SURFACE_REGISTRY = {
-    "slack": {"display_name": "Slack"},
-}
-
 
 def _handle_connections(action: str, patch_str: str | None) -> str:
     from agent.auth import (
@@ -815,6 +816,153 @@ def _handle_chat_surfaces(action: str, patch_str: str | None) -> str:
                     results[surface] = {"error": f"Invalid value '{desired}'."}
             else:
                 results[surface] = {"error": f"Unknown chat surface '{surface}'."}
+        return _json.dumps(results)
+
+    return f"Error: unknown action '{action}'."
+
+
+# -- Skills handler (volume-backed) --
+
+def _handle_skills(action: str, patch_str: str | None, sandbox_id: str) -> str:
+    from agent.config import SKILLS_REGISTRY, SKILLS_VOLUME_DIR, sync_skill_to_volume
+
+    if action == "get":
+        # Scan volume for enabled skills
+        import modal
+        sandbox = modal.Sandbox.from_id(sandbox_id)
+        try:
+            process = sandbox.exec("ls", SKILLS_VOLUME_DIR, timeout=5)
+            process.wait()
+            enabled_dirs = set(process.stdout.read().strip().split())
+        except Exception:
+            enabled_dirs = set()
+
+        result = {}
+        for name, description in SKILLS_REGISTRY.items():
+            result[name] = {
+                "enabled": name in enabled_dirs,
+                "description": description,
+            }
+        return _json.dumps(result)
+
+    elif action == "patch":
+        if not patch_str:
+            return "Error: patch is required."
+        try:
+            patch_data = _json.loads(patch_str)
+        except _json.JSONDecodeError as e:
+            return f"Error: invalid JSON: {e}"
+
+        results = {}
+        for skill_name, desired in patch_data.items():
+            if skill_name not in SKILLS_REGISTRY:
+                results[skill_name] = {"error": f"Unknown skill '{skill_name}'."}
+                continue
+
+            if isinstance(desired, dict):
+                enable = desired.get("enabled")
+            elif isinstance(desired, bool):
+                enable = desired
+            else:
+                results[skill_name] = {"error": f"Invalid value. Use true/false or {{\"enabled\": true/false}}."}
+                continue
+
+            if not isinstance(enable, bool):
+                results[skill_name] = {"error": "enabled must be true or false."}
+                continue
+
+            results[skill_name] = sync_skill_to_volume(sandbox_id, skill_name, enable)
+        return _json.dumps(results)
+
+    return f"Error: unknown action '{action}'."
+
+
+# -- Channels handler (Composio triggers) --
+
+def _handle_channels(action: str, patch_str: str | None) -> str:
+    from agent.auth import (
+        TRIGGER_REGISTRY,
+        list_connected_services,
+        setup_triggers,
+        teardown_triggers,
+        _list_composio_accounts,
+        _find_account_by_slug,
+        SERVICE_REGISTRY,
+    )
+    import httpx
+
+    # Map platform names to services that have triggers
+    # slack → slack, gmail → google, outlook → microsoft
+    CHANNEL_TO_SERVICE = {
+        "slack": "slack",
+        "gmail": "google",
+        "outlook": "microsoft",
+    }
+
+    if action == "get":
+        # Check which triggers are active
+        try:
+            from agent.auth import _composio_headers, COMPOSIO_API_URL
+            resp = httpx.get(
+                f"{COMPOSIO_API_URL}/trigger_instances/active",
+                headers=_composio_headers(),
+                timeout=15,
+            )
+            resp.raise_for_status()
+            active = resp.json()
+            if isinstance(active, dict):
+                active = active.get("items", [])
+        except Exception:
+            active = []
+
+        active_slugs = {(t.get("trigger_slug") or "").upper() for t in active}
+
+        result = {}
+        for channel, service in CHANNEL_TO_SERVICE.items():
+            trigger_slugs = TRIGGER_REGISTRY.get(service, [])
+            # Channel is enabled if any of its triggers are active
+            has_active = any(s.upper() in active_slugs for s in trigger_slugs)
+            result[channel] = {"enabled": has_active}
+        return _json.dumps(result)
+
+    elif action == "patch":
+        if not patch_str:
+            return "Error: patch is required."
+        try:
+            patch_data = _json.loads(patch_str)
+        except _json.JSONDecodeError as e:
+            return f"Error: invalid JSON: {e}"
+
+        results = {}
+        for channel, desired in patch_data.items():
+            if channel not in CHANNEL_TO_SERVICE:
+                results[channel] = {"error": f"Unknown channel '{channel}'. Available: {', '.join(CHANNEL_TO_SERVICE)}"}
+                continue
+
+            enable = desired if isinstance(desired, bool) else desired.get("enabled") if isinstance(desired, dict) else None
+            if not isinstance(enable, bool):
+                results[channel] = {"error": "Use true or false."}
+                continue
+
+            service = CHANNEL_TO_SERVICE[channel]
+
+            if enable:
+                # Need the connected account ID to set up triggers
+                try:
+                    accounts = _list_composio_accounts()
+                    svc_config = SERVICE_REGISTRY[service]
+                    acct = _find_account_by_slug(accounts, svc_config["composio_slug"])
+                    if not acct or acct.get("status") != "ACTIVE":
+                        results[channel] = {"error": f"Connection '{service}' must be enabled first."}
+                        continue
+                    trigger_results = setup_triggers(service, acct["id"])
+                    results[channel] = {"enabled": True, "triggers": trigger_results}
+                except Exception as e:
+                    results[channel] = {"error": str(e)}
+            else:
+                trigger_results = teardown_triggers(service)
+                results[channel] = {"enabled": False, "triggers": trigger_results}
+
         return _json.dumps(results)
 
     return f"Error: unknown action '{action}'."

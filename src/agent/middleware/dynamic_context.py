@@ -57,7 +57,6 @@ class RuntimeContextState(ModalSandboxState):
     """Extended state with prompt files and skills metadata."""
     prompt_files: NotRequired[dict[str, str]]
     skills_metadata: NotRequired[list[SkillMetadata]]
-    skills_config: NotRequired[dict[str, bool | str]]  # used by config side effects, not prompt
     connected_accounts: NotRequired[list[dict]]
 
 
@@ -123,18 +122,37 @@ class RuntimeContextMiddleware(AgentMiddleware[RuntimeContextState, Any]):
             )
             request.system_prompt = request.system_prompt + context
 
-    def _format_skills_list(self, skills: list[SkillMetadata]) -> str:
-        """Format skills metadata for display in system prompt."""
-        if not skills:
-            return "(No skills available yet. Skills will appear in /mnt/skills/ when added.)"
+    def _format_skills_list(self, skills_on_volume: list[SkillMetadata]) -> str:
+        """Format skills for display in system prompt.
 
-        lines = ["**Available Skills:**", ""]
-        for skill in skills:
-            lines.append(f"- **{skill['name']}**: {skill['description']}")
-            lines.append(f"  → Read `{skill['path']}` for full instructions")
+        Uses SKILLS_REGISTRY for the full catalog. Volume determines enabled state.
+        Descriptions come from SKILL.md frontmatter (volume) for enabled skills,
+        registry for disabled skills.
+        """
+        from agent.config import SKILLS_REGISTRY
+
+        volume_map = {s["name"]: s for s in skills_on_volume}
+
+        lines = ["**Skills:**", ""]
+
+        for name in sorted(SKILLS_REGISTRY):
+            if name in volume_map:
+                skill = volume_map[name]
+                desc = skill.get("description", SKILLS_REGISTRY[name])
+                lines.append(f"- **{name}** (enabled): {desc}")
+                lines.append(f"  → Read `{skill['path']}` for full instructions")
+            else:
+                lines.append(f"- **{name}** (disabled): {SKILLS_REGISTRY[name]}")
             lines.append("")
 
-        lines.append("Additional skills may be available but disabled — check config to see.")
+        # Any skills on volume but not in registry (custom/unknown)
+        for skill in skills_on_volume:
+            if skill["name"] not in SKILLS_REGISTRY:
+                lines.append(f"- **{skill['name']}** (enabled): {skill.get('description', '')}")
+                lines.append(f"  → Read `{skill['path']}` for full instructions")
+                lines.append("")
+
+        lines.append("Use `manage_config` key `\"skills\"` to enable or disable skills.")
         lines.append("")
 
         return "\n".join(lines)

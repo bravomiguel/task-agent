@@ -87,6 +87,28 @@ for _svc, _cfg in SERVICE_REGISTRY.items():
 
 
 # ---------------------------------------------------------------------------
+# Trigger registry — triggers to set up per connection
+# ---------------------------------------------------------------------------
+
+TRIGGER_REGISTRY: dict[str, list[str]] = {
+    "slack": [
+        "SLACK_RECEIVE_DIRECT_MESSAGE",
+        "SLACK_RECEIVE_MESSAGE",
+        "SLACK_RECEIVE_THREAD_REPLY",
+        "SLACK_RECEIVE_GROUP_MESSAGE",
+        "SLACK_RECEIVE_MPIM_MESSAGE",
+        "SLACK_NEW_MESSAGE",
+    ],
+    "google": [
+        "GOOGLESUPER_NEW_MESSAGE",
+    ],
+    "microsoft": [
+        "OUTLOOK_MESSAGE_TRIGGER",
+    ],
+}
+
+
+# ---------------------------------------------------------------------------
 # Composio REST API helpers
 # ---------------------------------------------------------------------------
 
@@ -131,6 +153,135 @@ def _find_account_by_slug(
         if acct_slug == slug:
             return acct
     return None
+
+
+# ---------------------------------------------------------------------------
+# Trigger management
+# ---------------------------------------------------------------------------
+
+
+def setup_triggers(service: str, connected_account_id: str) -> list[dict[str, Any]]:
+    """Create/upsert triggers for a service after connection is established."""
+    trigger_slugs = TRIGGER_REGISTRY.get(service, [])
+    if not trigger_slugs:
+        return []
+
+    results = []
+    for slug in trigger_slugs:
+        try:
+            resp = httpx.post(
+                f"{COMPOSIO_API_URL}/trigger_instances/{slug}/upsert",
+                headers={**_composio_headers(), "Content-Type": "application/json"},
+                json={"connected_account_id": connected_account_id},
+                timeout=15,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            results.append({"trigger": slug, "status": "created", "id": data.get("id")})
+            logger.info("[Auth] created trigger %s for %s", slug, service)
+        except Exception as e:
+            logger.warning("[Auth] failed to create trigger %s: %s", slug, e)
+            results.append({"trigger": slug, "status": "error", "error": str(e)})
+    return results
+
+
+def teardown_triggers(service: str) -> list[dict[str, Any]]:
+    """Delete all active triggers for a service."""
+    trigger_slugs = TRIGGER_REGISTRY.get(service, [])
+    if not trigger_slugs:
+        return []
+
+    # Get active triggers
+    try:
+        resp = httpx.get(
+            f"{COMPOSIO_API_URL}/trigger_instances/active",
+            headers=_composio_headers(),
+            timeout=15,
+        )
+        resp.raise_for_status()
+        active = resp.json()
+        if isinstance(active, dict):
+            active = active.get("items", [])
+    except Exception as e:
+        logger.warning("[Auth] failed to list active triggers: %s", e)
+        return [{"status": "error", "error": str(e)}]
+
+    slug_set = {s.upper() for s in trigger_slugs}
+    results = []
+    for trigger in active:
+        t_slug = (trigger.get("trigger_slug") or trigger.get("triggerName") or "").upper()
+        if t_slug in slug_set:
+            t_id = trigger.get("id")
+            try:
+                resp = httpx.delete(
+                    f"{COMPOSIO_API_URL}/trigger_instances/manage/{t_id}",
+                    headers=_composio_headers(),
+                    timeout=15,
+                )
+                resp.raise_for_status()
+                results.append({"trigger": t_slug, "status": "deleted", "id": t_id})
+                logger.info("[Auth] deleted trigger %s (%s)", t_slug, t_id)
+            except Exception as e:
+                logger.warning("[Auth] failed to delete trigger %s: %s", t_slug, e)
+                results.append({"trigger": t_slug, "status": "error", "error": str(e)})
+    return results
+
+
+def teardown_all_triggers() -> list[dict[str, Any]]:
+    """Delete ALL active triggers. Used by factory reset."""
+    try:
+        resp = httpx.get(
+            f"{COMPOSIO_API_URL}/trigger_instances/active",
+            headers=_composio_headers(),
+            timeout=15,
+        )
+        resp.raise_for_status()
+        active = resp.json()
+        if isinstance(active, dict):
+            active = active.get("items", [])
+    except Exception as e:
+        logger.warning("[Auth] failed to list active triggers: %s", e)
+        return [{"status": "error", "error": str(e)}]
+
+    results = []
+    for trigger in active:
+        t_id = trigger.get("id")
+        t_slug = trigger.get("trigger_slug", "unknown")
+        try:
+            resp = httpx.delete(
+                f"{COMPOSIO_API_URL}/trigger_instances/manage/{t_id}",
+                headers=_composio_headers(),
+                timeout=15,
+            )
+            resp.raise_for_status()
+            results.append({"trigger": t_slug, "status": "deleted", "id": t_id})
+        except Exception as e:
+            results.append({"trigger": t_slug, "status": "error", "error": str(e)})
+    return results
+
+
+def disconnect_all_services() -> list[dict[str, Any]]:
+    """Disconnect ALL Composio accounts. Used by factory reset."""
+    try:
+        accounts = _list_composio_accounts()
+    except Exception as e:
+        return [{"status": "error", "error": str(e)}]
+
+    results = []
+    for acct in accounts:
+        acct_id = acct.get("id")
+        slug = acct.get("toolkit", {}).get("slug", "unknown")
+        try:
+            resp = httpx.delete(
+                f"{COMPOSIO_API_URL}/connected_accounts/{acct_id}",
+                headers=_composio_headers(),
+                timeout=15,
+            )
+            resp.raise_for_status()
+            results.append({"service": slug, "status": "disconnected"})
+        except Exception as e:
+            results.append({"service": slug, "status": "error", "error": str(e)})
+    return results
 
 
 def _get_connected_account(account_id: str) -> dict[str, Any]:
@@ -747,6 +898,9 @@ def disconnect_service(service: str) -> dict[str, Any]:
             )
             resp.raise_for_status()
 
+        # Also teardown triggers for this service
+        teardown_triggers(service)
+
         return {"status": "disconnected", "service": service, "display_name": svc_config["display_name"]}
     except Exception as e:
         return {"error": f"Failed to disconnect {service}: {e}"}
@@ -879,4 +1033,13 @@ def connect_service(service: str, sandbox_id: str) -> dict[str, Any]:
     if not bootstrap_fn:
         return {"error": f"No bootstrap function for service: {service}"}
 
-    return bootstrap_fn(sandbox, acct)
+    result = bootstrap_fn(sandbox, acct)
+
+    # Set up triggers if this service has any
+    if result.get("status") == "connected" and service in TRIGGER_REGISTRY:
+        acct_id = acct.get("id")
+        if acct_id:
+            trigger_results = setup_triggers(service, acct_id)
+            result["triggers"] = trigger_results
+
+    return result
