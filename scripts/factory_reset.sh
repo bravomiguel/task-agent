@@ -56,7 +56,7 @@ from dotenv import load_dotenv
 load_dotenv(os.path.join('$PROJECT_DIR', '.env'))
 from supabase import create_client
 sb = create_client(os.environ['SUPABASE_URL'], os.environ['SUPABASE_SERVICE_KEY'])
-for name in ['slack_bot_token', 'slack_bot_user_id', 'slack_signing_secret', 'slack_bot_owner_id', 'teams_bot_app_id', 'teams_bot_app_secret', 'teams_bot_tenant_id', 'telegram_owner_chat_id', 'telegram_owner_user_id', 'telegram_owner_name', 'inbound_channels']:
+for name in ['slack_bot_token', 'slack_bot_user_id', 'slack_signing_secret', 'slack_bot_owner_id', 'teams_bot_app_id', 'teams_bot_app_secret', 'teams_bot_tenant_id', 'telegram_owner_chat_id', 'telegram_owner_user_id', 'telegram_owner_name', 'whatsapp_auth_state', 'whatsapp_owner_jid', 'inbound_channels']:
     try:
         sb.rpc('delete_vault_secret', {'p_name': name}).execute()
         print(f'  deleted {name}')

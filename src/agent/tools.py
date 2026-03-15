@@ -792,6 +792,7 @@ def _handle_chat_surfaces(action: str, patch_str: str | None) -> str:
     supabase_url = os.environ.get("SUPABASE_URL", "")
 
     telegram_bot_name = os.environ.get("TELEGRAM_BOT_NAME", "")
+    whatsapp_bridge_url = os.environ.get("WHATSAPP_BRIDGE_URL", "")
 
     CHAT_SURFACES = {
         "slack": {
@@ -811,6 +812,12 @@ def _handle_chat_surfaces(action: str, patch_str: str | None) -> str:
             "vault_key": "telegram_owner_chat_id",
             "install_url": f"https://t.me/{telegram_bot_name}" if telegram_bot_name else "",
             "disconnect_fn": lambda: _disconnect_telegram_chat_surface(),
+        },
+        "whatsapp": {
+            "display_name": "WhatsApp",
+            "vault_key": "whatsapp_owner_jid",
+            "install_url": f"{whatsapp_bridge_url}/qr" if whatsapp_bridge_url else "",
+            "disconnect_fn": lambda: _disconnect_whatsapp_chat_surface(whatsapp_bridge_url),
         },
     }
 
@@ -873,6 +880,21 @@ def _disconnect_telegram_chat_surface() -> dict:
     for key in ["telegram_owner_chat_id", "telegram_owner_user_id", "telegram_owner_name"]:
         vault_delete_secret(key)
     return {"status": "disconnected", "service": "telegram"}
+
+
+def _disconnect_whatsapp_chat_surface(bridge_url: str) -> dict:
+    import httpx
+    # Call bridge disconnect endpoint to logout + clear vault
+    if bridge_url:
+        try:
+            httpx.post(f"{bridge_url}/disconnect", timeout=10)
+        except Exception:
+            pass
+    # Also clean vault directly as fallback
+    from agent.auth import vault_delete_secret
+    for key in ["whatsapp_auth_state", "whatsapp_owner_jid"]:
+        vault_delete_secret(key)
+    return {"status": "disconnected", "service": "whatsapp"}
 
 
 # -- Skills handler (volume-backed) --
