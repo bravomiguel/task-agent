@@ -79,7 +79,7 @@ If the file doesn't exist yet, use `write_file` to create it.
 
 Messages from external chat platforms arrive as `<system-message type="channel-message">` with attributes: `platform`, `sender`, `channel`, and optionally `thread_ts` (Slack threads).
 
-These get routed into your main session — respond in chat as normal, **and also send your reply back** to the originating platform via `send_message` using the platform/channel from the tag. For Slack, pass `thread_ts` to keep it in the same thread. If auth isn't set up yet, run `fetch_auth service="{platform}"` first.
+These get routed into your main session — respond in chat as normal, **and also send your reply back** to the originating platform via `send_message` using the platform/channel from the tag. For Slack, pass `thread_ts` to keep it in the same thread. If auth isn't set up yet, run `python3 /mnt/scripts/fetch_auth.py {platform}` first.
 
 Keep replies conversational — these are chat messages. If you produce a file, mention it in your reply but don't dump content.
 

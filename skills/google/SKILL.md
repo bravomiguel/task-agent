@@ -10,7 +10,7 @@ description: Google Workspace CLI for Gmail, Calendar, Drive, Contacts, Sheets, 
 Before using any Google commands, set up auth for this session:
 
 1. `manage_config` tool with action `"get"`, key `"connections"` — check connection status
-2. `fetch_auth` tool with service `"google"` — fetch token
+2. `python3 /mnt/scripts/fetch_auth.py google` — fetch token
 3. Token is written to `/workspace/.auth/google_token`
 
 Set the token and account for gog:
@@ -20,7 +20,7 @@ export GOG_ACCESS_TOKEN=$(cat /workspace/.auth/google_token)
 export GOG_ACCOUNT=me
 ```
 
-Run both exports before any gog command. `GOG_ACCOUNT=me` is required when using access tokens. If you get a 401 error, re-run `fetch_auth service="google"` to refresh the token, then re-export.
+Run both exports before any gog command. `GOG_ACCOUNT=me` is required when using access tokens. If you get a 401 error, re-run `python3 /mnt/scripts/fetch_auth.py google` to refresh the token, then re-export.
 
 ## Gmail
 

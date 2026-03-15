@@ -31,7 +31,7 @@ For direct Slack API calls (beyond what `send_message` provides), get a token fi
 manage_config action="get" key="chat_surfaces"  # check if Slack chat surface is set up
 
 # User token (Composio OAuth)
-fetch_auth service="slack"  # writes to /workspace/.auth/slack_token
+python3 /mnt/scripts/fetch_auth.py slack  # writes to /workspace/.auth/slack_token
 export SLACK_TOKEN=$(cat /workspace/.auth/slack_token)
 ```
 

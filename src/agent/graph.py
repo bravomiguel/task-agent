@@ -10,7 +10,7 @@ from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
 from langchain_anthropic import ChatAnthropic
 from agent.claude_auth import get_claude_code_token
-from agent.tools import present_file, view_image, memory_search, sessions_list, sessions_send, sessions_spawn, sessions_history, manage_crons, manage_config, fetch_auth, send_message
+from agent.tools import present_file, view_image, memory_search, sessions_list, sessions_send, sessions_spawn, sessions_history, manage_crons, manage_config, send_message
 from agent.web_fetch import web_fetch
 from agent.middleware import (
     ConfigMiddleware,
@@ -68,7 +68,7 @@ agent_middleware = [
 ]
 
 # Build tools list - conditionally include web_search if Tavily is available
-tools = [web_fetch, present_file, view_image, memory_search, manage_config, manage_crons, fetch_auth, send_message, sessions_list, sessions_history, sessions_send, sessions_spawn]
+tools = [web_fetch, present_file, view_image, memory_search, manage_config, manage_crons, send_message, sessions_list, sessions_history, sessions_send, sessions_spawn]
 if tavily_client is not None:
     tools.append(web_search)
 

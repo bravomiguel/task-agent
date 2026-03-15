@@ -1141,35 +1141,6 @@ def manage_crons(
 # ---------------------------------------------------------------------------
 
 
-@tool
-def fetch_auth(
-    service: str,
-    state: Annotated[dict, InjectedState] = None,
-) -> str:
-    """Fetch OAuth credentials for a connected service into the sandbox.
-
-    Call this when a skill needs fresh credentials for an already-connected service.
-    Use manage_config with key="connections" to view/enable/disable connections.
-
-    Args:
-        service: Service name (e.g. "google", "github", "slack", "teams").
-
-    Returns:
-        JSON with token file path and usage instructions.
-    """
-    from agent.auth import connect_service
-
-    sandbox_id = state.get("modal_sandbox_id") if state else None
-    if not sandbox_id:
-        return "Error: no sandbox available."
-
-    try:
-        result = connect_service(service, sandbox_id)
-        return _json.dumps(result)
-    except Exception as e:
-        logger.warning("[fetch_auth] %s failed: %s", service, e)
-        return f"Error: fetch_auth for {service} failed: {e}"
-
 
 # ---------------------------------------------------------------------------
 # Messaging (Slack, Teams)
@@ -1191,7 +1162,7 @@ def _read_token_from_sandbox(sandbox, token_file: str) -> str:
         stderr = process.stderr.read()
         raise RuntimeError(
             f"Token not found at {token_file}. "
-            f"Run fetch_auth first. ({stderr})"
+            f"Run python3 /mnt/scripts/fetch_auth.py first. ({stderr})"
         )
     return process.stdout.read().strip()
 
@@ -1348,7 +1319,7 @@ def send_message(
     except Exception as e:
         return _json.dumps({
             "status": "error",
-            "error": f"Failed to read {platform} token: {e}. Run fetch_auth service=\"{platform}\" first.",
+            "error": f"Failed to read {platform} token: {e}. Run python3 /mnt/scripts/fetch_auth.py {platform} first.",
         })
 
     try:

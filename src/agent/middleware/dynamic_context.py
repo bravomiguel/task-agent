@@ -19,37 +19,16 @@ from agent.system_prompt import STATIC_PART_02, STATIC_PART_03
 
 
 SKILLS_SYSTEM_PROMPT = """
-## Skills System
+## Skills
 
-You have access to a skills library with specialized capabilities for document manipulation.
-These skills contain tested patterns from extensive trial and error that significantly improve output quality.
+You have access to a skills library. Each skill provides tested patterns and scripts for a specific capability.
 
 **Skills Directory:** `/mnt/skills/`
 
 {skills_list}
 
-**CRITICAL - Read Skills BEFORE Acting:**
-
-When a user's task matches a skill, your FIRST action must be to read the SKILL.md file.
-Do NOT start writing code or creating files until you've read the relevant skill(s).
-
-**Task → Skill Mapping:**
-- "create/edit a Word document" → read `/mnt/skills/docx/SKILL.md`
-- "fill a PDF form" or "work with PDF" → read `/mnt/skills/pdf/SKILL.md`
-- "make a presentation" → read `/mnt/skills/pptx/SKILL.md`
-- "work with spreadsheet/Excel" → read `/mnt/skills/xlsx/SKILL.md`
-
-**Multiple Skills:**
-Complex tasks may require combining multiple skills. Don't limit yourself to one.
-Example: "Convert this spreadsheet data into a presentation" → read both xlsx AND pptx skills
-
-**Progressive Disclosure Pattern:**
-1. Recognize task matches a skill from the list above
-2. Read the SKILL.md file FIRST (use read_file tool)
-3. Follow the skill's workflows, patterns, and best practices
-4. Access supporting scripts/configs as directed by the skill
-
-The extra time to read skills before starting is worth it - they prevent common mistakes and produce better results.
+**CRITICAL — Read SKILL.md BEFORE using any skill.** Do NOT start until you've read the relevant skill file.
+Complex tasks may require combining multiple skills.
 """
 
 
@@ -174,18 +153,39 @@ class RuntimeContextMiddleware(AgentMiddleware[RuntimeContextState, Any]):
         if not request.system_prompt:
             return
 
+        fetch_auth_line = (
+            "Before using a connected service, fetch fresh credentials:\n"
+            "  `python3 /mnt/scripts/fetch_auth.py <service>`\n"
+            "Example: `python3 /mnt/scripts/fetch_auth.py google`\n"
+        )
+        config_lines = (
+            "Use `manage_config` to discover and manage:\n"
+            "- key `\"connections\"` — all available services (enable/disable)\n"
+            "- key `\"channels\"` — inbound event streams (Slack, Gmail, Outlook)\n"
+            "- key `\"chat_surfaces\"` — chat platforms where users can message you (Slack)\n"
+            "- key `\"skills\"` — all available skills (enable/disable)\n"
+        )
+        browser_fallback = (
+            "If a task involves a service not available as a connection, "
+            "silently read the browser skill and use it immediately — "
+            "do not explain, do not ask for usernames or URLs, just do it."
+        )
+
         if not accounts:
-            section = "\n\n## Connected Accounts\n\nNo external services connected.\nIf a task involves an external service, check if it's available via `manage_config` action `\"get\"` key `\"connections\"`. If available, enable it. If not available, silently read the browser skill and use it immediately — do not explain, do not ask for usernames or URLs, just do it."
+            section = (
+                "\n\n## Connected Accounts\n\n"
+                "No external services connected.\n\n"
+                f"{config_lines}\n"
+                f"{browser_fallback}"
+            )
         else:
             names = [a.get("display_name") or a.get("service") for a in accounts]
             section = (
                 "\n\n## Connected Accounts\n\n"
-                f"The following services are connected: {', '.join(names)}.\n"
-                "Use `fetch_auth` with the service name to fetch fresh credentials "
-                "into the sandbox when a skill needs them.\n\n"
-                "If a task involves a service not listed above, check if it's available via "
-                "`manage_config` action `\"get\"` key `\"connections\"`. If available, enable it. "
-                "If not available, silently read the browser skill and use it immediately — do not explain, do not ask for usernames or URLs, just do it."
+                f"The following services are connected: {', '.join(names)}.\n\n"
+                f"{fetch_auth_line}\n"
+                f"{config_lines}\n"
+                f"{browser_fallback}"
             )
         request.system_prompt += section
 

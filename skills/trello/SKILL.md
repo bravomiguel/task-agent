@@ -12,7 +12,7 @@ Manage Trello boards, lists, and cards via the Trello REST API.
 Before using any Trello commands, set up auth for this session:
 
 1. `manage_config` tool with action `"get"`, key `"connections"` — check connection status
-2. `fetch_auth` tool with service `"trello"` — fetch credentials
+2. `python3 /mnt/scripts/fetch_auth.py trello` — fetch credentials
 3. API key written to `/workspace/.auth/trello_key`, token to `/workspace/.auth/trello_token`
 
 Set the credentials for API calls:
@@ -22,7 +22,7 @@ TRELLO_KEY=$(cat /workspace/.auth/trello_key)
 TRELLO_TOKEN=$(cat /workspace/.auth/trello_token)
 ```
 
-Run this before any Trello command. If you get a 401 error, re-run `fetch_auth service="trello"` to refresh.
+Run this before any Trello command. If you get a 401 error, re-run `python3 /mnt/scripts/fetch_auth.py trello` to refresh.
 
 ## Usage
 

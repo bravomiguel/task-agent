@@ -2,7 +2,7 @@
 """MS365 CLI — Microsoft 365 via Graph API.
 
 Reads Bearer token from /workspace/.auth/microsoft_token
-(written by fetch_auth service="microsoft").
+(written by python3 /mnt/scripts/fetch_auth.py microsoft).
 
 Covers: Mail (Outlook), Calendar, OneDrive, To Do, Contacts.
 """
@@ -30,7 +30,7 @@ def _get_token() -> str:
             return f.read().strip()
     except FileNotFoundError:
         print(
-            json.dumps({"error": f"Token not found at {TOKEN_FILE}. Run: fetch_auth service="microsoft""}),
+            json.dumps({"error": f"Token not found at {TOKEN_FILE}. Run: python3 /mnt/scripts/fetch_auth.py microsoft"}),
             file=sys.stderr,
         )
         sys.exit(1)
