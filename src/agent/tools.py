@@ -1141,7 +1141,7 @@ def _resolve_slack_token(sandbox, as_identity: str | None) -> str:
         if token:
             return token
         if as_identity == "bot":
-            raise RuntimeError("Bot token not found in vault. Run manage_config key="chat_surfaces" to set up slack-bot first.")
+            raise RuntimeError('Bot token not found in vault. Run manage_config key="chat_surfaces" to set up slack-bot first.')
         # Fall through to user token
 
     # User OAuth token from sandbox
