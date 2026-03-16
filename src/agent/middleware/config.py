@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 class ConfigState(AgentState):
     """State schema for config middleware."""
 
-    session_type: NotRequired[str]  # main | cron | subagent
+    session_type: NotRequired[str]  # main | subagent
     cron_job_name: NotRequired[str]
 
 

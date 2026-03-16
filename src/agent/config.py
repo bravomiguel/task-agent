@@ -217,7 +217,7 @@ def _build_heartbeat_body(config: UserConfig, job_id: int) -> dict:
     body: dict[str, Any] = {
         "job_name": "heartbeat",
         "input_message": HEARTBEAT_INPUT_MESSAGE,
-        "session_type": "cron",
+        "session_type": "main",
         "once": False,
         "job_id": job_id,
         "schedule_type": "cron",

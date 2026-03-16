@@ -133,16 +133,6 @@ class ActionGatingMiddleware(AgentMiddleware):
     when a gated external service is targeted with a write operation.
     """
 
-    def _should_skip_gating(self, state: dict) -> bool:
-        """Skip gating for cron/heartbeat sessions (no human present)."""
-        session_type = state.get("session_type", "main")
-        if session_type in ("cron", "heartbeat"):
-            return True
-        cron_job_name = state.get("cron_job_name", "")
-        if cron_job_name:
-            return True
-        return False
-
     def _load_config(self, state: dict) -> Any | None:
         """Load action gating config."""
         try:
@@ -190,9 +180,6 @@ class ActionGatingMiddleware(AgentMiddleware):
 
     def after_model(self, state: dict, runtime: Runtime) -> dict[str, Any] | None:
         """Inspect tool calls and interrupt for gated write actions."""
-        if self._should_skip_gating(state):
-            return None
-
         config = self._load_config(state)
         if not config or not config.action_gating.enabled:
             return None

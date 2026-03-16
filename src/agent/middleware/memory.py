@@ -73,7 +73,7 @@ class MemoryState(AgentState):
     _memory_flush_turn: NotRequired[bool]
     _session_archived: NotRequired[bool]
     _memory_index_synced: NotRequired[bool]
-    session_type: NotRequired[str]  # main | cron | subagent
+    session_type: NotRequired[str]  # main | subagent
     cron_job_id: NotRequired[int]
     cron_job_name: NotRequired[str]
     cron_schedule_type: NotRequired[str]  # cron | at | every
