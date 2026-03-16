@@ -1110,6 +1110,26 @@ def _handle_inbound(action: str, patch_str: str | None) -> str:
                 results[source] = result_entry
                 continue
 
+            # Teams — toggle via Graph subscriptions
+            if source == "teams":
+                try:
+                    import os
+                    supabase_url = os.environ.get("SUPABASE_URL", "")
+                    svc_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+                    endpoint = "subscribe" if enable else "unsubscribe"
+                    resp = httpx.post(
+                        f"{supabase_url}/functions/v1/teams-subscriptions/{endpoint}",
+                        headers={"Authorization": f"Bearer {svc_key}"},
+                        timeout=30,
+                    )
+                    if resp.status_code == 200:
+                        results[source] = {"enabled": enable}
+                    else:
+                        results[source] = {"error": f"Teams {endpoint} failed: {resp.status_code} {resp.text[:200]}"}
+                except Exception as e:
+                    results[source] = {"error": str(e)}
+                continue
+
             # Composio trigger sources (slack, gmail, outlook)
             service = TRIGGER_SOURCES[source]
 
