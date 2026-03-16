@@ -1354,24 +1354,6 @@ def send_message(
     if not sandbox_id:
         return _json.dumps({"status": "error", "error": "No sandbox available."})
 
-    # Action gating: block send_message via="connection" (sending as user) if gated
-    if via == "connection":
-        try:
-            from agent.config import load_config
-            config = load_config(sandbox_id)
-            service = "slack" if platform == "slack" else "teams"
-            if config.action_gating.enabled and getattr(config.action_gating.services, service, True):
-                return _json.dumps({
-                    "status": "blocked",
-                    "reason": "action_gating",
-                    "message": (
-                        f"Sending a message as the user on {platform} requires explicit user approval. "
-                        f"Present the message content and recipient to the user and ask for confirmation before retrying."
-                    ),
-                })
-        except Exception:
-            pass  # If config load fails, don't block
-
     sender_fn = _MSG_SENDERS.get(platform)
     if not sender_fn:
         return _json.dumps({"status": "error", "error": f"Unsupported platform: {platform}"})

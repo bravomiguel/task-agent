@@ -11,6 +11,7 @@ from langchain.chat_models import init_chat_model
 from agent.tools import present_file, view_image, memory_search, sessions_list, sessions_send, sessions_spawn, sessions_history, manage_crons, manage_config, send_message
 from agent.web_fetch import web_fetch
 from agent.middleware import (
+    ActionGatingMiddleware,
     ConfigMiddleware,
     MemoryMiddleware,
     ModalSandboxMiddleware,
@@ -55,6 +56,7 @@ agent_middleware = [
     ConfigMiddleware(),  # Load config, heartbeat management (active hours, cron reconcile, early exit)
     RuntimeContextMiddleware(),  # Assemble: STATIC_PART_01 → Skills → STATIC_PART_02 → Session → Project Context → STATIC_PART_03
     ToolDescriptionMiddleware(),
+    ActionGatingMiddleware(),  # Dynamic HITL approval for write/destructive actions on external services
     MemoryMiddleware(),  # Memory reminders + pre-compaction flush
     SessionMetadataMiddleware(),
 ]

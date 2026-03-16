@@ -11,23 +11,6 @@ You have `agent-browser`, a CLI tool for browser automation. It runs a headless 
 
 Use agent-browser directly via `execute`. If unsure about syntax or running into issues, run `agent-browser --help` or `agent-browser <command> --help`.
 
-## Action Gating
-
-When browser action gating is enabled (check Action Gating Status in your system prompt), use `--confirm-actions` to require user approval for destructive browser actions:
-
-```bash
-agent-browser open <url> --confirm-actions click,fill,eval,download,upload
-```
-
-This gates clicks, form fills, code evaluation, downloads, and uploads — the user sees a confirmation prompt before each action executes. Read-only operations (snapshot, scroll, get, wait) proceed without approval.
-
-You can also restrict which domains the browser can visit:
-```bash
-agent-browser open <url> --allowed-domains "*.example.com,app.service.com"
-```
-
-When browser gating is **disabled**, omit `--confirm-actions` for uninterrupted automation.
-
 ## Core Workflow
 
 1. `agent-browser open <url>` — navigate to a page
