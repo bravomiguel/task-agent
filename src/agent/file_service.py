@@ -388,6 +388,37 @@ def health():
     return {"status": "healthy", "service": "file-service"}
 
 
+@app.function(volumes={"/mnt": volume})
+@modal.fastapi_endpoint(method="POST")
+def write_meeting_transcript(request: dict):
+    """Write a meeting transcript markdown file to the volume.
+
+    Called by the Electron meeting-recorder app after transcription.
+
+    Args (JSON body):
+        filename: e.g. "2025-01-22-standup-google-meet.md"
+        content: Full markdown content
+    """
+    import io
+
+    filename = request.get("filename")
+    content = request.get("content")
+
+    if not filename or not content:
+        return {"success": False, "error": "filename and content required"}
+
+    try:
+        full_path = f"/meeting-transcripts/{filename}"
+        with volume.batch_upload(force=True) as batch:
+            batch.put_file(
+                io.BytesIO(content.encode("utf-8")),
+                full_path,
+            )
+        return {"success": True, "path": f"/mnt{full_path}"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 _MAX_IMAGE_DIM = {"low": 512, "auto": 1024, "high": 2048}
 
 
