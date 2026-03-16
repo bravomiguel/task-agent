@@ -13,7 +13,6 @@ from agent.web_fetch import web_fetch
 from agent.middleware import (
     ActionGatingMiddleware,
     ConfigMiddleware,
-    MeetingIngestMiddleware,
     MemoryMiddleware,
     ModalSandboxMiddleware,
     MoveUploadsMiddleware,
@@ -64,7 +63,6 @@ modal_sandbox_middleware = ModalSandboxMiddleware()
 agent_middleware = [
     modal_sandbox_middleware,
     MoveUploadsMiddleware(),
-    MeetingIngestMiddleware(),  # Save meeting transcripts to /mnt/meetings/ (before session setup so indexer picks them up)
     SessionSetupMiddleware(llm=gpt_4_1_mini),  # Parallel: prompt files + skills + memory setup
     ConfigMiddleware(),  # Load config, heartbeat management (active hours, cron reconcile, early exit)
     RuntimeContextMiddleware(),  # Assemble: STATIC_PART_01 → Skills → STATIC_PART_02 → Session → Project Context → STATIC_PART_03
