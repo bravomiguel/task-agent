@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 MEMORY_DIR = "/mnt/memory"
 SESSIONS_DIR = "/mnt/session-transcripts"
+MEETINGS_DIR = "/mnt/meeting-transcripts"
 EMBEDDING_MODEL = "text-embedding-3-small"
 EMBEDDING_DIMS = 1536
 
@@ -165,7 +166,9 @@ def chunk_markdown(
 def classify_source(path: str) -> str:
     """Derive a source label from the file path."""
     if SESSIONS_DIR in path:
-        return "sessions"
+        return "session-transcripts"
+    if MEETINGS_DIR in path:
+        return "meeting-transcripts"
     return "memory"
 
 
