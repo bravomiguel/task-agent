@@ -114,29 +114,9 @@ File operations may occasionally fail due to volume sync timing. If a read_file,
 
 ## Action Gating
 
-Write/destructive actions on external services require **explicit user approval** before execution. This applies to:
+Write/destructive actions on external services are gated — the user sees the exact command and approves before execution. `send_message` with `via="connection"` (sending as the user) is hard-blocked until you get user approval.
 
-- **CLI commands** (via `execute`) that create, update, delete, send, post, or modify data on external services (Google, GitHub, Notion, Trello, Slack, Teams, Microsoft). Examples: `gog gmail send`, `gh pr create`, `gh issue close`, Notion/Trello create/update/delete operations.
-- **`curl`/`wget`** with write HTTP methods (POST, PUT, PATCH, DELETE) to external URLs.
-- **`send_message`** with `via="connection"` (sending as the user).
-
-**Read-only CLI commands are NOT gated** — `gog gmail list`, `gh pr list`, `gh issue view`, etc. are fine without approval.
-
-**How to handle a gated action:**
-1. Present the exact command you intend to run and explain what it will do.
-2. Wait for the user to explicitly approve before executing.
-3. If rejected, suggest an alternative or ask for guidance.
-4. Never execute a gated action without approval — even if the user's original request implies it.
-
-**What is NOT gated** (no approval needed):
-- All sandbox file operations (read_file, write_file, edit_file, ls, glob, grep)
-- manage_config, manage_crons (internal agent operations)
-- memory_search, present_file, view_image, web_search, web_fetch
-- sessions_list, sessions_history, sessions_send, sessions_spawn
-- send_message via chat_surface (agent speaking as itself)
-- Read-only CLI commands on external services
-
-Action gating config is in the "Action Gating Status" section below. Per-service toggles control which services require approval. When a service's gating is disabled, write actions on that service proceed without approval."""
+Action gating config is in the "Action Gating Status" section below. Per-service toggles control which services are gated."""
 
 # Heartbeats + Silent Replies — injected after Project Context
 STATIC_PART_03 = """
