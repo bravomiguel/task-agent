@@ -217,6 +217,14 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
         if kernel_api_key:
             sandbox_env["KERNEL_API_KEY"] = kernel_api_key
 
+        # Composio API key for fetch_auth.py script (fetches OAuth tokens)
+        composio_api_key = os.environ.get("COMPOSIO_API_KEY")
+        if composio_api_key:
+            sandbox_env["COMPOSIO_API_KEY"] = composio_api_key
+        composio_entity_id = os.environ.get("COMPOSIO_ENTITY_ID")
+        if composio_entity_id:
+            sandbox_env["COMPOSIO_ENTITY_ID"] = composio_entity_id
+
         # Create new sandbox with user volume mounted and workdir set to workspace
         app = modal.App.lookup("agent-sandbox", create_if_missing=True)
         sandbox = modal.Sandbox.create(

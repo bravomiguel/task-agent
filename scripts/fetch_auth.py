@@ -15,6 +15,7 @@ Requires COMPOSIO_API_KEY and COMPOSIO_ENTITY_ID env vars.
 import json
 import os
 import sys
+import urllib.parse
 import urllib.request
 
 COMPOSIO_API_URL = "https://backend.composio.dev/api/v3"
@@ -41,8 +42,12 @@ def _api_get(path, params=None):
     api_key = os.environ.get("COMPOSIO_API_KEY", "")
     url = f"{COMPOSIO_API_URL}/{path}"
     if params:
-        url += "?" + "&".join(f"{k}={v}" for k, v in params.items())
-    req = urllib.request.Request(url, headers={"x-api-key": api_key})
+        url += "?" + urllib.parse.urlencode(params)
+    req = urllib.request.Request(url, headers={
+        "x-api-key": api_key,
+        "Content-Type": "application/json",
+        "User-Agent": "fetch-auth/1.0",
+    })
     with urllib.request.urlopen(req, timeout=15) as resp:
         return json.loads(resp.read())
 
