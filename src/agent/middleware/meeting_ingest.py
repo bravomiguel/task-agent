@@ -144,11 +144,7 @@ def _truncate_and_inject_path(messages: list, filepath: str) -> None:
                 truncated = truncated[:last_nl]
 
             remaining_chars = len(body) - len(truncated)
-            note = (
-                f"\n\n[... transcript truncated — {remaining_chars} chars remaining. "
-                f"Full transcript saved at {filepath} — use read_file to access. "
-                f"Also searchable via memory_search with source=\"meetings\". ...]"
-            )
+            note = f"\n\n[truncated — {remaining_chars} characters remaining]"
             return tag_open + truncated + note + "\n" + tag_close
 
         updated = re.sub(
