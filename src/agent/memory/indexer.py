@@ -1,10 +1,12 @@
 """Orchestrator for memory index sync.
 
-Lists memory and session-transcript files inside the Modal sandbox,
-reads their content, then delegates chunking + embedding + storage
-to the Supabase-backed store module.
+Lists memory, session-transcript, and meeting-transcript files inside the
+Modal sandbox, reads their content, then delegates chunking + embedding +
+storage to the Supabase-backed store module.
 
-Meeting transcripts are indexed by the Electron app directly (not here).
+Meeting transcripts are primarily indexed by the Electron app at write time.
+This indexer serves as a fallback — files already indexed (matching content
+hash) are skipped at near-zero cost.
 """
 
 from __future__ import annotations
@@ -15,7 +17,7 @@ import time
 
 import modal
 
-from agent.memory.store import MEMORY_DIR, SESSIONS_DIR, sync_memory_chunks
+from agent.memory.store import MEETINGS_DIR, MEMORY_DIR, SESSIONS_DIR, sync_memory_chunks
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +27,7 @@ _LIST_FILES_SCRIPT = r"""
 import json, os, sys
 from pathlib import Path
 
-DIRS = ["{memory_dir}", "{sessions_dir}"]
+DIRS = ["{memory_dir}", "{sessions_dir}", "{meetings_dir}"]
 files = []
 for d in DIRS:
     dp = Path(d)
@@ -41,7 +43,7 @@ for d in DIRS:
         except Exception:
             pass
 json.dump(files, sys.stdout)
-""".format(memory_dir=MEMORY_DIR, sessions_dir=SESSIONS_DIR)
+""".format(memory_dir=MEMORY_DIR, sessions_dir=SESSIONS_DIR, meetings_dir=MEETINGS_DIR)
 
 
 def sync_memory_index(sandbox: modal.Sandbox) -> dict:
