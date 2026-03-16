@@ -1,9 +1,11 @@
 """Meeting ingest middleware — save transcript to /mnt/meetings/ on volume.
 
-When the agent receives a meeting-transcript inbound event, this middleware
-saves the transcript as a structured markdown file to the meetings directory
-on the Modal volume before the agent processes it. Files are named for easy
-search: YYYY-MM-DD-{sanitized-title}-{platform}.md
+When the agent receives a meeting-transcript inbound event, this middleware:
+1. Saves the full transcript as a structured markdown file to /mnt/meetings/
+2. Truncates the inline transcript in the message to avoid bloating context
+3. Injects a transcript_path attribute so the agent knows where to read_file
+
+Files are named for easy search: YYYY-MM-DD-{sanitized-title}-{platform}.md
 
 Must run AFTER ModalSandboxMiddleware (needs sandbox).
 """
@@ -21,6 +23,9 @@ from langgraph.runtime import Runtime
 logger = logging.getLogger(__name__)
 
 MEETINGS_DIR = "/mnt/meetings"
+# Truncate inline transcript to ~8K chars (keeps context window manageable;
+# full transcript is persisted on volume and searchable via memory_search)
+INLINE_TRANSCRIPT_MAX_CHARS = 8_000
 
 
 class MeetingIngestState(AgentState):
@@ -104,8 +109,65 @@ def _extract_transcript_from_messages(messages: list) -> str | None:
     return None
 
 
+def _truncate_and_inject_path(messages: list, filepath: str) -> None:
+    """Mutate the meeting-transcript system message in place:
+    1. Add transcript_path attribute to the <system-message> tag
+    2. Truncate the inline transcript to INLINE_TRANSCRIPT_MAX_CHARS
+    """
+    for msg in reversed(messages):
+        content = getattr(msg, "content", None)
+        if content is None and isinstance(msg, dict):
+            content = msg.get("content", "")
+        if not isinstance(content, str) or 'type="meeting-transcript"' not in content:
+            continue
+
+        # Inject transcript_path attribute into the opening tag
+        updated = re.sub(
+            r'(<system-message\s+[^>]*type="meeting-transcript")',
+            rf'\1 transcript_path="{filepath}"',
+            content,
+        )
+
+        # Truncate the transcript body inside the tag
+        def _truncate_body(m: re.Match) -> str:
+            tag_open = m.group(1)
+            body = m.group(2)
+            tag_close = m.group(3)
+
+            if len(body) <= INLINE_TRANSCRIPT_MAX_CHARS:
+                return m.group(0)
+
+            truncated = body[:INLINE_TRANSCRIPT_MAX_CHARS]
+            # Cut at last newline to avoid mid-line truncation
+            last_nl = truncated.rfind("\n")
+            if last_nl > INLINE_TRANSCRIPT_MAX_CHARS // 2:
+                truncated = truncated[:last_nl]
+
+            remaining_chars = len(body) - len(truncated)
+            note = (
+                f"\n\n[... transcript truncated — {remaining_chars} chars remaining. "
+                f"Full transcript saved at {filepath} — use read_file to access. "
+                f"Also searchable via memory_search with source=\"meetings\". ...]"
+            )
+            return tag_open + truncated + note + "\n" + tag_close
+
+        updated = re.sub(
+            r'(<system-message[^>]*>)(.*?)(</system-message>)',
+            _truncate_body,
+            updated,
+            flags=re.DOTALL,
+        )
+
+        # Write back
+        if hasattr(msg, "content"):
+            msg.content = updated
+        elif isinstance(msg, dict):
+            msg["content"] = updated
+        return
+
+
 class MeetingIngestMiddleware(AgentMiddleware[MeetingIngestState, Any]):
-    """Save meeting transcripts to /mnt/meetings/ before agent processes them."""
+    """Save meeting transcripts to /mnt/meetings/ and truncate inline content."""
 
     state_schema = MeetingIngestState
 
@@ -134,6 +196,7 @@ class MeetingIngestMiddleware(AgentMiddleware[MeetingIngestState, Any]):
         title_slug = _sanitize_filename(meta.get("title", "meeting"))
         platform = _sanitize_filename(meta.get("meeting_platform", "unknown"))
         filename = f"{date_prefix}-{title_slug}-{platform}.md"
+        filepath = f"{MEETINGS_DIR}/{filename}"
 
         # Build markdown content
         content = _build_meeting_markdown(meta, transcript)
@@ -141,7 +204,6 @@ class MeetingIngestMiddleware(AgentMiddleware[MeetingIngestState, Any]):
         # Write to volume via sandbox
         try:
             sandbox = modal.Sandbox.from_id(sandbox_id)
-            filepath = f"{MEETINGS_DIR}/{filename}"
             cmd = f"mkdir -p '{MEETINGS_DIR}' && cat > '{filepath}' << 'MEETING_EOF'\n{content}\nMEETING_EOF"
             process = sandbox.exec("bash", "-c", cmd, timeout=30)
             process.wait()
@@ -152,6 +214,9 @@ class MeetingIngestMiddleware(AgentMiddleware[MeetingIngestState, Any]):
                 logger.warning("[MeetingIngest] write failed: %s", stderr[:300])
         except Exception as exc:
             logger.warning("[MeetingIngest] error saving transcript: %s", exc)
+
+        # Inject transcript_path and truncate inline transcript in the message
+        _truncate_and_inject_path(messages, filepath)
 
         return None
 
