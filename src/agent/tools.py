@@ -644,7 +644,7 @@ def manage_config(
 ) -> str:
     """View or update user configuration.
 
-    Supports these config keys: user, heartbeat, skills, channels, connections, chat_surfaces.
+    Supports these config keys: user, heartbeat, action_gating, skills, channels, connections, chat_surfaces.
     Use key parameter to read/write a specific section instead of the full config.
 
     - **user**: User profile (timezone, expandable). Timezone auto-syncs to USER.md.
@@ -657,6 +657,10 @@ def manage_config(
       PATCH to enable returns setup instructions. PATCH to disable removes credentials.
     - **channels**: Inbound event toggles per platform (slack, teams, gmail, outlook).
     - **heartbeat**: Heartbeat frequency and active hours.
+    - **action_gating**: Toggle user approval for write/destructive actions on external services.
+      Per-service toggles (google, github, notion, trello, slack, teams, microsoft, browser).
+      PATCH '{"action_gating": {"services": {"github": false}}}' to disable gating for GitHub.
+      PATCH '{"action_gating": {"enabled": false}}' to disable all action gating.
     - **skills**: Skill enable/disable — each skill has enabled flag and description.
       All skills are always visible. PATCH '{"skills": {"browser": {"enabled": true}}}' to enable.
 
@@ -668,6 +672,7 @@ def manage_config(
             For user: '{"user": {"timezone": "Europe/London"}}'
             For skills: '{"skills": {"browser": {"enabled": true}}}'
             For channels: '{"channels": {"gmail": true}}'
+            For action_gating: '{"action_gating": {"services": {"github": false}}}'
             For connections: '{"google": "enabled"}' or '{"slack": "disabled"}'
             For chat_surfaces: '{"slack": "enabled"}' or '{"slack": "disabled"}'
               To complete Slack setup: '{"slack": {"token": "xoxb-...", "signing_secret": "...", "owner_slack_id": "U..."}}'
@@ -692,7 +697,7 @@ def manage_config(
         if key == "chat_surfaces":
             return _handle_chat_surfaces(action, patch)
 
-        # --- File-backed config (user + heartbeat only) ---
+        # --- File-backed config (user, heartbeat, action_gating) ---
         if action == "get":
             config = load_config(sandbox_id)
             data = config.model_dump(exclude_none=True) or {}
@@ -1348,6 +1353,24 @@ def send_message(
     sandbox_id = state.get("modal_sandbox_id") if state else None
     if not sandbox_id:
         return _json.dumps({"status": "error", "error": "No sandbox available."})
+
+    # Action gating: block send_message via="connection" (sending as user) if gated
+    if via == "connection":
+        try:
+            from agent.config import load_config
+            config = load_config(sandbox_id)
+            service = "slack" if platform == "slack" else "teams"
+            if config.action_gating.enabled and getattr(config.action_gating.services, service, True):
+                return _json.dumps({
+                    "status": "blocked",
+                    "reason": "action_gating",
+                    "message": (
+                        f"Sending a message as the user on {platform} requires explicit user approval. "
+                        f"Present the message content and recipient to the user and ask for confirmation before retrying."
+                    ),
+                })
+        except Exception:
+            pass  # If config load fails, don't block
 
     sender_fn = _MSG_SENDERS.get(platform)
     if not sender_fn:

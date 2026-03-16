@@ -106,14 +106,33 @@ class UserProfile(BaseModel):
         return v
 
 
+class ActionGatingServices(BaseModel):
+    """Per-service action gating toggles. True = require user approval for write/destructive actions."""
+    google: bool = True
+    github: bool = True
+    notion: bool = True
+    trello: bool = True
+    slack: bool = True
+    teams: bool = True
+    microsoft: bool = True
+    browser: bool = True
+
+
+class ActionGatingConfig(BaseModel):
+    """Action gating — require user approval for write/destructive actions on external services."""
+    enabled: bool = True
+    services: ActionGatingServices = ActionGatingServices()
+
+
 class UserConfig(BaseModel):
-    """Config stored in config.json. Only user profile and heartbeat.
+    """Config stored in config.json. Only user profile, heartbeat, and action gating.
 
     Skills, connections, channels, and chat_surfaces are live from external
     sources (volume, Composio, vault) — not stored here.
     """
     user: UserProfile = UserProfile()
     heartbeat: HeartbeatConfig = HeartbeatConfig()
+    action_gating: ActionGatingConfig = ActionGatingConfig()
 
 
 # ---------------------------------------------------------------------------
