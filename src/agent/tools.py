@@ -923,6 +923,24 @@ def _handle_channels(action: str, patch_str: str | None) -> str:
             # Channel is enabled if any of its triggers are active
             has_active = any(s.upper() in active_slugs for s in trigger_slugs)
             result[channel] = {"enabled": has_active}
+
+        # Teams — check for active Graph subscriptions (not Composio triggers)
+        teams_enabled = False
+        try:
+            import os
+            supabase_url = os.environ.get("SUPABASE_URL", "")
+            subs_resp = httpx.post(
+                f"{supabase_url}/functions/v1/teams-subscriptions/list",
+                headers={"Authorization": f"Bearer {os.environ.get('SUPABASE_SERVICE_ROLE_KEY', '')}"},
+                timeout=15,
+            )
+            if subs_resp.status_code == 200:
+                subs_data = subs_resp.json()
+                teams_enabled = bool(subs_data.get("subscriptions"))
+        except Exception:
+            pass
+        result["teams"] = {"enabled": teams_enabled}
+
         return _json.dumps(result)
 
     elif action == "patch":
@@ -933,15 +951,37 @@ def _handle_channels(action: str, patch_str: str | None) -> str:
         except _json.JSONDecodeError as e:
             return f"Error: invalid JSON: {e}"
 
+        all_channels = set(CHANNEL_TO_SERVICE) | {"teams"}
+
         results = {}
         for channel, desired in patch_data.items():
-            if channel not in CHANNEL_TO_SERVICE:
-                results[channel] = {"error": f"Unknown channel '{channel}'. Available: {', '.join(CHANNEL_TO_SERVICE)}"}
+            if channel not in all_channels:
+                results[channel] = {"error": f"Unknown channel '{channel}'. Available: {', '.join(sorted(all_channels))}"}
                 continue
 
             enable = desired if isinstance(desired, bool) else desired.get("enabled") if isinstance(desired, dict) else None
             if not isinstance(enable, bool):
                 results[channel] = {"error": "Use true or false."}
+                continue
+
+            # Teams — toggle via Graph subscriptions (not Composio triggers)
+            if channel == "teams":
+                try:
+                    import os
+                    supabase_url = os.environ.get("SUPABASE_URL", "")
+                    svc_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+                    endpoint = "subscribe" if enable else "unsubscribe"
+                    resp = httpx.post(
+                        f"{supabase_url}/functions/v1/teams-subscriptions/{endpoint}",
+                        headers={"Authorization": f"Bearer {svc_key}"},
+                        timeout=30,
+                    )
+                    if resp.status_code == 200:
+                        results[channel] = {"enabled": enable}
+                    else:
+                        results[channel] = {"error": f"Teams {endpoint} failed: {resp.status_code} {resp.text[:200]}"}
+                except Exception as e:
+                    results[channel] = {"error": str(e)}
                 continue
 
             service = CHANNEL_TO_SERVICE[channel]
