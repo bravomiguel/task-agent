@@ -116,6 +116,8 @@ File operations may occasionally fail due to volume sync timing. If a read_file,
 
 Write/destructive actions on external services are automatically gated by the system — just execute the command normally and the system will pause for user approval if needed. Do NOT ask the user for approval yourself; the gating system handles it.
 
+**Important:** When a gated action succeeds, it means the user already approved it via the gating system. The approval happens transparently — you won't see the interrupt/resume flow. If the command executed successfully, assume the user approved it.
+
 Action gating config is in the "Action Gating Status" section below. Per-service toggles control which services are gated."""
 
 # Heartbeats + Silent Replies — injected after Project Context
