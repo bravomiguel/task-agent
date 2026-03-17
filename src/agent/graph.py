@@ -9,7 +9,6 @@ from deepagents_cli.tools import web_search, tavily_client
 from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
 from langchain_anthropic import ChatAnthropic
-from agent.claude_auth import get_claude_code_token
 from agent.tools import present_file, view_image, memory_search, sessions_list, sessions_send, sessions_spawn, sessions_history, manage_crons, manage_config, send_message
 from agent.web_fetch import web_fetch
 from agent.middleware import (
@@ -25,19 +24,9 @@ from agent.middleware import (
 from agent.system_prompt import STATIC_PART_01
 from agent.modal_backend import LazyModalBackend
 
-# Initialize models — use Claude Code OAuth token for auth.
-# Clear ANTHROPIC_API_KEY so the SDK doesn't send X-Api-Key alongside Bearer.
-# The oauth-2025-04-20 beta header is required for OAuth token auth.
-import os
-os.environ.pop("ANTHROPIC_API_KEY", None)
-_claude_token = get_claude_code_token()
-claude_opus = ChatAnthropic(
-    model="claude-opus-4-6",
-    default_headers={
-        "Authorization": f"Bearer {_claude_token}",
-        "anthropic-beta": "oauth-2025-04-20",
-    },
-)
+# Initialize models — via local OAuth proxy that handles Bearer token + system flattening.
+# Initialize models — standard API key from ANTHROPIC_API_KEY env var.
+claude_sonnet = ChatAnthropic(model="claude-sonnet-4-6")
 gpt_4_1_mini = init_chat_model(model="openai:gpt-4.1-mini", disable_streaming=True)
 
 
@@ -78,7 +67,7 @@ deepagent_middleware = [
     TodoListMiddleware(system_prompt="."),
     FilesystemMiddleware(backend=backend, system_prompt=""),
     SummarizationMiddleware(
-        model=claude_opus,
+        model=claude_sonnet,
         max_tokens_before_summary=170000,
         messages_to_keep=6,
     ),
@@ -89,7 +78,7 @@ deepagent_middleware = [
 ]
 
 main = create_agent(
-    claude_opus,
+    claude_sonnet,
     system_prompt=STATIC_PART_01,
     tools=tools,
     middleware=deepagent_middleware,
