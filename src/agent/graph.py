@@ -8,7 +8,6 @@ from langchain_anthropic.middleware import AnthropicPromptCachingMiddleware
 from deepagents_cli.tools import web_search, tavily_client
 from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
-from langchain_anthropic import ChatAnthropic
 from agent.tools import present_file, view_image, memory_search, sessions_list, sessions_send, sessions_spawn, sessions_history, manage_crons, manage_config, send_message
 from agent.web_fetch import web_fetch
 from agent.middleware import (
@@ -24,9 +23,13 @@ from agent.middleware import (
 from agent.system_prompt import STATIC_PART_01
 from agent.modal_backend import LazyModalBackend
 
-# Initialize models — via local OAuth proxy that handles Bearer token + system flattening.
-# Initialize models — standard API key from ANTHROPIC_API_KEY env var.
-claude_sonnet = ChatAnthropic(model="claude-sonnet-4-6")
+# Initialize models — configurable at runtime via RunnableConfig.
+# Default: openai:gpt-5.4 for testing. For prod: "anthropic:claude-sonnet-4-6"
+# Override at runtime: config={"configurable": {"model": "anthropic:claude-sonnet-4-6"}}
+main_model = init_chat_model(
+    model="openai:gpt-5.4",
+    configurable_fields=["model", "model_provider"],
+)
 gpt_4_1_mini = init_chat_model(model="openai:gpt-4.1-mini", disable_streaming=True)
 
 
@@ -67,7 +70,7 @@ deepagent_middleware = [
     TodoListMiddleware(system_prompt="."),
     FilesystemMiddleware(backend=backend, system_prompt=""),
     SummarizationMiddleware(
-        model=claude_sonnet,
+        model=main_model,
         max_tokens_before_summary=170000,
         messages_to_keep=6,
     ),
@@ -78,7 +81,7 @@ deepagent_middleware = [
 ]
 
 main = create_agent(
-    claude_sonnet,
+    main_model,
     system_prompt=STATIC_PART_01,
     tools=tools,
     middleware=deepagent_middleware,
