@@ -239,7 +239,7 @@ def sessions_list(
     Args:
         limit: Number of threads to return (default 20).
         offset: Pagination offset (default 0).
-        session_type: Filter by session type (e.g. "main", "cron").
+        session_type: Filter by session type (e.g. "main", "subagent").
             Filters client-side. Omit to return all types.
         message_limit: Include last N messages per session (default 0, max 20).
             Useful to peek at recent conversation without a separate call.
@@ -301,7 +301,7 @@ def _wrap_origin_message(tool_name: str, message: str, state: dict | None) -> st
 
     The type attribute is the tool name (e.g. "sessions-send", "sessions-spawn").
     Always includes session_id and session_type. Includes cron_job_id,
-    cron_job_name, and schedule_type only when present (cron/heartbeat sessions).
+    cron_job_name, and schedule_type only when present (cron/heartbeat runs).
     """
     if not state:
         return message
@@ -371,9 +371,16 @@ def _queue_for_thread(thread_id: str, message: str, state: dict | None, source: 
 
     Used as fallback when a thread is busy and can't accept a run immediately.
     """
-    session_type = state.get("session_type", "unknown") if state else "unknown"
-    priority_map = {"subagent": 3, "cron": 4, "heartbeat": 5}
-    priority = priority_map.get(session_type, 3)
+    session_type = state.get("session_type", "main") if state else "main"
+    cron_job_name = state.get("cron_job_name", "") if state else ""
+    if "heartbeat" in cron_job_name.lower():
+        priority = 5
+    elif cron_job_name:
+        priority = 4
+    elif session_type == "subagent":
+        priority = 3
+    else:
+        priority = 3
 
     try:
         sb = _get_supabase()
@@ -644,7 +651,7 @@ def manage_config(
 ) -> str:
     """View or update user configuration.
 
-    Supports these config keys: user, heartbeat, skills, channels, connections, chat_surfaces.
+    Supports these config keys: user, heartbeat, action_gating, skills, channels, connections, chat_surfaces.
     Use key parameter to read/write a specific section instead of the full config.
 
     - **user**: User profile (timezone, expandable). Timezone auto-syncs to USER.md.
@@ -657,6 +664,10 @@ def manage_config(
       PATCH to enable returns setup instructions. PATCH to disable removes credentials.
     - **channels**: Inbound event toggles per platform (slack, teams, gmail, outlook).
     - **heartbeat**: Heartbeat frequency and active hours.
+    - **action_gating**: Toggle user approval for write/destructive actions on external services.
+      Per-service toggles (google, github, notion, trello, slack, teams, microsoft, browser).
+      PATCH '{"action_gating": {"services": {"github": false}}}' to disable gating for GitHub.
+      PATCH '{"action_gating": {"enabled": false}}' to disable all action gating.
     - **skills**: Skill enable/disable — each skill has enabled flag and description.
       All skills are always visible. PATCH '{"skills": {"browser": {"enabled": true}}}' to enable.
 
@@ -668,6 +679,7 @@ def manage_config(
             For user: '{"user": {"timezone": "Europe/London"}}'
             For skills: '{"skills": {"browser": {"enabled": true}}}'
             For channels: '{"channels": {"gmail": true}}'
+            For action_gating: '{"action_gating": {"services": {"github": false}}}'
             For connections: '{"google": "enabled"}' or '{"slack": "disabled"}'
             For chat_surfaces: '{"slack": "enabled"}' or '{"slack": "disabled"}'
               To complete Slack setup: '{"slack": {"token": "xoxb-...", "signing_secret": "...", "owner_slack_id": "U..."}}'
@@ -692,7 +704,7 @@ def manage_config(
         if key == "chat_surfaces":
             return _handle_chat_surfaces(action, patch)
 
-        # --- File-backed config (user + heartbeat only) ---
+        # --- File-backed config (user, heartbeat, action_gating) ---
         if action == "get":
             config = load_config(sandbox_id)
             data = config.model_dump(exclude_none=True) or {}

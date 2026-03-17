@@ -94,9 +94,9 @@ echo "Restoring default prompts..."
 echo "Uploading scripts..."
 "$MODAL" volume put user-dev "$SCRIPT_DIR/fetch_auth.py" /scripts/fetch_auth.py --force
 
-# Step 9: Restore core skills only (weather, docx, pdf, pptx, xlsx)
-echo "Restoring core skills..."
-"$SCRIPT_DIR/reset_skills.sh" browser weather docx pdf pptx xlsx
+# Step 9: Restore all skills
+echo "Restoring all skills..."
+"$SCRIPT_DIR/reset_skills.sh" browser cloud-storage docx gemini github google microsoft notion openai-image-gen openai-whisper-api pdf pptx slack teams trello weather xlsx
 
 # Step 10: Reset heartbeat cron
 echo "Resetting heartbeat cron..."

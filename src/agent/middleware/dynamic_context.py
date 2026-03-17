@@ -85,6 +85,40 @@ class RuntimeContextMiddleware(AgentMiddleware[RuntimeContextState, Any]):
                     self._append_to_message(msg, tag)
                 return
 
+    def _inject_action_gating_status(self, request: ModelRequest) -> None:
+        """Inject current action gating config into system prompt."""
+        if not request.system_prompt:
+            return
+
+        try:
+            from agent.config import load_config
+            sandbox_id = request.state.get("modal_sandbox_id")
+            if not sandbox_id:
+                return
+            config = load_config(sandbox_id)
+            gating = config.action_gating
+        except Exception:
+            return
+
+        if not gating.enabled:
+            section = (
+                "\n\n### Action Gating Status\n\n"
+                "Action gating is **disabled** globally. "
+                "All write/destructive actions on external services proceed without approval."
+            )
+        else:
+            services = gating.services.model_dump()
+            gated = [s for s, v in services.items() if v]
+            ungated = [s for s, v in services.items() if not v]
+            lines = ["Action gating is **enabled**. User approval required for write/destructive actions on:"]
+            if gated:
+                lines.append(f"  Gated: {', '.join(gated)}")
+            if ungated:
+                lines.append(f"  Ungated (no approval needed): {', '.join(ungated)}")
+            section = "\n\n### Action Gating Status\n\n" + "\n".join(lines)
+
+        request.system_prompt += section
+
     def _inject_system_prompt_context(self, request: ModelRequest) -> None:
         """Inject runtime context into system prompt."""
         if not request.system_prompt:
@@ -238,14 +272,17 @@ class RuntimeContextMiddleware(AgentMiddleware[RuntimeContextState, Any]):
         # 4. Current Session (session ID)
         self._inject_system_prompt_context(request)
 
-        # 5. Project Context (AGENTS.md, SOUL.md, MEMORY.md, etc.)
+        # 5. Action Gating Status
+        self._inject_action_gating_status(request)
+
+        # 6. Project Context (AGENTS.md, SOUL.md, MEMORY.md, etc.)
         self._inject_project_context(request)
 
-        # 6. Protocol (Heartbeats + Silent Replies — last, matching OpenClaw)
+        # 7. Protocol (Heartbeats + Silent Replies — last, matching OpenClaw)
         if request.system_prompt:
             request.system_prompt += STATIC_PART_03
 
-        # 7. Datetime stamp on human messages
+        # 8. Datetime stamp on human messages
         self._inject_datetime_tag(request.messages)
 
     def wrap_model_call(

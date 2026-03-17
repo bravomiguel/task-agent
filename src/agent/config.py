@@ -106,14 +106,33 @@ class UserProfile(BaseModel):
         return v
 
 
+class ActionGatingServices(BaseModel):
+    """Per-service action gating toggles. True = require user approval for write/destructive actions."""
+    google: bool = True
+    github: bool = True
+    notion: bool = True
+    trello: bool = True
+    slack: bool = True
+    teams: bool = True
+    microsoft: bool = True
+    browser: bool = True
+
+
+class ActionGatingConfig(BaseModel):
+    """Action gating — require user approval for write/destructive actions on external services."""
+    enabled: bool = True
+    services: ActionGatingServices = ActionGatingServices()
+
+
 class UserConfig(BaseModel):
-    """Config stored in config.json. Only user profile and heartbeat.
+    """Config stored in config.json. Only user profile, heartbeat, and action gating.
 
     Skills, connections, channels, and chat_surfaces are live from external
     sources (volume, Composio, vault) — not stored here.
     """
     user: UserProfile = UserProfile()
     heartbeat: HeartbeatConfig = HeartbeatConfig()
+    action_gating: ActionGatingConfig = ActionGatingConfig()
 
 
 # ---------------------------------------------------------------------------
@@ -198,7 +217,7 @@ def _build_heartbeat_body(config: UserConfig, job_id: int) -> dict:
     body: dict[str, Any] = {
         "job_name": "heartbeat",
         "input_message": HEARTBEAT_INPUT_MESSAGE,
-        "session_type": "cron",
+        "session_type": "main",
         "once": False,
         "job_id": job_id,
         "schedule_type": "cron",
@@ -321,8 +340,8 @@ SKILLS_REGISTRY: dict[str, str] = {
     "xlsx": "Comprehensive spreadsheet creation, editing, and analysis with support for formulas, formatting, and visualization.",
 }
 
-# Core skills enabled by default on factory reset
-CORE_SKILLS = {"browser", "docx", "pdf", "pptx", "weather", "xlsx"}
+# All skills enabled by default on factory reset
+CORE_SKILLS = set(SKILLS_REGISTRY.keys())
 
 
 # ---------------------------------------------------------------------------

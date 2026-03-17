@@ -8,5 +8,18 @@
       "start": "09:00",
       "end": "21:00"
     }
+  },
+  "action_gating": {
+    "enabled": true,
+    "services": {
+      "google": true,
+      "github": true,
+      "notion": true,
+      "trello": true,
+      "slack": true,
+      "teams": true,
+      "microsoft": true,
+      "browser": true
+    }
   }
 }

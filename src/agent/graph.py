@@ -11,6 +11,7 @@ from langchain.chat_models import init_chat_model
 from agent.tools import present_file, view_image, memory_search, sessions_list, sessions_send, sessions_spawn, sessions_history, manage_crons, manage_config, send_message
 from agent.web_fetch import web_fetch
 from agent.middleware import (
+    ActionGatingMiddleware,
     ConfigMiddleware,
     MemoryMiddleware,
     ModalSandboxMiddleware,
@@ -23,14 +24,25 @@ from agent.middleware import (
 from agent.system_prompt import STATIC_PART_01
 from agent.modal_backend import LazyModalBackend
 
-# Initialize models — configurable at runtime via RunnableConfig.
-# For prod: switch to "anthropic:claude-sonnet-4-6"
-# Override at runtime: config={"configurable": {"model": "anthropic:claude-sonnet-4-6"}}
+# Initialize models — powered by ChatGPT subscription via openai-oauth proxy.
+# Requires: npx openai-oauth (runs at http://127.0.0.1:10531/v1)
+# Override at runtime: config={"configurable": {"model": "openai:gpt-5.4"}}
+import os
+
+_CODEX_PROXY_URL = os.environ.get("CODEX_PROXY_URL", "http://127.0.0.1:10531/v1")
+
 main_model = init_chat_model(
     model="openai:gpt-5.4",
     configurable_fields=["model", "model_provider"],
+    base_url=_CODEX_PROXY_URL,
+    api_key="codex-oauth",  # proxy handles auth; placeholder to satisfy client
 )
-gpt_4_1_mini = init_chat_model(model="openai:gpt-4.1-mini", disable_streaming=True)
+gpt_4_1_mini = init_chat_model(
+    model="openai:gpt-4.1-mini",
+    disable_streaming=True,
+    base_url=_CODEX_PROXY_URL,
+    api_key="codex-oauth",
+)
 
 
 def create_backend_factory():
@@ -55,6 +67,7 @@ agent_middleware = [
     ConfigMiddleware(),  # Load config, heartbeat management (active hours, cron reconcile, early exit)
     RuntimeContextMiddleware(),  # Assemble: STATIC_PART_01 → Skills → STATIC_PART_02 → Session → Project Context → STATIC_PART_03
     ToolDescriptionMiddleware(),
+    ActionGatingMiddleware(),  # Dynamic HITL approval for write/destructive actions on external services
     MemoryMiddleware(),  # Memory reminders + pre-compaction flush
     SessionMetadataMiddleware(),
 ]

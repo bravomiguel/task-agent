@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 import uuid
-from typing import Any, NotRequired
+from typing import Any, Callable, NotRequired
 
 import modal
 from langchain.agents.middleware import AgentMiddleware, AgentState
+from langchain_core.messages import ToolMessage
 from langchain_core.runnables.config import var_child_runnable_config
+from langgraph.prebuilt.tool_node import ToolCallRequest
 from langgraph.runtime import Runtime
+from langgraph.types import Command
+
+logger = logging.getLogger(__name__)
 
 
 modal.enable_output()
@@ -135,7 +141,7 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
         self,
         workdir: str = "/workspace",
         startup_timeout: int = 180,
-        idle_timeout: int = 60 * 3,  # 3 minutes
+        idle_timeout: int = 60,  # 1 minute (wrap_tool_call auto-recovers dead sandboxes)
         max_timeout: int = 60 * 60 * 24,   # 24 hours
         user_volume_name: str = "user-dev",
     ):
@@ -313,6 +319,132 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
     ) -> dict[str, Any] | None:
         """Async version delegates to sync implementation."""
         return self.before_model(state, runtime)
+
+    def _is_sandbox_dead_error(self, exc: Exception) -> bool:
+        """Check if an exception indicates a dead Modal sandbox."""
+        msg = str(exc).lower()
+        return "container id" in msg and ("finished" in msg or "not found" in msg)
+
+    def _recover_sandbox(self, state: dict) -> str | None:
+        """Spin up a new sandbox with snapshot restore. Returns new sandbox ID."""
+        try:
+            session_id = state.get("session_id")
+            if not session_id:
+                return None
+
+            logger.info("[ModalSandbox] recovering dead sandbox for session %s", session_id)
+
+            # Restore from snapshot if available
+            snapshot_id = state.get("modal_snapshot_id")
+            image = None
+            if snapshot_id:
+                try:
+                    image = modal.Image.from_id(snapshot_id)
+                except Exception:
+                    pass
+            if image is None:
+                image = rclone_image
+
+            user_volume = modal.Volume.from_name(
+                self._user_volume_name, create_if_missing=True, version=2
+            )
+
+            sandbox_env = {
+                "NODE_PATH": "/usr/local/lib/node_modules",
+                "AGENT_BROWSER_HEADLESS": "true",
+                "AGENT_BROWSER_NO_SANDBOX": "1",
+            }
+            for key in ("KERNEL_API_KEY", "COMPOSIO_API_KEY", "COMPOSIO_ENTITY_ID"):
+                val = os.environ.get(key)
+                if val:
+                    sandbox_env[key] = val
+
+            app = modal.App.lookup("agent-sandbox", create_if_missing=True)
+            sandbox = modal.Sandbox.create(
+                app=app,
+                image=image,
+                secrets=[platform_keys],
+                workdir="/workspace",
+                timeout=self._max_timeout,
+                idle_timeout=self._idle_timeout,
+                volumes={"/mnt": user_volume},
+                env=sandbox_env,
+                verbose=True,
+            )
+
+            # Wait for ready
+            for _ in range(30):
+                if sandbox.poll() is not None:
+                    return None
+                try:
+                    process = sandbox.exec("echo", "ready", timeout=5)
+                    process.wait()
+                    if process.returncode == 0:
+                        break
+                except Exception:
+                    pass
+                time.sleep(2)
+            else:
+                return None
+
+            logger.info("[ModalSandbox] recovered → %s", sandbox.object_id)
+            return sandbox.object_id
+
+        except Exception as exc:
+            logger.warning("[ModalSandbox] recovery failed: %s", exc)
+            return None
+
+    def wrap_tool_call(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], ToolMessage | Command],
+    ) -> ToolMessage | Command:
+        """Intercept tool calls — auto-recover if sandbox died."""
+        try:
+            return handler(request)
+        except Exception as exc:
+            if not self._is_sandbox_dead_error(exc):
+                raise
+
+            # Sandbox died — spin up a new one and retry
+            new_id = self._recover_sandbox(request.state)
+            if new_id:
+                request.state["modal_sandbox_id"] = new_id
+                return handler(request)
+
+            # Recovery failed — return error to agent
+            tool_call = request.tool_call
+            return ToolMessage(
+                content=f"Sandbox died and recovery failed: {exc}",
+                name=tool_call["name"],
+                tool_call_id=tool_call["id"],
+                status="error",
+            )
+
+    async def awrap_tool_call(
+        self,
+        request: ToolCallRequest,
+        handler: Callable,
+    ) -> ToolMessage | Command:
+        """Async version — await the handler, recover sandbox on failure."""
+        try:
+            return await handler(request)
+        except Exception as exc:
+            if not self._is_sandbox_dead_error(exc):
+                raise
+
+            new_id = self._recover_sandbox(request.state)
+            if new_id:
+                request.state["modal_sandbox_id"] = new_id
+                return await handler(request)
+
+            tool_call = request.tool_call
+            return ToolMessage(
+                content=f"Sandbox died and recovery failed: {exc}",
+                name=tool_call["name"],
+                tool_call_id=tool_call["id"],
+                status="error",
+            )
 
     def after_agent(
         self, state: ModalSandboxState, runtime: Runtime
