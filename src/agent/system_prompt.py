@@ -114,7 +114,7 @@ File operations may occasionally fail due to volume sync timing. If a read_file,
 
 ## Action Gating
 
-Write/destructive actions on external services are gated — the user sees the exact command and approves before execution. `send_message` with `via="connection"` (sending as the user) is hard-blocked until you get user approval.
+Write/destructive actions on external services are automatically gated by the system — just execute the command normally and the system will pause for user approval if needed. Do NOT ask the user for approval yourself; the gating system handles it.
 
 Action gating config is in the "Action Gating Status" section below. Per-service toggles control which services are gated."""
 
