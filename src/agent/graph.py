@@ -72,11 +72,16 @@ class _OAuthChatAnthropic(ChatAnthropic):
         return await self._async_client.messages.create(**self._flatten_system(payload))
 
 
-# Initialize models — Claude Sonnet 4.6 via OAuth token
+# Initialize models — Claude Sonnet 4.6 via OAuth token (dev)
 main_model = _OAuthChatAnthropic(
     model="claude-sonnet-4-6",
     anthropic_api_key="unused",
 )
+# For prod: switch to API key + configurable model (re-enable AnthropicPromptCachingMiddleware)
+# main_model = init_chat_model(
+#     model="anthropic:claude-sonnet-4-6",
+#     configurable_fields=["model", "model_provider"],
+# )
 gpt_4_1_mini = init_chat_model(model="openai:gpt-4.1-mini", disable_streaming=True)
 
 
