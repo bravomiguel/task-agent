@@ -8,6 +8,10 @@ from langchain_anthropic.middleware import AnthropicPromptCachingMiddleware
 from deepagents_cli.tools import web_search, tavily_client
 from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
+from langchain_anthropic import ChatAnthropic
+import anthropic
+from functools import cached_property
+from agent.claude_auth import get_claude_code_token
 from agent.tools import present_file, view_image, memory_search, sessions_list, sessions_send, sessions_spawn, sessions_history, manage_crons, manage_config, send_message
 from agent.web_fetch import web_fetch
 from agent.middleware import (
@@ -23,12 +27,55 @@ from agent.middleware import (
 from agent.system_prompt import STATIC_PART_01
 from agent.modal_backend import LazyModalBackend
 
-# Initialize models — configurable at runtime via RunnableConfig.
-# Default: openai:gpt-5.4 for testing. For prod: "anthropic:claude-sonnet-4-6"
-# Override at runtime: config={"configurable": {"model": "anthropic:claude-sonnet-4-6"}}
-main_model = init_chat_model(
-    model="openai:gpt-5.4",
-    configurable_fields=["model", "model_provider"],
+import os
+os.environ.pop("ANTHROPIC_API_KEY", None)
+
+OAUTH_BETAS = "claude-code-20250219,oauth-2025-04-20,fine-grained-tool-streaming-2025-05-14,interleaved-thinking-2025-05-14"
+
+
+class _OAuthChatAnthropic(ChatAnthropic):
+    """ChatAnthropic with Claude Code OAuth token auth.
+
+    Uses auth_token (Bearer) instead of api_key (x-api-key).
+    Flattens system to string (OAuth endpoint rejects list format).
+    No prompt caching — incompatible with OAuth.
+    """
+
+    @cached_property
+    def _client(self) -> anthropic.Anthropic:
+        return anthropic.Anthropic(
+            auth_token=get_claude_code_token(),
+            max_retries=self.max_retries,
+            default_headers={"anthropic-beta": OAUTH_BETAS},
+        )
+
+    @cached_property
+    def _async_client(self) -> anthropic.AsyncAnthropic:
+        return anthropic.AsyncAnthropic(
+            auth_token=get_claude_code_token(),
+            max_retries=self.max_retries,
+            default_headers={"anthropic-beta": OAUTH_BETAS},
+        )
+
+    @staticmethod
+    def _flatten_system(payload: dict) -> dict:
+        system = payload.get("system")
+        if isinstance(system, list):
+            parts = [b["text"] for b in system if isinstance(b, dict) and b.get("type") == "text"]
+            payload["system"] = "\n\n".join(parts) if parts else payload.pop("system", None)
+        return payload
+
+    def _create(self, payload: dict) -> anthropic.types.Message:
+        return self._client.messages.create(**self._flatten_system(payload))
+
+    async def _acreate(self, payload: dict) -> anthropic.types.Message:
+        return await self._async_client.messages.create(**self._flatten_system(payload))
+
+
+# Initialize models — Claude Sonnet 4.6 via OAuth token
+main_model = _OAuthChatAnthropic(
+    model="claude-sonnet-4-6",
+    anthropic_api_key="unused",
 )
 gpt_4_1_mini = init_chat_model(model="openai:gpt-4.1-mini", disable_streaming=True)
 
@@ -74,7 +121,8 @@ deepagent_middleware = [
         max_tokens_before_summary=170000,
         messages_to_keep=6,
     ),
-    AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"),
+    # AnthropicPromptCachingMiddleware disabled — converts system to list format
+    # which OAuth endpoint rejects. Prompt caching not supported with OAuth tokens.
     PatchToolCallsMiddleware(),
     # Custom middleware (appended after deepagents defaults)
     *agent_middleware,
