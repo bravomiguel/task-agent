@@ -340,8 +340,8 @@ SKILLS_REGISTRY: dict[str, str] = {
     "xlsx": "Comprehensive spreadsheet creation, editing, and analysis with support for formulas, formatting, and visualization.",
 }
 
-# Core skills enabled by default on factory reset
-CORE_SKILLS = {"browser", "docx", "pdf", "pptx", "weather", "xlsx"}
+# All skills enabled by default on factory reset
+CORE_SKILLS = set(SKILLS_REGISTRY.keys())
 
 
 # ---------------------------------------------------------------------------
