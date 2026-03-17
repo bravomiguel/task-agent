@@ -426,8 +426,25 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
         request: ToolCallRequest,
         handler: Callable,
     ) -> ToolMessage | Command:
-        """Async version delegates to sync."""
-        return self.wrap_tool_call(request, lambda r: handler(r))
+        """Async version — await the handler, recover sandbox on failure."""
+        try:
+            return await handler(request)
+        except Exception as exc:
+            if not self._is_sandbox_dead_error(exc):
+                raise
+
+            new_id = self._recover_sandbox(request.state)
+            if new_id:
+                request.state["modal_sandbox_id"] = new_id
+                return await handler(request)
+
+            tool_call = request.tool_call
+            return ToolMessage(
+                content=f"Sandbox died and recovery failed: {exc}",
+                name=tool_call["name"],
+                tool_call_id=tool_call["id"],
+                status="error",
+            )
 
     def after_agent(
         self, state: ModalSandboxState, runtime: Runtime
