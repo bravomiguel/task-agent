@@ -7,19 +7,20 @@ description: Google Workspace CLI for Gmail, Calendar, Drive, Contacts, Sheets, 
 
 ## Authentication
 
-**CRITICAL: Chain exports with `&&` in the SAME execute call.** Env vars don't persist across separate execute calls.
+Before using any Google commands, set the token:
 
 ```bash
-export GOG_ACCESS_TOKEN=$(cat /workspace/.auth/google_token) && export GOG_ACCOUNT=me && gog gmail send --to recipient@example.com --subject "Hello" --body "Message"
+export GOG_ACCESS_TOKEN=$(cat /workspace/.auth/google_token)
+export GOG_ACCOUNT=me
 ```
 
-`GOG_ACCOUNT=me` is required when using access tokens. Always prefix every gog command with both exports.
+Run both exports before any gog command. `GOG_ACCOUNT=me` is required when using access tokens.
 
 ## Gmail
 
 ```bash
 # Search threads (default: last 7 days)
-export GOG_ACCESS_TOKEN=$(cat /workspace/.auth/google_token) && export GOG_ACCOUNT=me && gog gmail search 'newer_than:7d' --max 10
+gog gmail search 'newer_than:7d' --max 10
 
 # Search individual messages (not grouped by thread)
 gog gmail messages search "in:inbox from:sender@example.com" --max 20
