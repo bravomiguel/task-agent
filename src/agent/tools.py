@@ -127,7 +127,6 @@ def memory_search(
     query: str,
     max_results: int = 6,
     min_score: float = 0.35,
-    source: str = None,
     state: Annotated[dict, InjectedState] = None,
 ) -> str:
     """Mandatory recall step: semantically search memory files, session transcripts, and meeting transcripts before answering questions about prior work, decisions, dates, people, preferences, or todos; returns top snippets with path + lines.
@@ -136,8 +135,6 @@ def memory_search(
         query: Natural language description of what you're looking for.
         max_results: Maximum number of results to return (default: 6).
         min_score: Minimum relevance score threshold 0-1 (default: 0.35).
-        source: Filter by source type. Options: "memory", "session-transcripts",
-            "meeting-transcripts". Omit to search all sources.
 
     Returns:
         JSON with results array containing path, startLine, endLine, score, snippet, source.
@@ -151,7 +148,6 @@ def memory_search(
             query=query,
             max_results=max_results,
             min_score=min_score,
-            source_filter=source,
         )
         return _json.dumps(result)
     except Exception as exc:
