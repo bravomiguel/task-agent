@@ -12,8 +12,8 @@ Manage Trello boards, lists, and cards via the Trello REST API.
 Before using any Trello commands, set the credentials:
 
 ```bash
-TRELLO_KEY=$(cat /workspace/.auth/trello_key)
-TRELLO_TOKEN=$(cat /workspace/.auth/trello_token)
+TRELLO_KEY=$(cat /mnt/auth/trello_key)
+TRELLO_TOKEN=$(cat /mnt/auth/trello_token)
 ```
 
 ## Usage

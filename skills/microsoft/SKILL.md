@@ -9,7 +9,7 @@ Access Microsoft 365 services — Email (Outlook), Calendar, OneDrive, To Do tas
 
 ## Authentication
 
-Token location: `/workspace/.auth/microsoft_token`
+Token location: `/mnt/auth/microsoft_token`
 
 ## CLI Usage
 

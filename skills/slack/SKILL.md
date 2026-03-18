@@ -27,7 +27,7 @@ send_message(platform="slack", recipient="C01234567", text="As user", as_identit
 For direct Slack API calls (beyond what `send_message` provides), set the token:
 
 ```bash
-export SLACK_TOKEN=$(cat /workspace/.auth/slack_token)
+export SLACK_TOKEN=$(cat /mnt/auth/slack_token)
 ```
 
 **Note:** For sending messages, prefer `send_message` tool — it handles token resolution automatically.

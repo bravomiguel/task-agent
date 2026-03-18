@@ -12,7 +12,7 @@ Send messages and interact with Microsoft Teams via the Microsoft Graph API.
 Before using any Teams commands, set the token:
 
 ```bash
-TEAMS_TOKEN=$(cat /workspace/.auth/teams_token)
+TEAMS_TOKEN=$(cat /mnt/auth/teams_token)
 ```
 
 ## Sending Messages

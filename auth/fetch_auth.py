@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Fetch OAuth credentials from Composio for a connected service.
 
-Writes access tokens to /workspace/.auth/ for CLI tools to use.
+Writes access tokens to /mnt/auth/ for CLI tools to use.
 Run inside the sandbox before using a service's CLI tools.
 
 Usage:
-  python3 /mnt/scripts/fetch_auth.py <service>
-  python3 /mnt/scripts/fetch_auth.py google
-  python3 /mnt/scripts/fetch_auth.py github
+  python3 /mnt/auth/fetch_auth.py <service>
+  python3 /mnt/auth/fetch_auth.py google
+  python3 /mnt/auth/fetch_auth.py github
 
 Requires COMPOSIO_API_KEY and COMPOSIO_ENTITY_ID env vars.
 """
@@ -19,7 +19,7 @@ import urllib.parse
 import urllib.request
 
 COMPOSIO_API_URL = "https://backend.composio.dev/api/v3"
-AUTH_DIR = "/workspace/.auth"
+AUTH_DIR = "/mnt/auth"
 
 SERVICE_REGISTRY = {
     "google": {"slug": "googlesuper", "token_file": f"{AUTH_DIR}/google_token"},

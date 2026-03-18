@@ -12,7 +12,7 @@ Use the Notion API to create/read/update pages, data sources (databases), and bl
 Before using any Notion commands, set the token:
 
 ```bash
-NOTION_KEY=$(cat /workspace/.auth/notion_token)
+NOTION_KEY=$(cat /mnt/auth/notion_token)
 ```
 
 **Important:** The user must share target pages/databases with the integration (in Notion: click "..." on a page, then "Connect to" and select the integration).

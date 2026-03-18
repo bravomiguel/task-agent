@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """MS365 CLI — Microsoft 365 via Graph API.
 
-Reads Bearer token from /workspace/.auth/microsoft_token
-(written by python3 /mnt/scripts/fetch_auth.py microsoft).
+Reads Bearer token from /mnt/auth/microsoft_token
+(written by python3 /mnt/auth/fetch_auth.py microsoft).
 
 Covers: Mail (Outlook), Calendar, OneDrive, To Do, Contacts.
 """
@@ -17,7 +17,7 @@ import urllib.parse
 import urllib.request
 
 GRAPH_URL = "https://graph.microsoft.com/v1.0"
-TOKEN_FILE = "/workspace/.auth/microsoft_token"
+TOKEN_FILE = "/mnt/auth/microsoft_token"
 
 
 # ---------------------------------------------------------------------------
@@ -30,7 +30,7 @@ def _get_token() -> str:
             return f.read().strip()
     except FileNotFoundError:
         print(
-            json.dumps({"error": f"Token not found at {TOKEN_FILE}. Run: python3 /mnt/scripts/fetch_auth.py microsoft"}),
+            json.dumps({"error": f"Token not found at {TOKEN_FILE}. Run: python3 /mnt/auth/fetch_auth.py microsoft"}),
             file=sys.stderr,
         )
         sys.exit(1)

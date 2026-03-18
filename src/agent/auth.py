@@ -16,7 +16,7 @@ import modal
 logger = logging.getLogger(__name__)
 
 COMPOSIO_API_URL = "https://backend.composio.dev/api/v3"
-AUTH_DIR = "/workspace/.auth"
+AUTH_DIR = "/mnt/auth"
 
 # ---------------------------------------------------------------------------
 # Service registry — extend to add new services

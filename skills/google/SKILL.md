@@ -10,7 +10,7 @@ description: Google Workspace CLI for Gmail, Calendar, Drive, Contacts, Sheets, 
 Before using any Google commands, set the token:
 
 ```bash
-export GOG_ACCESS_TOKEN=$(cat /workspace/.auth/google_token)
+export GOG_ACCESS_TOKEN=$(cat /mnt/auth/google_token)
 export GOG_ACCOUNT=me
 ```
 

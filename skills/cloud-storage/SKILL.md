@@ -15,14 +15,14 @@ Before using rclone, set up the token exports for the target service:
 
 ```bash
 export RCLONE_CONFIG_DROPBOX_TYPE=dropbox
-export RCLONE_CONFIG_DROPBOX_TOKEN='{"access_token":"'$(cat /workspace/.auth/dropbox_token)'","token_type":"bearer"}'
+export RCLONE_CONFIG_DROPBOX_TOKEN='{"access_token":"'$(cat /mnt/auth/dropbox_token)'","token_type":"bearer"}'
 ```
 
 ### Box
 
 ```bash
 export RCLONE_CONFIG_BOX_TYPE=box
-export RCLONE_CONFIG_BOX_TOKEN='{"access_token":"'$(cat /workspace/.auth/box_token)'","token_type":"bearer"}'
+export RCLONE_CONFIG_BOX_TOKEN='{"access_token":"'$(cat /mnt/auth/box_token)'","token_type":"bearer"}'
 ```
 
 Run the exports before any rclone command.

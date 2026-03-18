@@ -1,7 +1,22 @@
 """Lazy Modal backend with volume commit/reload support."""
 
+import os
+
 from deepagents_cli.integrations.modal import ModalBackend
 from deepagents.backends.protocol import SandboxBackendProtocol
+
+# Token files the agent must not touch directly via file tools.
+# Only fetch_auth.py (run via execute) should write these.
+_AUTH_DIR = "/mnt/auth/"
+_AUTH_SCRIPT = "fetch_auth.py"
+
+
+def _is_auth_token(path: str) -> bool:
+    """Return True if path points to an auth token file (not the script)."""
+    if not path.startswith(_AUTH_DIR):
+        return False
+    basename = os.path.basename(path)
+    return basename != _AUTH_SCRIPT
 
 
 class LazyModalBackend(SandboxBackendProtocol):
@@ -64,11 +79,21 @@ class LazyModalBackend(SandboxBackendProtocol):
         return self._get_backend().ls_info(path)
 
     def read(self, file_path, offset=0, limit=2000):
+        if _is_auth_token(file_path):
+            raise PermissionError(
+                f"Access denied: {file_path} is a protected auth token. "
+                "Use `python3 /mnt/auth/fetch_auth.py <service>` to refresh tokens."
+            )
         if file_path.startswith("/mnt"):
             self._reload_volumes()
         return self._get_backend().read(file_path, offset, limit)
 
     def write(self, file_path, content):
+        if _is_auth_token(file_path):
+            raise PermissionError(
+                f"Access denied: {file_path} is a protected auth token. "
+                "Use `python3 /mnt/auth/fetch_auth.py <service>` to refresh tokens."
+            )
         result = self._get_backend().write(file_path, content)
         # Sync volume to persist changes immediately for other processes
         if file_path.startswith("/mnt"):
@@ -76,6 +101,11 @@ class LazyModalBackend(SandboxBackendProtocol):
         return result
 
     def edit(self, file_path, old_string, new_string, replace_all=False):
+        if _is_auth_token(file_path):
+            raise PermissionError(
+                f"Access denied: {file_path} is a protected auth token. "
+                "Use `python3 /mnt/auth/fetch_auth.py <service>` to refresh tokens."
+            )
         result = self._get_backend().edit(file_path, old_string, new_string, replace_all)
         # Sync volume to persist changes immediately for other processes
         if file_path.startswith("/mnt"):

@@ -30,7 +30,7 @@ Use the `gh` CLI to interact with GitHub repositories, issues, PRs, and CI.
 Before using any gh commands, set the token:
 
 ```bash
-export GH_TOKEN=$(cat /workspace/.auth/github_token)
+export GH_TOKEN=$(cat /mnt/auth/github_token)
 ```
 
 ## Pull Requests

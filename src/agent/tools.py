@@ -1218,7 +1218,7 @@ def _read_token_from_sandbox(sandbox, token_file: str) -> str:
         stderr = process.stderr.read()
         raise RuntimeError(
             f"Token not found at {token_file}. "
-            f"Run python3 /mnt/scripts/fetch_auth.py first. ({stderr})"
+            f"Run python3 /mnt/auth/fetch_auth.py first. ({stderr})"
         )
     return process.stdout.read().strip()
 
@@ -1375,7 +1375,7 @@ def send_message(
     except Exception as e:
         return _json.dumps({
             "status": "error",
-            "error": f"Failed to read {platform} token: {e}. Run python3 /mnt/scripts/fetch_auth.py {platform} first.",
+            "error": f"Failed to read {platform} token: {e}. Run python3 /mnt/auth/fetch_auth.py {platform} first.",
         })
 
     try:

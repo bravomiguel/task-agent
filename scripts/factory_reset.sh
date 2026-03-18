@@ -78,7 +78,7 @@ done
 
 # Step 5: Recreate empty directory structure
 echo "Creating directory structure..."
-for dir in memory session-storage session-transcripts .temp-uploads browser-profiles; do
+for dir in auth memory session-storage session-transcripts .temp-uploads browser-profiles; do
   "$MODAL" volume put user-dev "$KEEPFILE" "/$dir/.keep" --force
 done
 
@@ -90,9 +90,9 @@ echo "Restoring default config..."
 echo "Restoring default prompts..."
 "$SCRIPT_DIR/reset_prompts.sh"
 
-# Step 8: Upload scripts to volume
-echo "Uploading scripts..."
-"$MODAL" volume put user-dev "$SCRIPT_DIR/fetch_auth.py" /scripts/fetch_auth.py --force
+# Step 8: Upload auth scripts to volume
+echo "Uploading auth scripts..."
+"$MODAL" volume put user-dev "$PROJECT_DIR/auth/fetch_auth.py" /auth/fetch_auth.py --force
 
 # Step 9: Restore all skills
 echo "Restoring all skills..."
