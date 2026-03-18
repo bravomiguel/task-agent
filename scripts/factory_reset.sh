@@ -64,11 +64,31 @@ for name in ['slack_bot_token', 'slack_bot_user_id', 'slack_signing_secret', 'sl
         pass
 " 2>&1 || echo "  Warning: failed to clean vault secrets"
 
-# Step 3: Wipe LangGraph threads (local dev storage)
+# Step 3: Delete all pg_cron jobs (heartbeat, user crons, system crons)
+echo "Deleting all cron jobs..."
+"$PYTHON" -c "
+import os
+from dotenv import load_dotenv
+load_dotenv(os.path.join('$PROJECT_DIR', '.env'))
+from supabase import create_client
+sb = create_client(os.environ['SUPABASE_URL'], os.environ['SUPABASE_SERVICE_KEY'])
+jobs = sb.rpc('list_agent_crons', {'p_limit': 100, 'p_offset': 0}).execute().data or []
+for job in jobs:
+    name = job.get('jobname', '')
+    try:
+        sb.rpc('delete_agent_cron', {'job_name': name}).execute()
+        print(f'  deleted cron: {name}')
+    except Exception as e:
+        print(f'  warning: failed to delete {name}: {e}')
+if not jobs:
+    print('  no cron jobs found')
+" 2>&1 || echo "  Warning: failed to delete cron jobs"
+
+# Step 4: Wipe LangGraph threads (local dev storage)
 echo "Wiping LangGraph threads..."
 rm -rf "$PROJECT_DIR/.langgraph_api"
 
-# Step 4: Wipe everything on the volume
+# Step 5: Wipe everything on the volume
 echo "Wiping entire volume..."
 for item in $("$MODAL" volume ls user-dev / 2>/dev/null); do
   if [ "$item" = "." ] || [ "$item" = ".." ]; then continue; fi
@@ -76,29 +96,29 @@ for item in $("$MODAL" volume ls user-dev / 2>/dev/null); do
   "$MODAL" volume rm user-dev "/$item" 2>/dev/null || true
 done
 
-# Step 5: Recreate empty directory structure
+# Step 6: Recreate empty directory structure
 echo "Creating directory structure..."
 for dir in auth memory session-storage session-transcripts .temp-uploads browser-profiles; do
   "$MODAL" volume put user-dev "$KEEPFILE" "/$dir/.keep" --force
 done
 
-# Step 6: Restore default config (user + heartbeat only)
+# Step 7: Restore default config (user + heartbeat only)
 echo "Restoring default config..."
 "$MODAL" volume put user-dev "$PROJECT_DIR/config.default.json" /config.json --force
 
-# Step 7: Restore default prompts
+# Step 8: Restore default prompts
 echo "Restoring default prompts..."
 "$SCRIPT_DIR/reset_prompts.sh"
 
-# Step 8: Upload auth scripts to volume
+# Step 9: Upload auth scripts to volume
 echo "Uploading auth scripts..."
 "$MODAL" volume put user-dev "$PROJECT_DIR/auth/fetch_auth.py" /auth/fetch_auth.py --force
 
-# Step 9: Restore all skills
+# Step 10: Restore all skills
 echo "Restoring all skills..."
 "$SCRIPT_DIR/reset_skills.sh" browser cloud-storage docx gemini github google microsoft notion openai-image-gen openai-whisper-api pdf pptx slack teams trello weather xlsx
 
-# Step 10: Reset heartbeat cron
+# Step 11: Reset heartbeat cron
 echo "Resetting heartbeat cron..."
 "$PYTHON" "$SCRIPT_DIR/reset_heartbeat_cron.py"
 

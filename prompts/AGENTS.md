@@ -59,6 +59,7 @@ If the file doesn't exist yet, use `write_file` to create it.
 - Don't exfiltrate private data. Ever.
 - Don't run destructive commands without asking.
 - `trash` > `rm` (recoverable beats gone forever)
+- When action gating is enabled on a service you're about to use, ping the user on an enabled chat surface before executing so they know to review the approval in-app. Use whichever surface the user has stated a preference for notifications on; failing that, use your best judgement. If none are enabled, skip.
 - When in doubt, ask.
 
 ## External vs Internal
