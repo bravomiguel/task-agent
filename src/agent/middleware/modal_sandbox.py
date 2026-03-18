@@ -21,8 +21,8 @@ logger = logging.getLogger(__name__)
 
 modal.enable_output()
 
-# Modal image with rclone, document processing tools, and skill dependencies
-rclone_image = (
+# Sandbox base image: system tools, document processing, CLIs, and skill dependencies
+sandbox_image = (
     modal.Image.debian_slim(python_version="3.11")
     # System packages for document processing and utilities
     .apt_install(
@@ -124,7 +124,6 @@ class ModalSandboxState(AgentState):
     """Extended state schema with Modal sandbox ID."""
     modal_sandbox_id: NotRequired[str]
     session_id: NotRequired[str]
-    modal_snapshot_id: NotRequired[str]
     _skip_volume_reload: NotRequired[bool]
 
 
@@ -196,20 +195,6 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
             version=2
         )
 
-        # Check if we should restore from a snapshot
-        snapshot_id = state.get("modal_snapshot_id")
-        image = None
-        if snapshot_id:
-            try:
-                image = modal.Image.from_id(snapshot_id)
-            except Exception:
-                # Snapshot not found or expired, proceed without it
-                pass
-
-        # Use rclone image if no snapshot to restore
-        if image is None:
-            image = rclone_image
-
         # Add NODE_PATH so Node.js can find globally installed npm packages
         sandbox_env = {
             "NODE_PATH": "/usr/local/lib/node_modules",
@@ -235,7 +220,7 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
         app = modal.App.lookup("agent-sandbox", create_if_missing=True)
         sandbox = modal.Sandbox.create(
             app=app,
-            image=image,
+            image=sandbox_image,
             secrets=[platform_keys],
             workdir="/workspace",
             timeout=self._max_timeout,
@@ -326,24 +311,13 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
         return "container id" in msg and ("finished" in msg or "not found" in msg)
 
     def _recover_sandbox(self, state: dict) -> str | None:
-        """Spin up a new sandbox with snapshot restore. Returns new sandbox ID."""
+        """Spin up a new sandbox. Returns new sandbox ID."""
         try:
             session_id = state.get("session_id")
             if not session_id:
                 return None
 
             logger.info("[ModalSandbox] recovering dead sandbox for session %s", session_id)
-
-            # Restore from snapshot if available
-            snapshot_id = state.get("modal_snapshot_id")
-            image = None
-            if snapshot_id:
-                try:
-                    image = modal.Image.from_id(snapshot_id)
-                except Exception:
-                    pass
-            if image is None:
-                image = rclone_image
 
             user_volume = modal.Volume.from_name(
                 self._user_volume_name, create_if_missing=True, version=2
@@ -362,7 +336,7 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
             app = modal.App.lookup("agent-sandbox", create_if_missing=True)
             sandbox = modal.Sandbox.create(
                 app=app,
-                image=image,
+                image=sandbox_image,
                 secrets=[platform_keys],
                 workdir="/workspace",
                 timeout=self._max_timeout,
@@ -446,32 +420,3 @@ class ModalSandboxMiddleware(AgentMiddleware[ModalSandboxState, Any]):
                 status="error",
             )
 
-    def after_agent(
-        self, state: ModalSandboxState, runtime: Runtime
-    ) -> dict[str, Any] | None:
-        """Create filesystem snapshot to preserve /workspace state."""
-        import modal
-
-        sandbox_id = state.get("modal_sandbox_id")
-        if not sandbox_id:
-            return None
-
-        try:
-            # Reconnect to sandbox
-            sandbox = modal.Sandbox.from_id(sandbox_id)
-
-            # Create filesystem snapshot
-            snapshot = sandbox.snapshot_filesystem(timeout=55)
-
-            return {
-                "modal_snapshot_id": snapshot.object_id,
-            }
-        except Exception:
-            # If snapshotting fails, continue without updating snapshot
-            return None
-
-    async def aafter_agent(
-        self, state: ModalSandboxState, runtime: Runtime
-    ) -> dict[str, Any] | None:
-        """Async version delegates to sync implementation."""
-        return self.after_agent(state, runtime)
