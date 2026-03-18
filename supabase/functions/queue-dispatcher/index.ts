@@ -204,6 +204,24 @@ async function dispatchItem(item: Record<string, unknown>): Promise<{ dispatched
     runInput.channel_platform = "slack";
     runInput.channel_id = channelId;
     runInput.channel_metadata = meta;
+  } else if (source === "teams-bot") {
+    const conversationId = (meta.channel as string) ?? "";
+    const conversationType = (meta.channel_type as string) ?? "personal";
+    const isDm = conversationType === "personal";
+    const senderName = (meta.sender_name as string) ?? "";
+    const senderId = (meta.sender as string) ?? "";
+    const attrs = [
+      `type="channel-message"`,
+      `platform="teams"`,
+      `chat_id="${conversationId}"`,
+      `chat_type="${conversationType}"`,
+    ];
+    if (senderName) attrs.push(`${isDm ? "sender" : "senders"}="${senderName}"`);
+    if (senderId) attrs.push(`${isDm ? "sender_id" : "sender_ids"}="${senderId}"`);
+    message = `<system-message ${attrs.join(" ")}>\n${combinedText}\n</system-message>`;
+    runInput.channel_platform = "teams";
+    runInput.channel_id = conversationId;
+    runInput.channel_metadata = meta;
   } else if (source === "teams") {
     const chatId = (meta.chat_id as string) ?? "";
     const teamId = (meta.team_id as string) ?? "";
