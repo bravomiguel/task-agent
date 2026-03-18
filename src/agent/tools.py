@@ -1202,7 +1202,7 @@ def manage_crons(
 # Messaging (Slack, Teams)
 # ---------------------------------------------------------------------------
 
-_MSG_AUTH_DIR = "/workspace/.auth"
+_MSG_AUTH_DIR = "/mnt/auth"
 
 _MSG_TOKEN_FILES: dict[str, str] = {
     "slack": f"{_MSG_AUTH_DIR}/slack_token",
