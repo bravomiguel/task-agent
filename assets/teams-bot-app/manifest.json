@@ -1,0 +1,38 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.17/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.17",
+  "version": "1.0.0",
+  "id": "97dc3bff-b6ad-4413-a83e-10255259b48b",
+  "developer": {
+    "name": "Tasks AI",
+    "websiteUrl": "https://tasksai.app",
+    "privacyUrl": "https://tasksai.app/privacy",
+    "termsOfUseUrl": "https://tasksai.app/terms"
+  },
+  "name": {
+    "short": "Mally",
+    "full": "Mally - Your 24/7 Doer"
+  },
+  "description": {
+    "short": "Your 24/7 doer",
+    "full": "Mally is your personal AI assistant. Chat with it directly in Teams to get things done — manage emails, check calendars, search the web, create documents, and more."
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "accentColor": "#1a1a2e",
+  "bots": [
+    {
+      "botId": "97dc3bff-b6ad-4413-a83e-10255259b48b",
+      "scopes": ["personal", "team", "groupChat"],
+      "supportsFiles": false,
+      "isNotificationOnly": false,
+      "commandLists": []
+    }
+  ],
+  "permissions": ["identity", "messageTeamMembers"],
+  "validDomains": [
+    "fqasghitwlstczbsxfas.supabase.co"
+  ]
+}

@@ -5,8 +5,9 @@
  *   POST /channel-webhook/composio   — All Composio triggers (Slack, Gmail, Outlook)
  *   POST /channel-webhook/slack      — Alias for /composio (backwards compat)
  *   POST /channel-webhook/slack-bot  — Slack Events API (bot events, direct from Slack)
+ *   POST /channel-webhook/teams-bot  — Teams Bot Framework activities (chat surface)
  *   GET  /channel-webhook/teams      — Microsoft Graph subscription validation
- *   POST /channel-webhook/teams      — Microsoft Graph change notifications (Teams messages)
+ *   POST /channel-webhook/teams      — Microsoft Graph change notifications (Teams connection)
  *   POST /channel-webhook/meetings   — Meeting transcripts from Electron app
  *
  * Composio sends all triggers to a single webhook URL. The handler inspects
@@ -326,6 +327,14 @@ async function getVaultSecret(name: string): Promise<string | null> {
   if (!resp.ok) return null;
   const data = await resp.json();
   return data ?? null;
+}
+
+async function setVaultSecret(name: string, value: string): Promise<void> {
+  await fetch(`${SUPABASE_URL}/rest/v1/rpc/set_vault_secret`, {
+    method: "POST",
+    headers: supabaseHeaders(),
+    body: JSON.stringify({ p_name: name, p_secret: value }),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1337,6 +1346,191 @@ async function handleMeetings(req: Request): Promise<Response> {
 }
 
 // ---------------------------------------------------------------------------
+// Teams Bot Framework handler — receives activities from Bot Framework Service
+// ---------------------------------------------------------------------------
+
+const TEAMS_BOT_APP_ID = Deno.env.get("TEAMS_BOT_APP_ID") ?? "";
+const TEAMS_BOT_APP_SECRET = Deno.env.get("TEAMS_BOT_APP_SECRET") ?? "";
+const TEAMS_BOT_DM_DEBOUNCE_MS = 300;
+
+let _botFrameworkToken: { token: string; expiresAt: number } | null = null;
+
+/**
+ * Get a Bot Framework token for sending replies.
+ */
+async function getBotFrameworkToken(): Promise<string | null> {
+  if (_botFrameworkToken && Date.now() < _botFrameworkToken.expiresAt) {
+    return _botFrameworkToken.token;
+  }
+  try {
+    const resp = await fetch("https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "client_credentials",
+        client_id: TEAMS_BOT_APP_ID,
+        client_secret: TEAMS_BOT_APP_SECRET,
+        scope: "https://api.botframework.com/.default",
+      }),
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    _botFrameworkToken = {
+      token: data.access_token,
+      expiresAt: Date.now() + (data.expires_in - 60) * 1000,
+    };
+    return data.access_token;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Handle Teams Bot Framework activities.
+ * Bot Framework sends JSON activities with type, text, from, conversation, serviceUrl.
+ */
+async function handleTeamsBot(req: Request): Promise<Response> {
+  const rawBody = await req.text();
+
+  let activity: Record<string, unknown>;
+  try {
+    activity = JSON.parse(rawBody);
+  } catch {
+    return new Response("Invalid JSON", { status: 400 });
+  }
+
+  const activityType = activity.type as string;
+
+  // Respond to conversationUpdate (bot added to conversation) — no-op
+  if (activityType === "conversationUpdate") {
+    return new Response("", { status: 200 });
+  }
+
+  // Only process message activities
+  if (activityType !== "message") {
+    return new Response("", { status: 200 });
+  }
+
+  const text = (activity.text as string ?? "").trim();
+  if (!text) {
+    return new Response("", { status: 200 });
+  }
+
+  const from = activity.from as Record<string, unknown> | undefined;
+  const senderId = (from?.aadObjectId as string) ?? (from?.id as string) ?? "unknown";
+  const senderName = (from?.name as string) ?? senderId;
+  const conversation = activity.conversation as Record<string, unknown> | undefined;
+  const conversationId = (conversation?.id as string) ?? "unknown";
+  const conversationType = (conversation?.conversationType as string) ?? "personal";
+  const serviceUrl = (activity.serviceUrl as string) ?? "";
+  const activityId = (activity.id as string) ?? "";
+
+  // Block non-owner DMs
+  if (conversationType === "personal") {
+    const ownerId = await getVaultSecret("teams_bot_owner_id");
+    if (ownerId && senderId !== ownerId) {
+      // Send rejection reply via Bot Framework
+      const token = await getBotFrameworkToken();
+      if (token && serviceUrl) {
+        await fetch(`${serviceUrl}v3/conversations/${encodeURIComponent(conversationId)}/activities`, {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            type: "message",
+            text: "Sorry, this is a private assistant. Only the owner can message me directly.",
+          }),
+        });
+      }
+      return new Response("", { status: 200 });
+    }
+
+    // Store owner ID on first DM if not set
+    if (!ownerId) {
+      await setVaultSecret("teams_bot_owner_id", senderId);
+    }
+  }
+
+  // Store serviceUrl in vault for outbound messaging
+  await setVaultSecret("teams_bot_service_url", serviceUrl);
+
+  // Buffer and flush through the inbound queue
+  const bufferKey = `teams:${conversationId}`;
+  const metadata = {
+    platform: "teams",
+    channel: conversationId,
+    channel_type: conversationType,
+    sender: senderId,
+    activity_id: activityId,
+    service_url: serviceUrl,
+  };
+
+  // Insert into inbound_buffer
+  const bufferRow = {
+    source: "teams-bot",
+    buffer_key: bufferKey,
+    sender: senderId,
+    sender_name: senderName,
+    message_text: text,
+    metadata,
+  };
+
+  const bufferResp = await fetch(`${SUPABASE_URL}/rest/v1/inbound_buffer`, {
+    method: "POST",
+    headers: {
+      ...supabaseHeaders(),
+      "Prefer": "return=representation,resolution=ignore-duplicates",
+    },
+    body: JSON.stringify(bufferRow),
+  });
+
+  if (!bufferResp.ok) {
+    console.error(`[channel-webhook/teams-bot] buffer insert failed: ${bufferResp.status}`);
+  }
+
+  // Flush after debounce
+  setTimeout(async () => {
+    try {
+      const flushResp = await fetch(`${SUPABASE_URL}/rest/v1/rpc/flush_inbound_buffer`, {
+        method: "POST",
+        headers: supabaseHeaders(),
+        body: JSON.stringify({ p_buffer_key: bufferKey }),
+      });
+      if (!flushResp.ok) return;
+      const flushed = await flushResp.json();
+      if (!flushed || flushed.length === 0) return;
+
+      const combined = flushed.map((r: Record<string, unknown>) => r.message_text).join("\n");
+
+      // Insert into inbound_queue
+      await fetch(`${SUPABASE_URL}/rest/v1/inbound_queue`, {
+        method: "POST",
+        headers: {
+          ...supabaseHeaders(),
+          "Prefer": "return=representation",
+        },
+        body: JSON.stringify({
+          source: "teams-bot",
+          buffer_key: bufferKey,
+          combined_text: combined,
+          metadata: {
+            ...metadata,
+            sender_name: senderName,
+            flushed_count: flushed.length,
+          },
+        }),
+      });
+    } catch (e) {
+      console.error("[channel-webhook/teams-bot] flush error:", e);
+    }
+  }, TEAMS_BOT_DM_DEBOUNCE_MS);
+
+  return new Response("", { status: 200 });
+}
+
+// ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
 
@@ -1359,6 +1553,9 @@ serve(async (req: Request) => {
 
   if (path.endsWith("/slack-bot")) {
     return handleSlackBot(req);
+  }
+  if (path.endsWith("/teams-bot")) {
+    return handleTeamsBot(req);
   }
   if (path.endsWith("/composio") || path.endsWith("/slack")) {
     return handleComposio(req);

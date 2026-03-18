@@ -801,6 +801,7 @@ def _handle_chat_surfaces(action: str, patch_str: str | None) -> str:
             "display_name": "Teams (chat with user directly)",
             "vault_key": "teams_bot_app_id",
             "install_url": f"{supabase_url}/functions/v1/teams-bot-oauth/install",
+            "sideload_path": "/mnt/assets/teams-bot-app.zip",
             "disconnect_fn": lambda: _disconnect_teams_chat_surface(),
         },
         "telegram": {
@@ -843,8 +844,27 @@ def _handle_chat_surfaces(action: str, patch_str: str | None) -> str:
 
             cfg = CHAT_SURFACES[surface]
             if desired == "enabled":
-                if not cfg["install_url"]:
+                if not cfg.get("install_url") and not cfg.get("sideload_path"):
                     results[surface] = {"error": f"{cfg['display_name']} is not configured on this instance."}
+                elif cfg.get("sideload_path"):
+                    # Sideload approach (Teams): offer zip download, OAuth as fallback
+                    result_entry = {
+                        "status": "setup_required",
+                        "method": "sideload",
+                        "sideload_path": cfg["sideload_path"],
+                        "message": (
+                            f"Download the app package and upload it in Teams: "
+                            f"Apps > Manage your apps > Upload a custom app. "
+                            f"Once installed, you can DM me directly in Teams."
+                        ),
+                    }
+                    if cfg.get("install_url"):
+                        result_entry["fallback_install_url"] = cfg["install_url"]
+                        result_entry["fallback_message"] = (
+                            "If your organization doesn't allow custom app uploads, "
+                            "use this link instead (requires admin consent)."
+                        )
+                    results[surface] = result_entry
                 else:
                     results[surface] = {
                         "status": "setup_required",
