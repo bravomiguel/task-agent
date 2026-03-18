@@ -49,13 +49,13 @@ SERVICE_REGISTRY: dict[str, dict[str, Any]] = {
         "key_file": f"{AUTH_DIR}/trello_key",
     },
     "slack": {
-        "display_name": "Slack",
+        "display_name": "Slack (act as user)",
         "composio_slug": "slack",
         "auth_config_id": "ac_gB4gJrTfl1Rh",
         "token_file": f"{AUTH_DIR}/slack_token",
     },
     "teams": {
-        "display_name": "Microsoft Teams",
+        "display_name": "Microsoft Teams (act as user)",
         "composio_slug": "microsoft_teams",
         "auth_config_id": "ac_XWmB4dkUlNsK",
         "token_file": f"{AUTH_DIR}/teams_token",

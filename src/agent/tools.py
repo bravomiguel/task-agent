@@ -651,16 +651,16 @@ def manage_config(
     Use key parameter to read/write a specific section instead of the full config.
 
     - **user**: User profile (timezone, expandable). Timezone auto-syncs to USER.md.
-    - **connections**: External service integrations (Google, GitHub, Slack, etc.).
+    - **connections**: External service integrations you act on behalf of the user (Google, GitHub, Slack, etc.).
       GET returns all available services with enabled/disabled status (live from Composio).
       PATCH to enable starts OAuth flow and returns auth URL. PATCH to disable disconnects.
       Triggers are automatically set up/torn down when connections are enabled/disabled.
-    - **chat_surfaces**: Chat platforms where the user can chat with you (Slack, Teams, etc.).
+    - **chat_surfaces**: Chat platforms where you can chat with the user directly as the assistant (Slack, Teams, Telegram, Whatsapp).
       GET returns all available surfaces with enabled/disabled status.
       PATCH to enable returns setup instructions. PATCH to disable removes credentials.
     - **inbound**: Inbound event toggles per platform (slack, gmail, outlook, meetings).
     - **heartbeat**: Heartbeat frequency and active hours.
-    - **action_gating**: Toggle user approval for write/destructive actions on external services.
+    - **action_gating**: Toggle user approval for write/destructive actions on connections (i.e. external services).
       Per-service toggles (google, github, notion, trello, slack, teams, microsoft, browser).
       PATCH '{"action_gating": {"services": {"github": false}}}' to disable gating for GitHub.
       PATCH '{"action_gating": {"enabled": false}}' to disable all action gating.
@@ -792,25 +792,25 @@ def _handle_chat_surfaces(action: str, patch_str: str | None) -> str:
 
     CHAT_SURFACES = {
         "slack": {
-            "display_name": "Slack",
+            "display_name": "Slack (message user as assistant)",
             "vault_key": "slack_bot_token",
             "install_url": f"{supabase_url}/functions/v1/slack-oauth/install",
             "disconnect_fn": disconnect_slack_chat_surface,
         },
         "teams": {
-            "display_name": "Teams",
+            "display_name": "Teams (message user as assistant)",
             "vault_key": "teams_bot_app_id",
             "install_url": f"{supabase_url}/functions/v1/teams-bot-oauth/install",
             "disconnect_fn": lambda: _disconnect_teams_chat_surface(),
         },
         "telegram": {
-            "display_name": "Telegram",
+            "display_name": "Telegram (message user as assistant)",
             "vault_key": "telegram_owner_chat_id",
             "install_url": f"https://t.me/{telegram_bot_name}" if telegram_bot_name else "",
             "disconnect_fn": lambda: _disconnect_telegram_chat_surface(),
         },
         "whatsapp": {
-            "display_name": "WhatsApp",
+            "display_name": "WhatsApp (message user as assistant)",
             "vault_key": "whatsapp_owner_jid",
             "install_url": f"{whatsapp_bridge_url}/qr" if whatsapp_bridge_url else "",
             "disconnect_fn": lambda: _disconnect_whatsapp_chat_surface(whatsapp_bridge_url),

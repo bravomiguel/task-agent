@@ -188,16 +188,16 @@ class RuntimeContextMiddleware(AgentMiddleware[RuntimeContextState, Any]):
             return
 
         fetch_auth_line = (
-            "Before using a connected service, fetch fresh credentials:\n"
+            "Before using a connection, fetch fresh credentials:\n"
             "  `python3 /mnt/auth/fetch_auth.py <service>`\n"
             "Example: `python3 /mnt/auth/fetch_auth.py google`\n"
             "If you get a 401 error, re-run the script to refresh the token.\n"
         )
         config_lines = (
             "Use `manage_config` to discover and manage:\n"
-            "- key `\"connections\"` — all available services (enable/disable)\n"
+            "- key `\"connections\"` — external service integrations you act on behalf of the user (enable/disable)\n"
             "- key `\"inbound\"` — inbound event sources (Slack, Gmail, Outlook, Meetings)\n"
-            "- key `\"chat_surfaces\"` — chat platforms where users can message you (Slack)\n"
+            "- key `\"chat_surfaces\"` — platforms where you can chat with the user directly as the assistant (Slack, Teams, Telegram, Whatsapp). Not to be confused with Slack and Teams connections which let you message / act **as the user**.\n"
             "- key `\"skills\"` — all available skills (enable/disable)\n"
         )
         browser_fallback = (
@@ -208,16 +208,17 @@ class RuntimeContextMiddleware(AgentMiddleware[RuntimeContextState, Any]):
 
         if not accounts:
             section = (
-                "\n\n## Connected Accounts\n\n"
-                "No external services connected.\n\n"
+                "\n\n## Connections\n\n"
+                "No connections enabled. Connections are external service integrations you act on behalf of the user.\n\n"
                 f"{config_lines}\n"
                 f"{browser_fallback}"
             )
         else:
             names = [a.get("display_name") or a.get("service") for a in accounts]
             section = (
-                "\n\n## Connected Accounts\n\n"
-                f"The following services are connected: {', '.join(names)}.\n\n"
+                "\n\n## Connections\n\n"
+                "Connections are external service integrations you act on behalf of the user.\n\n"
+                f"Enabled: {', '.join(names)}.\n\n"
                 f"{fetch_auth_line}\n"
                 f"{config_lines}\n"
                 f"{browser_fallback}"
