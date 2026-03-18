@@ -655,7 +655,7 @@ def manage_config(
       GET returns all available services with enabled/disabled status (live from Composio).
       PATCH to enable starts OAuth flow and returns auth URL. PATCH to disable disconnects.
       Triggers are automatically set up/torn down when connections are enabled/disabled.
-    - **chat_surfaces**: Chat platforms where you can chat with the user directly as the assistant (Slack, Teams, Telegram, Whatsapp).
+    - **chat_surfaces**: Chat platforms where you can chat with the user directly (Slack, Teams, Telegram, Whatsapp).
       GET returns all available surfaces with enabled/disabled status.
       PATCH to enable returns setup instructions. PATCH to disable removes credentials.
     - **inbound**: Inbound event toggles per platform (slack, gmail, outlook, meetings).
@@ -792,25 +792,25 @@ def _handle_chat_surfaces(action: str, patch_str: str | None) -> str:
 
     CHAT_SURFACES = {
         "slack": {
-            "display_name": "Slack (message user as assistant)",
+            "display_name": "Slack (chat with user directly)",
             "vault_key": "slack_bot_token",
             "install_url": f"{supabase_url}/functions/v1/slack-oauth/install",
             "disconnect_fn": disconnect_slack_chat_surface,
         },
         "teams": {
-            "display_name": "Teams (message user as assistant)",
+            "display_name": "Teams (chat with user directly)",
             "vault_key": "teams_bot_app_id",
             "install_url": f"{supabase_url}/functions/v1/teams-bot-oauth/install",
             "disconnect_fn": lambda: _disconnect_teams_chat_surface(),
         },
         "telegram": {
-            "display_name": "Telegram (message user as assistant)",
+            "display_name": "Telegram (chat with user directly)",
             "vault_key": "telegram_owner_chat_id",
             "install_url": f"https://t.me/{telegram_bot_name}" if telegram_bot_name else "",
             "disconnect_fn": lambda: _disconnect_telegram_chat_surface(),
         },
         "whatsapp": {
-            "display_name": "WhatsApp (message user as assistant)",
+            "display_name": "WhatsApp (chat with user directly)",
             "vault_key": "whatsapp_owner_jid",
             "install_url": f"{whatsapp_bridge_url}/qr" if whatsapp_bridge_url else "",
             "disconnect_fn": lambda: _disconnect_whatsapp_chat_surface(whatsapp_bridge_url),
@@ -1473,10 +1473,10 @@ def send_message(
             thread_ts from the inbound channel-message to keep the conversation
             in the same thread.
         via: (Slack only) How to send the message:
-            - "chat_surface" — sends as the assistant app (set up via manage_config key="chat_surfaces").
+            - "chat_surface" — sends as you (set up via manage_config key="chat_surfaces").
               This is the default and preferred option.
             - "connection" — sends as the user themselves via their OAuth token.
-              **SENSITIVE**: This posts as the actual user, not the assistant. Always get
+              **SENSITIVE**: This posts as the actual user, not as you. Always get
               explicit user approval before using this option. Never assume the user wants
               messages sent under their name.
 

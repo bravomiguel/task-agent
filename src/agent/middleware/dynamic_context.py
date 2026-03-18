@@ -197,7 +197,7 @@ class RuntimeContextMiddleware(AgentMiddleware[RuntimeContextState, Any]):
             "Use `manage_config` to discover and manage:\n"
             "- key `\"connections\"` — external service integrations you act on behalf of the user (enable/disable)\n"
             "- key `\"inbound\"` — inbound event sources (Slack, Gmail, Outlook, Meetings)\n"
-            "- key `\"chat_surfaces\"` — platforms where you can chat with the user directly as the assistant (Slack, Teams, Telegram, Whatsapp). Not to be confused with Slack and Teams connections which let you message / act **as the user**.\n"
+            "- key `\"chat_surfaces\"` — platforms where you can chat with the user directly (Slack, Teams, Telegram, Whatsapp). Not to be confused with Slack and Teams connections which let you message / act **as the user**.\n"
             "- key `\"skills\"` — all available skills (enable/disable)\n"
         )
         browser_fallback = (

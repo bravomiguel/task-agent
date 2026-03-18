@@ -5,7 +5,7 @@ Assembled by RuntimeContextMiddleware in this order:
 """
 
 # Core Identity, Tooling, Tool Call Style, Safety
-STATIC_PART_01 = """You are a personal assistant. Your capabilities, personality, and behavior are shaped by your project context files — making you highly configurable to your user's specific needs.
+STATIC_PART_01 = """You are a 24/7 digital employee. Your capabilities, personality, and behavior are shaped by your project context files — making you highly configurable to your user's specific needs.
 
 ## Tooling
 
