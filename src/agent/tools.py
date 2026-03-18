@@ -127,7 +127,6 @@ def memory_search(
     query: str,
     max_results: int = 6,
     min_score: float = 0.35,
-    source: str = None,
     state: Annotated[dict, InjectedState] = None,
 ) -> str:
     """Mandatory recall step: semantically search memory files, session transcripts, and meeting transcripts before answering questions about prior work, decisions, dates, people, preferences, or todos; returns top snippets with path + lines.
@@ -136,8 +135,6 @@ def memory_search(
         query: Natural language description of what you're looking for.
         max_results: Maximum number of results to return (default: 6).
         min_score: Minimum relevance score threshold 0-1 (default: 0.35).
-        source: Filter by source type. Options: "memory", "session-transcripts",
-            "meeting-transcripts". Omit to search all sources.
 
     Returns:
         JSON with results array containing path, startLine, endLine, score, snippet, source.
@@ -151,7 +148,6 @@ def memory_search(
             query=query,
             max_results=max_results,
             min_score=min_score,
-            source_filter=source,
         )
         return _json.dumps(result)
     except Exception as exc:
@@ -651,7 +647,7 @@ def manage_config(
 ) -> str:
     """View or update user configuration.
 
-    Supports these config keys: user, heartbeat, action_gating, skills, channels, connections, chat_surfaces.
+    Supports these config keys: user, heartbeat, action_gating, skills, inbound, connections, chat_surfaces.
     Use key parameter to read/write a specific section instead of the full config.
 
     - **user**: User profile (timezone, expandable). Timezone auto-syncs to USER.md.
@@ -662,7 +658,7 @@ def manage_config(
     - **chat_surfaces**: Chat platforms where the user can chat with you (Slack, Teams, etc.).
       GET returns all available surfaces with enabled/disabled status.
       PATCH to enable returns setup instructions. PATCH to disable removes credentials.
-    - **channels**: Inbound event toggles per platform (slack, teams, gmail, outlook).
+    - **inbound**: Inbound event toggles per platform (slack, gmail, outlook, meetings).
     - **heartbeat**: Heartbeat frequency and active hours.
     - **action_gating**: Toggle user approval for write/destructive actions on external services.
       Per-service toggles (google, github, notion, trello, slack, teams, microsoft, browser).
@@ -678,7 +674,7 @@ def manage_config(
         patch: JSON string for patch action.
             For user: '{"user": {"timezone": "Europe/London"}}'
             For skills: '{"skills": {"browser": {"enabled": true}}}'
-            For channels: '{"channels": {"gmail": true}}'
+            For inbound: '{"inbound": {"gmail": true}}'
             For action_gating: '{"action_gating": {"services": {"github": false}}}'
             For connections: '{"google": "enabled"}' or '{"slack": "disabled"}'
             For chat_surfaces: '{"slack": "enabled"}' or '{"slack": "disabled"}'
@@ -697,8 +693,8 @@ def manage_config(
         # --- Live keys (not stored in config.json) ---
         if key == "connections":
             return _handle_connections(action, patch)
-        if key == "channels":
-            return _handle_channels(action, patch)
+        if key == "inbound":
+            return _handle_inbound(action, patch)
         if key == "skills":
             return _handle_skills(action, patch, sandbox_id)
         if key == "chat_surfaces":
@@ -786,20 +782,49 @@ def _handle_connections(action: str, patch_str: str | None) -> str:
 # -- Chat surfaces handler (vault-backed) --
 
 def _handle_chat_surfaces(action: str, patch_str: str | None) -> str:
-    from agent.auth import (
-        connect_slack_bot,
-        disconnect_slack_bot,
-        vault_get_secret,
-    )
+    import os
+    from agent.auth import disconnect_slack_chat_surface, vault_get_secret
+
+    supabase_url = os.environ.get("SUPABASE_URL", "")
+
+    telegram_bot_name = os.environ.get("TELEGRAM_BOT_NAME", "")
+    whatsapp_bridge_url = os.environ.get("WHATSAPP_BRIDGE_URL", "")
+
+    CHAT_SURFACES = {
+        "slack": {
+            "display_name": "Slack",
+            "vault_key": "slack_bot_token",
+            "install_url": f"{supabase_url}/functions/v1/slack-oauth/install",
+            "disconnect_fn": disconnect_slack_chat_surface,
+        },
+        "teams": {
+            "display_name": "Teams",
+            "vault_key": "teams_bot_app_id",
+            "install_url": f"{supabase_url}/functions/v1/teams-bot-oauth/install",
+            "disconnect_fn": lambda: _disconnect_teams_chat_surface(),
+        },
+        "telegram": {
+            "display_name": "Telegram",
+            "vault_key": "telegram_owner_chat_id",
+            "install_url": f"https://t.me/{telegram_bot_name}" if telegram_bot_name else "",
+            "disconnect_fn": lambda: _disconnect_telegram_chat_surface(),
+        },
+        "whatsapp": {
+            "display_name": "WhatsApp",
+            "vault_key": "whatsapp_owner_jid",
+            "install_url": f"{whatsapp_bridge_url}/qr" if whatsapp_bridge_url else "",
+            "disconnect_fn": lambda: _disconnect_whatsapp_chat_surface(whatsapp_bridge_url),
+        },
+    }
 
     if action == "get":
         result = {}
-        # Slack bot
-        bot_token = vault_get_secret("slack_bot_token")
-        result["slack"] = {
-            "display_name": "Slack",
-            "status": "enabled" if bot_token else "disabled",
-        }
+        for name, cfg in CHAT_SURFACES.items():
+            token = vault_get_secret(cfg["vault_key"])
+            result[name] = {
+                "display_name": cfg["display_name"],
+                "status": "enabled" if token else "disabled",
+            }
         return _json.dumps(result)
 
     elif action == "patch":
@@ -812,29 +837,60 @@ def _handle_chat_surfaces(action: str, patch_str: str | None) -> str:
 
         results = {}
         for surface, desired in patch_data.items():
-            if surface == "slack":
-                if isinstance(desired, dict):
-                    # Phase 2: credentials provided
-                    result = connect_slack_bot(
-                        token=desired.get("token"),
-                        signing_secret=desired.get("signing_secret"),
-                        owner_slack_id=desired.get("owner_slack_id"),
-                    )
-                    results[surface] = result
-                elif desired == "enabled":
-                    # Phase 1: return setup instructions
-                    result = connect_slack_bot(token=None)
-                    results[surface] = result
-                elif desired == "disabled":
-                    result = disconnect_slack_bot()
-                    results[surface] = result
+            if surface not in CHAT_SURFACES:
+                results[surface] = {"error": f"Unknown chat surface '{surface}'. Available: {', '.join(CHAT_SURFACES)}"}
+                continue
+
+            cfg = CHAT_SURFACES[surface]
+            if desired == "enabled":
+                if not cfg["install_url"]:
+                    results[surface] = {"error": f"{cfg['display_name']} is not configured on this instance."}
                 else:
-                    results[surface] = {"error": f"Invalid value '{desired}'."}
+                    results[surface] = {
+                        "status": "setup_required",
+                        "install_url": cfg["install_url"],
+                        "message": (
+                            f"To set up {cfg['display_name']} so you can chat with me there, "
+                            f"open this link and follow the prompts. "
+                            f"Once done, come back and let me know."
+                        ),
+                    }
+            elif desired == "disabled":
+                results[surface] = cfg["disconnect_fn"]()
             else:
-                results[surface] = {"error": f"Unknown chat surface '{surface}'."}
+                results[surface] = {"error": f"Invalid value '{desired}'. Use 'enabled' or 'disabled'."}
         return _json.dumps(results)
 
     return f"Error: unknown action '{action}'."
+
+
+def _disconnect_teams_chat_surface() -> dict:
+    from agent.auth import vault_delete_secret
+    for key in ["teams_bot_app_id", "teams_bot_app_secret", "teams_bot_tenant_id"]:
+        vault_delete_secret(key)
+    return {"status": "disconnected", "service": "teams"}
+
+
+def _disconnect_telegram_chat_surface() -> dict:
+    from agent.auth import vault_delete_secret
+    for key in ["telegram_owner_chat_id", "telegram_owner_user_id", "telegram_owner_name"]:
+        vault_delete_secret(key)
+    return {"status": "disconnected", "service": "telegram"}
+
+
+def _disconnect_whatsapp_chat_surface(bridge_url: str) -> dict:
+    import httpx
+    # Call bridge disconnect endpoint to logout + clear vault
+    if bridge_url:
+        try:
+            httpx.post(f"{bridge_url}/disconnect", timeout=10)
+        except Exception:
+            pass
+    # Also clean vault directly as fallback
+    from agent.auth import vault_delete_secret
+    for key in ["whatsapp_auth_state", "whatsapp_owner_jid"]:
+        vault_delete_secret(key)
+    return {"status": "disconnected", "service": "whatsapp"}
 
 
 # -- Skills handler (volume-backed) --
@@ -893,9 +949,9 @@ def _handle_skills(action: str, patch_str: str | None, sandbox_id: str) -> str:
     return f"Error: unknown action '{action}'."
 
 
-# -- Channels handler (Composio triggers) --
+# -- Inbound handler (Composio triggers + meetings) --
 
-def _handle_channels(action: str, patch_str: str | None) -> str:
+def _handle_inbound(action: str, patch_str: str | None) -> str:
     from agent.auth import (
         TRIGGER_REGISTRY,
         list_connected_services,
@@ -907,16 +963,49 @@ def _handle_channels(action: str, patch_str: str | None) -> str:
     )
     import httpx
 
-    # Map platform names to services that have triggers
+    # Map platform names to services that have Composio triggers
     # slack → slack, gmail → google, outlook → microsoft
-    CHANNEL_TO_SERVICE = {
+    TRIGGER_SOURCES = {
         "slack": "slack",
         "gmail": "google",
         "outlook": "microsoft",
     }
 
+    # Sources managed via Graph API subscriptions
+    GRAPH_SOURCES = {"teams"}
+
+    # Sources managed via vault secret (not Composio triggers)
+    VAULT_SOURCES = {"meetings"}
+
+    ALL_SOURCES = set(TRIGGER_SOURCES) | GRAPH_SOURCES | VAULT_SOURCES
+
+    def _get_vault_inbound_config(sandbox_id: str | None) -> dict:
+        """Read inbound_sources vault secret as JSON dict."""
+        try:
+            from agent.modal_backend import _get_supabase
+            sb = _get_supabase()
+            result = sb.rpc("get_vault_secret", {"secret_name": "inbound_sources"}).execute()
+            raw = result.data
+            if raw:
+                return _json.loads(raw)
+        except Exception:
+            pass
+        return {}
+
+    def _set_vault_inbound_config(config: dict) -> None:
+        """Write inbound_sources vault secret as JSON."""
+        try:
+            from agent.modal_backend import _get_supabase
+            sb = _get_supabase()
+            sb.rpc("upsert_vault_secret", {
+                "secret_name": "inbound_sources",
+                "secret_value": _json.dumps(config),
+            }).execute()
+        except Exception as e:
+            logger.warning("[manage_config] vault write failed: %s", e)
+
     if action == "get":
-        # Check which triggers are active
+        # Check which Composio triggers are active
         try:
             from agent.auth import _composio_headers, COMPOSIO_API_URL
             resp = httpx.get(
@@ -934,11 +1023,10 @@ def _handle_channels(action: str, patch_str: str | None) -> str:
         active_slugs = {(t.get("trigger_slug") or "").upper() for t in active}
 
         result = {}
-        for channel, service in CHANNEL_TO_SERVICE.items():
+        for source, service in TRIGGER_SOURCES.items():
             trigger_slugs = TRIGGER_REGISTRY.get(service, [])
-            # Channel is enabled if any of its triggers are active
             has_active = any(s.upper() in active_slugs for s in trigger_slugs)
-            result[channel] = {"enabled": has_active}
+            result[source] = {"enabled": has_active}
 
         # Teams — check for active Graph subscriptions (not Composio triggers)
         teams_enabled = False
@@ -957,6 +1045,14 @@ def _handle_channels(action: str, patch_str: str | None) -> str:
             pass
         result["teams"] = {"enabled": teams_enabled}
 
+        # Meetings — read from vault
+        vault_config = _get_vault_inbound_config(None)
+        meetings_enabled = vault_config.get("meetings", False)
+        result["meetings"] = {
+            "enabled": meetings_enabled,
+            "app_installed": None,  # TODO: detect whether Electron app is installed
+        }
+
         return _json.dumps(result)
 
     elif action == "patch":
@@ -967,21 +1063,19 @@ def _handle_channels(action: str, patch_str: str | None) -> str:
         except _json.JSONDecodeError as e:
             return f"Error: invalid JSON: {e}"
 
-        all_channels = set(CHANNEL_TO_SERVICE) | {"teams"}
-
         results = {}
-        for channel, desired in patch_data.items():
-            if channel not in all_channels:
-                results[channel] = {"error": f"Unknown channel '{channel}'. Available: {', '.join(sorted(all_channels))}"}
+        for source, desired in patch_data.items():
+            if source not in ALL_SOURCES:
+                results[source] = {"error": f"Unknown source '{source}'. Available: {', '.join(sorted(ALL_SOURCES))}"}
                 continue
 
             enable = desired if isinstance(desired, bool) else desired.get("enabled") if isinstance(desired, dict) else None
             if not isinstance(enable, bool):
-                results[channel] = {"error": "Use true or false."}
+                results[source] = {"error": "Use true or false."}
                 continue
 
             # Teams — toggle via Graph subscriptions (not Composio triggers)
-            if channel == "teams":
+            if source == "teams":
                 try:
                     import os
                     supabase_url = os.environ.get("SUPABASE_URL", "")
@@ -993,31 +1087,63 @@ def _handle_channels(action: str, patch_str: str | None) -> str:
                         timeout=30,
                     )
                     if resp.status_code == 200:
-                        results[channel] = {"enabled": enable}
+                        results[source] = {"enabled": enable}
                     else:
-                        results[channel] = {"error": f"Teams {endpoint} failed: {resp.status_code} {resp.text[:200]}"}
+                        results[source] = {"error": f"Teams {endpoint} failed: {resp.status_code} {resp.text[:200]}"}
                 except Exception as e:
-                    results[channel] = {"error": str(e)}
+                    results[source] = {"error": str(e)}
                 continue
 
-            service = CHANNEL_TO_SERVICE[channel]
+            # Meetings — toggle via vault secret
+            if source == "meetings":
+                vault_config = _get_vault_inbound_config(None)
+                vault_config["meetings"] = enable
+                _set_vault_inbound_config(vault_config)
+                result_entry = {
+                    "enabled": enable,
+                    "app_installed": None,  # TODO: detect whether Electron app is installed; surface DMG/install link if not
+                }
+                results[source] = result_entry
+                continue
+
+            # Teams — toggle via Graph subscriptions
+            if source == "teams":
+                try:
+                    import os
+                    supabase_url = os.environ.get("SUPABASE_URL", "")
+                    svc_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+                    endpoint = "subscribe" if enable else "unsubscribe"
+                    resp = httpx.post(
+                        f"{supabase_url}/functions/v1/teams-subscriptions/{endpoint}",
+                        headers={"Authorization": f"Bearer {svc_key}"},
+                        timeout=30,
+                    )
+                    if resp.status_code == 200:
+                        results[source] = {"enabled": enable}
+                    else:
+                        results[source] = {"error": f"Teams {endpoint} failed: {resp.status_code} {resp.text[:200]}"}
+                except Exception as e:
+                    results[source] = {"error": str(e)}
+                continue
+
+            # Composio trigger sources (slack, gmail, outlook)
+            service = TRIGGER_SOURCES[source]
 
             if enable:
-                # Need the connected account ID to set up triggers
                 try:
                     accounts = _list_composio_accounts()
                     svc_config = SERVICE_REGISTRY[service]
                     acct = _find_account_by_slug(accounts, svc_config["composio_slug"])
                     if not acct or acct.get("status") != "ACTIVE":
-                        results[channel] = {"error": f"Connection '{service}' must be enabled first."}
+                        results[source] = {"error": f"Connection '{service}' must be enabled first."}
                         continue
                     trigger_results = setup_triggers(service, acct["id"])
-                    results[channel] = {"enabled": True, "triggers": trigger_results}
+                    results[source] = {"enabled": True, "triggers": trigger_results}
                 except Exception as e:
-                    results[channel] = {"error": str(e)}
+                    results[source] = {"error": str(e)}
             else:
                 trigger_results = teardown_triggers(service)
-                results[channel] = {"enabled": False, "triggers": trigger_results}
+                results[source] = {"enabled": False, "triggers": trigger_results}
 
         return _json.dumps(results)
 

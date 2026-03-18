@@ -250,11 +250,11 @@ def sync_memory_chunks(
     files_to_index: list[tuple[str, str]] = []  # (path, meta_hash)
 
     for path, meta in files.items():
-        meta_hash = hashlib.md5(
-            f"{meta['mtime']}:{meta['size']}".encode()
+        content_hash = hashlib.md5(
+            meta["content"].encode()
         ).hexdigest()
-        if path not in indexed_meta or indexed_meta[path] != meta_hash:
-            files_to_index.append((path, meta_hash))
+        if path not in indexed_meta or indexed_meta[path] != content_hash:
+            files_to_index.append((path, content_hash))
 
     if not files_to_index and not files_to_delete:
         return {

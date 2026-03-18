@@ -196,7 +196,7 @@ class RuntimeContextMiddleware(AgentMiddleware[RuntimeContextState, Any]):
         config_lines = (
             "Use `manage_config` to discover and manage:\n"
             "- key `\"connections\"` — all available services (enable/disable)\n"
-            "- key `\"channels\"` — inbound event streams (Slack, Gmail, Outlook)\n"
+            "- key `\"inbound\"` — inbound event sources (Slack, Gmail, Outlook, Meetings)\n"
             "- key `\"chat_surfaces\"` — chat platforms where users can message you (Slack)\n"
             "- key `\"skills\"` — all available skills (enable/disable)\n"
         )
