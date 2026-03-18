@@ -59,8 +59,19 @@ If the file doesn't exist yet, use `write_file` to create it.
 - Don't exfiltrate private data. Ever.
 - Don't run destructive commands without asking.
 - `trash` > `rm` (recoverable beats gone forever)
-- When action gating is enabled on a service you're about to use, ping the user on an enabled chat surface before executing so they know to review the approval in-app. Use whichever surface the user has stated a preference for notifications on; failing that, use your best judgement. If none are enabled, skip.
 - When in doubt, ask.
+
+## Notifications
+
+When you need to notify the user (e.g. task complete, something requires attention):
+
+1. **Chat surface** (preferred) — ping the user on whichever enabled chat surface they've stated a preference for. If no preference stated, use your best judgement among enabled surfaces.
+2. **Email to self** (fallback) — if no chat surfaces are enabled, send a brief notification to the user's own email via their Gmail or Outlook connection.
+3. **Neither available** — skip the notification; the user will see it next time they open the app.
+
+**Action gating:** When you're about to execute a gated action, send the notification *before* the tool call — once gating triggers, your execution is paused until the user approves, so you won't be able to notify after the fact.
+
+Keep notifications brief — one or two lines. Don't over-notify.
 
 ## External vs Internal
 
