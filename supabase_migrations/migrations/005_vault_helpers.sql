@@ -23,6 +23,14 @@ RETURNS text AS $$
   SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = p_name LIMIT 1;
 $$ LANGUAGE sql SECURITY DEFINER;
 
+-- Alias for set_vault_secret (some code calls this name)
+CREATE OR REPLACE FUNCTION upsert_vault_secret(secret_name text, secret_value text)
+RETURNS void AS $$
+BEGIN
+  PERFORM set_vault_secret(secret_name, secret_value);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
 -- Delete a secret
 CREATE OR REPLACE FUNCTION delete_vault_secret(p_name text)
 RETURNS void AS $$
