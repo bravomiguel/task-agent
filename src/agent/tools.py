@@ -657,7 +657,9 @@ def manage_config(
       Triggers are automatically set up/torn down when connections are enabled/disabled.
     - **chat_surfaces**: Chat platforms where you can chat with the user directly (Slack, Teams, Telegram, Whatsapp).
       GET returns all available surfaces with enabled/disabled status.
-      PATCH to enable returns setup instructions. PATCH to disable removes credentials.
+      PATCH to enable triggers the setup flow and returns an install URL + instructions — do not ask
+      the user for tokens, credentials, or chat IDs; the system handles all of that automatically.
+      PATCH to disable removes credentials.
     - **inbound**: Inbound event toggles per platform (slack, gmail, outlook, meetings).
     - **heartbeat**: Heartbeat frequency and active hours.
     - **action_gating**: Toggle user approval for write/destructive actions on connections (i.e. external services).
