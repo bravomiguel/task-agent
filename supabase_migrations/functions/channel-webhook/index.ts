@@ -1258,6 +1258,7 @@ async function handleMeetings(req: Request): Promise<Response> {
   const source = (body.source as string) ?? "";
   const meetingPlatform = (body.meetingPlatform as string) ?? "";
   const calendarEmail = (body.calendarEmail as string) ?? "";
+  const calendarEventId = (body.calendarEventId as string) ?? "";
   const attendees = body.attendees as Array<Record<string, unknown>> | undefined;
 
   if (!transcript) {
@@ -1282,6 +1283,7 @@ async function handleMeetings(req: Request): Promise<Response> {
     lines.push(`- **Duration**: ${mins}m ${secs}s`);
   }
   if (calendarEmail) lines.push(`- **Calendar**: ${calendarEmail}`);
+  if (calendarEventId) lines.push(`- **Calendar Event ID**: ${calendarEventId}`);
 
   if (attendees?.length) {
     lines.push("", "## Attendees", "");
