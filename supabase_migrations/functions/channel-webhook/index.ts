@@ -1239,6 +1239,8 @@ async function handleTeams(req: Request): Promise<Response> {
 // Meeting transcript handler (from meeting-recorder app)
 // ---------------------------------------------------------------------------
 
+const MEETING_TRANSCRIPT_MAX_CHARS = 20_000;
+
 async function handleMeetings(req: Request): Promise<Response> {
   let body: Record<string, unknown>;
   try {
@@ -1252,46 +1254,53 @@ async function handleMeetings(req: Request): Promise<Response> {
   const transcriptFilename = (body.transcriptFilename as string) ?? "";
   const duration = body.duration as number | undefined;
   const startedAt = (body.startedAt as string) ?? "";
+  const endedAt = (body.endedAt as string) ?? "";
   const source = (body.source as string) ?? "";
   const meetingPlatform = (body.meetingPlatform as string) ?? "";
-  const calendarSource = (body.calendarSource as string) ?? "";
-  const calendarEventId = (body.calendarEventId as string) ?? "";
+  const calendarEmail = (body.calendarEmail as string) ?? "";
   const attendees = body.attendees as Array<Record<string, unknown>> | undefined;
 
   if (!transcript) {
     return jsonResponse({ ok: true, skipped: "empty_transcript" });
   }
 
-  // Format attendees with name, email, and status
-  const attendeeLines = attendees
-    ? attendees.map((a) => {
-        const name = (a.name as string) ?? "Unknown";
-        const email = (a.email as string) ?? "";
-        const status = (a.status as string) ?? "";
-        const parts = [name];
-        if (email) parts.push(`<${email}>`);
-        if (status) parts.push(`(${status})`);
-        return parts.join(" ");
-      })
-    : [];
+  // Build transcript markdown (mirrors meeting-recorder's buildTranscriptMarkdown)
+  const lines: string[] = [
+    `# ${title}`,
+    "",
+    `- **Date**: ${startedAt}`,
+    `- **Trigger**: ${source || "calendar"}`,
+  ];
 
-  // Format duration
-  const durationStr = duration
-    ? `${Math.floor(duration / 60)}m ${duration % 60}s`
-    : "";
+  if (meetingPlatform && source !== "manual") {
+    lines.push(`- **Platform**: ${meetingPlatform}`);
+  }
+  if (endedAt) lines.push(`- **Ended**: ${endedAt}`);
+  if (duration) {
+    const mins = Math.floor(duration / 60);
+    const secs = duration % 60;
+    lines.push(`- **Duration**: ${mins}m ${secs}s`);
+  }
+  if (calendarEmail) lines.push(`- **Calendar**: ${calendarEmail}`);
 
-  // Build combined text with metadata header + transcript
-  const metaLines = [`Meeting: ${title}`];
-  if (meetingPlatform) metaLines.push(`Platform: ${meetingPlatform}`);
-  if (startedAt) metaLines.push(`Started: ${startedAt}`);
-  if (durationStr) metaLines.push(`Duration: ${durationStr}`);
-  if (source) metaLines.push(`Trigger: ${source}`);
-  if (calendarSource) metaLines.push(`Calendar: ${calendarSource}`);
-  if (attendeeLines.length) metaLines.push(`Attendees:\n${attendeeLines.map((l) => `  - ${l}`).join("\n")}`);
-  if (transcriptFilename) metaLines.push(`Transcript file: /mnt/meeting-transcripts/${transcriptFilename}`);
-  metaLines.push("", transcript);
+  if (attendees?.length) {
+    lines.push("", "## Attendees", "");
+    for (const a of attendees) {
+      const parts = [(a.name as string) || "Unknown"];
+      if (a.email) parts.push(`<${a.email}>`);
+      if (a.status) parts.push(`(${a.status})`);
+      lines.push(`- ${parts.join(" ")}`);
+    }
+  }
 
-  const combinedText = metaLines.join("\n");
+  lines.push("", "## Transcript", "", transcript);
+
+  let combinedText = lines.join("\n");
+
+  // Truncate for system message (agent can read full file at transcript_path)
+  if (combinedText.length > MEETING_TRANSCRIPT_MAX_CHARS) {
+    combinedText = combinedText.slice(0, MEETING_TRANSCRIPT_MAX_CHARS) + "\n\n[truncated — read full transcript at transcript_path]";
+  }
 
   // Insert directly into queue (no debounce needed for meetings)
   await insertQueue({
@@ -1300,15 +1309,7 @@ async function handleMeetings(req: Request): Promise<Response> {
     buffer_key: `meeting:${body.id ?? Date.now()}`,
     combined_text: combinedText,
     metadata: {
-      title,
-      trigger: source,
       transcript_filename: transcriptFilename,
-      meeting_platform: meetingPlatform,
-      calendar_source: calendarSource,
-      calendar_event_id: calendarEventId,
-      started_at: startedAt,
-      duration,
-      attendees: attendeeLines,
     },
   });
 
