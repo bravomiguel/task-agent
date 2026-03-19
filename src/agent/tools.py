@@ -838,7 +838,8 @@ def _handle_chat_surfaces(action: str, patch_str: str | None) -> str:
             "disconnect_fn": lambda: _disconnect_whatsapp_chat_surface(whatsapp_bridge_url),
             "setup_message": (
                 "To set up WhatsApp so you can chat with me there:\n\n"
-                "**Step 1: Link device** — scan the QR code below with WhatsApp > Settings > Linked Devices > Link a Device.\n\n"
+                "**Step 1: Link device** — scan the QR code with WhatsApp > Settings > Linked Devices > Link a Device. "
+                "(Skip this if you've already linked.)\n\n"
                 f'<qr_code url="{whatsapp_bridge_url}/qr/url"/>\n\n'
                 f"If the QR code doesn't render, open this link in your browser: {whatsapp_bridge_url}/qr\n\n"
                 "**Step 2: Create a solo group** — in WhatsApp, create a new group (add someone temporarily, then remove them "
@@ -925,7 +926,7 @@ def _disconnect_whatsapp_chat_surface(bridge_url: str) -> dict:
             pass
     # Also clean vault directly as fallback
     from agent.auth import vault_delete_secret
-    for key in ["whatsapp_auth_state", "whatsapp_owner_jid"]:
+    for key in ["whatsapp_auth_state", "whatsapp_owner_jid", "whatsapp_agent_group_jid"]:
         vault_delete_secret(key)
     return {"status": "disconnected", "service": "whatsapp"}
 
