@@ -1585,7 +1585,7 @@ def _send_whatsapp_bridge(recipient: str, text: str) -> dict[str, Any]:
 
     resp = httpx.post(
         f"{bridge_url}/send",
-        json={"jid": recipient, "text": text},
+        json={"to": recipient, "text": text},
         timeout=15,
     )
     resp.raise_for_status()
