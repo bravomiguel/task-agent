@@ -837,10 +837,13 @@ def _handle_chat_surfaces(action: str, patch_str: str | None) -> str:
             "qr_url": f"{whatsapp_bridge_url}/qr/url" if whatsapp_bridge_url else "",
             "disconnect_fn": lambda: _disconnect_whatsapp_chat_surface(whatsapp_bridge_url),
             "setup_message": (
-                "To connect WhatsApp, scan the QR code below with WhatsApp > Settings > Linked Devices > Link a Device.\n\n"
+                "To set up WhatsApp so you can chat with me there:\n\n"
+                "**Step 1: Link device** — scan the QR code below with WhatsApp > Settings > Linked Devices > Link a Device.\n\n"
                 f'<qr_code url="{whatsapp_bridge_url}/qr/url"/>\n\n'
                 f"If the QR code doesn't render, open this link in your browser: {whatsapp_bridge_url}/qr\n\n"
-                "Once connected, come back and let me know."
+                '**Step 2: Start chatting** — open your "Message Yourself" chat in WhatsApp and send a message. '
+                "That's where we'll chat — any message you send there comes to me, and I'll reply there too.\n\n"
+                "Once you've done both steps, come back and let me know."
             ) if whatsapp_bridge_url else "",
         },
     }
