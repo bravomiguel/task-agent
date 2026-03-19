@@ -841,9 +841,11 @@ def _handle_chat_surfaces(action: str, patch_str: str | None) -> str:
                 "**Step 1: Link device** — scan the QR code below with WhatsApp > Settings > Linked Devices > Link a Device.\n\n"
                 f'<qr_code url="{whatsapp_bridge_url}/qr/url"/>\n\n'
                 f"If the QR code doesn't render, open this link in your browser: {whatsapp_bridge_url}/qr\n\n"
-                '**Step 2: Start chatting** — open your "Message Yourself" chat in WhatsApp and send a message. '
-                "That's where we'll chat — any message you send there comes to me, and I'll reply there too.\n\n"
-                "Once you've done both steps, come back and let me know."
+                "**Step 2: Create a solo group** — in WhatsApp, create a new group (add someone temporarily, then remove them "
+                'so it\'s just you). Name it whatever you like (e.g. "Mally").\n\n'
+                "**Step 3: Send a message in the group** — this registers it as our chat. "
+                "I'll reply there and you'll get push notifications.\n\n"
+                "Once you've done all steps, come back and let me know."
             ) if whatsapp_bridge_url else "",
         },
     }
