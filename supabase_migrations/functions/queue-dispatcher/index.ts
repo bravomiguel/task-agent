@@ -226,6 +226,21 @@ async function dispatchItem(item: Record<string, unknown>): Promise<{ dispatched
     runInput.channel_platform = "teams";
     runInput.channel_id = isChannel ? `team:${teamId}/channel:${channelId}` : chatId;
     runInput.channel_metadata = meta;
+  } else if (source === "telegram") {
+    const chatId = (meta.chat_id as string) ?? "";
+    const attrs = [
+      `type="channel-message"`,
+      `platform="telegram"`,
+      `chat_id="${chatId}"`,
+    ];
+    const ids = meta.sender_ids as string[] | undefined;
+    const names = meta.senders as string[] | undefined;
+    if (names) attrs.push(`sender="${names[0]}"`);
+    if (ids) attrs.push(`sender_id="${ids[0]}"`);
+    message = `<system-message ${attrs.join(" ")}>\n${combinedText}\n</system-message>`;
+    runInput.channel_platform = "telegram";
+    runInput.channel_id = chatId;
+    runInput.channel_metadata = meta;
   } else if (source === "email") {
     const emailSource = (meta.email_source as string) ?? "email";
     const sender = (meta.sender as string) ?? "";

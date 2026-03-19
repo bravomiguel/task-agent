@@ -67,25 +67,30 @@ async function queueMessage(
   messageText: string,
   chatId: string,
 ): Promise<void> {
-  const payload = {
-    platform: "telegram",
-    sender_id: senderId,
-    sender_name: senderName,
-    channel_id: chatId,
-    channel_type: "dm",
-    message_text: messageText,
-    message_ts: Date.now().toString(),
+  const combinedText = `[${senderName} (${senderId})] ${messageText}`;
+
+  const row = {
+    source: "telegram",
+    priority: 1, // DM priority
+    buffer_key: `telegram:${chatId}`,
+    combined_text: combinedText,
+    metadata: {
+      chat_id: chatId,
+      senders: [senderName],
+      sender_ids: [senderId],
+      message_count: 1,
+    },
   };
 
-  const resp = await fetch(`${SUPABASE_URL}/rest/v1/rpc/queue_inbound_message`, {
+  const resp = await fetch(`${SUPABASE_URL}/rest/v1/inbound_queue`, {
     method: "POST",
     headers: supabaseHeaders(),
-    body: JSON.stringify(payload),
+    body: JSON.stringify(row),
   });
 
   if (!resp.ok) {
-    // Fall back to direct insert if RPC doesn't exist
-    console.error(`[telegram-webhook] queue RPC failed: ${resp.status}`);
+    const text = await resp.text();
+    console.error(`[telegram-webhook] queue insert failed ${resp.status}: ${text}`);
   }
 }
 
