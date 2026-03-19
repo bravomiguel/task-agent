@@ -834,7 +834,14 @@ def _handle_chat_surfaces(action: str, patch_str: str | None) -> str:
             "display_name": "WhatsApp (chat with user as yourself)",
             "vault_key": "whatsapp_owner_jid",
             "install_url": f"{whatsapp_bridge_url}/qr" if whatsapp_bridge_url else "",
+            "qr_url": f"{whatsapp_bridge_url}/qr/url" if whatsapp_bridge_url else "",
             "disconnect_fn": lambda: _disconnect_whatsapp_chat_surface(whatsapp_bridge_url),
+            "setup_message": (
+                "To connect WhatsApp, scan the QR code below with WhatsApp > Settings > Linked Devices > Link a Device.\n\n"
+                f'<qr_code url="{whatsapp_bridge_url}/qr/url"/>\n\n'
+                f"If the QR code doesn't render, open this link in your browser: {whatsapp_bridge_url}/qr\n\n"
+                "Once connected, come back and let me know."
+            ) if whatsapp_bridge_url else "",
         },
     }
 
@@ -872,11 +879,14 @@ def _handle_chat_surfaces(action: str, patch_str: str | None) -> str:
                         f"open this link and follow the prompts. "
                         f"Once done, come back and let me know."
                     )
-                    results[surface] = {
+                    result_entry = {
                         "status": "setup_required",
                         "install_url": cfg["install_url"],
                         "message": message,
                     }
+                    if cfg.get("qr_url"):
+                        result_entry["qr_url"] = cfg["qr_url"]
+                    results[surface] = result_entry
             elif desired == "disabled":
                 results[surface] = cfg["disconnect_fn"]()
             else:
