@@ -1602,8 +1602,8 @@ def send_message(
 ) -> str:
     """Send a message to a user or channel on Slack, Teams, Telegram, or WhatsApp.
 
-    For channel-message sessions (inbound from webhook), use the platform,
-    channel, and thread_ts from the system-message tag to reply in context.
+    For inbound messages (type="message"), use the platform, via, and IDs
+    from the system-message tag to reply in context.
 
     Args:
         platform: Target platform — "slack", "teams", "telegram", or "whatsapp".
@@ -1614,7 +1614,7 @@ def send_message(
             WhatsApp: JID, or "owner" to message the registered owner.
         text: Message content (plain text).
         thread_ts: (Slack only) Thread timestamp to reply in-thread. Use the
-            thread_ts from the inbound channel-message to keep the conversation
+            thread_ts from the inbound system-message tag to keep the conversation
             in the same thread.
         via: How to send the message:
             - "chat_surface" — sends as yourself (set up via manage_config key="chat_surfaces").

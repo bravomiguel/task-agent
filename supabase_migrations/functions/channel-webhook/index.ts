@@ -340,6 +340,7 @@ async function bufferAndFlush(
   messageTs: string,
   threadTs: string,
   debounceMs: number,
+  via: "chat_surface" | "connection" = "connection",
 ): Promise<Response> {
   const bufferKey = `slack:${channelId}`;
   const priority = channelType === "im" ? 1 : 2;
@@ -408,6 +409,7 @@ async function bufferAndFlush(
       channel_id: channelId,
       channel_type: channelType,
       thread_ts: lastThreadTs,
+      via,
       senders: [...senders],
       sender_ids: [...senderIds],
       message_count: flushedRows.length,
@@ -559,6 +561,7 @@ async function handleSlackTrigger(data: Record<string, unknown>): Promise<Respon
     senderId, senderName, messageText,
     channelId, channelType, messageTs, threadTs,
     DEBOUNCE_MS,
+    "connection",
   );
 }
 
@@ -817,6 +820,7 @@ async function handleSlackBot(req: Request): Promise<Response> {
     senderId, senderName, messageText,
     channelId, channelType, messageTs, threadTs,
     debounceMs,
+    channelType === "im" ? "chat_surface" : "connection",
   );
 }
 
@@ -1216,6 +1220,7 @@ async function handleTeams(req: Request): Promise<Response> {
         team_id: isChannelMessage ? teamId : undefined,
         channel_id: isChannelMessage ? channelId : undefined,
         chat_type: chatType,
+        via: "connection",
         senders: [...senders],
         sender_ids: [...senderIds],
         message_count: flushedRows.length,

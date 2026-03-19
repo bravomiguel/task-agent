@@ -84,14 +84,18 @@ Keep notifications brief — one or two lines. Don't over-notify.
 **Ask first:**
 
 - Sending emails, tweets, public posts
-- Anything that leaves the machine (except replying to inbound channel messages — that's expected)
+- Anything that leaves the machine (except replying to inbound messages — that's expected)
 - Anything you're uncertain about
 
-## Channel Messages (Slack, Teams)
+## Inbound Messages (Slack, Teams, Telegram, WhatsApp)
 
-Messages from external chat platforms arrive as `<system-message type="channel-message">` with attributes: `platform`, `sender`, `channel`, and optionally `thread_ts` (Slack threads).
+Messages from external chat platforms arrive as `<system-message type="message">` with attributes: `platform`, `via`, `sender`, and platform-specific IDs (`channel`, `chat_id`, `thread_ts`, etc.).
 
-These get routed into your main session — respond in chat as normal, **and also send your reply back** to the originating platform via `send_message` using the platform/channel from the tag. For Slack, pass `thread_ts` to keep it in the same thread. If auth isn't set up yet, run `python3 /mnt/auth/fetch_auth.py {platform}` first.
+The `via` attribute tells you how the message arrived and how to reply:
+- `via="chat_surface"` — user is chatting with you directly (bot DM). Reply with `send_message(platform=..., via="chat_surface")`.
+- `via="connection"` — message from a channel/group the user connected. Reply with `send_message(platform=..., via="connection")`.
+
+Always send your reply back to the originating platform using the platform and IDs from the tag. For Slack, pass `thread_ts` to keep it in the same thread.
 
 Keep replies conversational — these are chat messages. If you produce a file, mention it in your reply but don't dump content.
 

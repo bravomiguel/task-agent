@@ -181,12 +181,15 @@ async function dispatchItem(item: Record<string, unknown>): Promise<{ dispatched
   }
 
   // Build message based on source
+  const via = (meta.via as string) ?? "";
+
   if (source === "slack") {
     const channelId = (meta.channel_id as string) ?? "";
     const threadTs = (meta.thread_ts as string) ?? "";
     const attrs = [
-      `type="channel-message"`,
+      `type="message"`,
       `platform="slack"`,
+      `via="${via || "connection"}"`,
       `channel="${channelId}"`,
     ];
     if (threadTs) attrs.push(`thread_ts="${threadTs}"`);
@@ -207,8 +210,9 @@ async function dispatchItem(item: Record<string, unknown>): Promise<{ dispatched
     const chatType = (meta.chat_type as string) ?? "chat";
     const isChannel = chatType === "channel";
     const attrs = [
-      `type="channel-message"`,
+      `type="message"`,
       `platform="teams"`,
+      `via="${via || "connection"}"`,
     ];
     if (isChannel) {
       attrs.push(`team_id="${teamId}"`);
@@ -229,8 +233,9 @@ async function dispatchItem(item: Record<string, unknown>): Promise<{ dispatched
   } else if (source === "telegram") {
     const chatId = (meta.chat_id as string) ?? "";
     const attrs = [
-      `type="channel-message"`,
+      `type="message"`,
       `platform="telegram"`,
+      `via="chat_surface"`,
       `chat_id="${chatId}"`,
     ];
     const ids = meta.sender_ids as string[] | undefined;
