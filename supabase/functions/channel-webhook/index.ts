@@ -1363,7 +1363,10 @@ async function getBotFrameworkToken(): Promise<string | null> {
     return _botFrameworkToken.token;
   }
   try {
-    const resp = await fetch("https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token", {
+    // SingleTenant bots need tenant-specific token endpoint
+    const tenantId = await getVaultSecret("teams_bot_tenant_id");
+    const tokenAuthority = tenantId || "botframework.com";
+    const resp = await fetch(`https://login.microsoftonline.com/${tokenAuthority}/oauth2/v2.0/token`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({

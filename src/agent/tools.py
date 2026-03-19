@@ -1445,15 +1445,21 @@ def _send_teams_bot(recipient: str, text: str) -> dict[str, Any]:
     app_id = vault_get_secret("teams_bot_app_id")
     app_secret = vault_get_secret("teams_bot_app_secret")
     service_url = vault_get_secret("teams_bot_service_url")
+    tenant_id = vault_get_secret("teams_bot_tenant_id")
 
     if not app_id or not app_secret:
         raise RuntimeError("Teams bot credentials not found in vault.")
     if not service_url:
         raise RuntimeError("Teams bot service URL not found. The user needs to message the bot first.")
 
-    # Get Bot Framework token
+    # Get Bot Framework token — SingleTenant uses tenant-specific endpoint
+    token_url = (
+        f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
+        if tenant_id
+        else "https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token"
+    )
     token_resp = httpx.post(
-        "https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token",
+        token_url,
         data={
             "grant_type": "client_credentials",
             "client_id": app_id,
