@@ -802,14 +802,14 @@ def _handle_chat_surfaces(action: str, patch_str: str | None) -> str:
             "vault_key": "teams_bot_app_id",
             "install_url": f"{supabase_url}/functions/v1/teams-bot-oauth/install",
             "disconnect_fn": lambda: _disconnect_teams_chat_surface(),
-            "post_setup_instructions": (
-                "After completing the OAuth flow, find Mally in Teams: "
-                "Apps (left sidebar) > search 'Mally' > click Add. "
-                "If Mally doesn't appear, it may need admin approval. "
-                "Ask the user to check their Teams admin dashboard at "
-                "https://admin.teams.microsoft.com > Teams apps > Manage apps > search 'Mally' "
-                "and ensure it's unblocked. If they're not an admin, offer to help them draft "
-                "a message to their IT admin requesting approval for the Mally app."
+            "setup_message": (
+                "To set up Teams so you can chat with me there, open this link and follow the prompts. "
+                "Important: Teams requires admin approval for custom apps. "
+                "After completing the OAuth flow, a Teams admin needs to approve Mally at "
+                "https://admin.teams.microsoft.com > Teams apps > Manage apps > search 'Mally' and unblock it. "
+                "Once approved, find Mally in Teams: Apps (left sidebar) > search 'Mally' > click Add. "
+                "If the user is not a Teams admin, offer to help them draft a message to their IT admin "
+                "requesting approval for the Mally app. Once that's all done, come back and let me know."
             ),
         },
         "telegram": {
@@ -855,18 +855,16 @@ def _handle_chat_surfaces(action: str, patch_str: str | None) -> str:
                 if not cfg.get("install_url"):
                     results[surface] = {"error": f"{cfg['display_name']} is not configured on this instance."}
                 else:
-                    result_entry = {
+                    message = cfg.get("setup_message") or (
+                        f"To set up {cfg['display_name']} so you can chat with me there, "
+                        f"open this link and follow the prompts. "
+                        f"Once done, come back and let me know."
+                    )
+                    results[surface] = {
                         "status": "setup_required",
                         "install_url": cfg["install_url"],
-                        "message": (
-                            f"To set up {cfg['display_name']} so you can chat with me there, "
-                            f"open this link and follow the prompts. "
-                            f"Once done, come back and let me know."
-                        ),
+                        "message": message,
                     }
-                    if cfg.get("post_setup_instructions"):
-                        result_entry["post_setup_instructions"] = cfg["post_setup_instructions"]
-                    results[surface] = result_entry
             elif desired == "disabled":
                 results[surface] = cfg["disconnect_fn"]()
             else:
