@@ -1335,7 +1335,7 @@ def manage_crons(
 
 
 # ---------------------------------------------------------------------------
-# Messaging (Slack, Teams)
+# Messaging (Slack, Teams, Telegram, WhatsApp)
 # ---------------------------------------------------------------------------
 
 _MSG_AUTH_DIR = "/mnt/auth"
@@ -1492,60 +1492,132 @@ def _send_teams_bot(recipient: str, text: str) -> dict[str, Any]:
     }
 
 
+def _send_telegram_bot(recipient: str, text: str) -> dict[str, Any]:
+    """Send a message via Telegram Bot API (chat surface).
+
+    Uses the bot token from env and the owner's chat_id from vault.
+    recipient is the Telegram chat ID.
+    """
+    import os
+    from agent.auth import vault_get_secret
+
+    bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    if not bot_token:
+        raise RuntimeError("TELEGRAM_BOT_TOKEN not configured.")
+
+    # If no explicit recipient, use the registered owner
+    if not recipient or recipient == "owner":
+        recipient = vault_get_secret("telegram_owner_chat_id")
+        if not recipient:
+            raise RuntimeError(
+                "Telegram owner not registered. The user needs to /start the bot first."
+            )
+
+    resp = httpx.post(
+        f"https://api.telegram.org/bot{bot_token}/sendMessage",
+        json={"chat_id": recipient, "text": text},
+        timeout=15,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+
+    if not data.get("ok"):
+        return {
+            "status": "error",
+            "platform": "telegram",
+            "error": data.get("description", "unknown"),
+        }
+
+    msg = data.get("result", {})
+    return {
+        "status": "sent",
+        "platform": "telegram",
+        "message_id": str(msg.get("message_id", "")),
+        "chat_id": recipient,
+    }
+
+
+def _send_whatsapp_bridge(recipient: str, text: str) -> dict[str, Any]:
+    """Send a message via WhatsApp bridge (chat surface).
+
+    Uses the bridge URL from env and the owner's JID from vault.
+    recipient is the WhatsApp JID.
+    """
+    import os
+    from agent.auth import vault_get_secret
+
+    bridge_url = os.environ.get("WHATSAPP_BRIDGE_URL")
+    if not bridge_url:
+        raise RuntimeError("WHATSAPP_BRIDGE_URL not configured.")
+
+    # If no explicit recipient, use the registered owner
+    if not recipient or recipient == "owner":
+        recipient = vault_get_secret("whatsapp_owner_jid")
+        if not recipient:
+            raise RuntimeError(
+                "WhatsApp owner not registered. The user needs to connect via QR code first."
+            )
+
+    resp = httpx.post(
+        f"{bridge_url}/send",
+        json={"jid": recipient, "text": text},
+        timeout=15,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+
+    return {
+        "status": "sent",
+        "platform": "whatsapp",
+        "message_id": data.get("message_id", ""),
+        "chat_id": recipient,
+    }
+
+
 _MSG_SENDERS: dict[str, callable] = {
     "slack": _send_slack,
     "teams": _send_teams,
 }
 
+# Chat-surface senders: each fetches its own credentials (vault/env)
+_CHAT_SURFACE_SENDERS: dict[str, callable] = {
+    "teams": _send_teams_bot,
+    "telegram": _send_telegram_bot,
+    "whatsapp": _send_whatsapp_bridge,
+    # Slack chat_surface is handled inline in send_message (vault token + _send_slack)
+}
 
-def _resolve_slack_token(sandbox, via: str | None) -> str:
-    """Resolve the Slack token based on via preference.
-
-    Priority: explicit via > chat_surface if token exists > connection OAuth.
-    """
-    from agent.auth import vault_get_secret, SLACK_BOT_TOKEN_SECRET
-
-    use_chat_surface = via == "chat_surface" or via is None
-
-    if use_chat_surface:
-        token = vault_get_secret(SLACK_BOT_TOKEN_SECRET)
-        if token:
-            return token
-        if via == "chat_surface":
-            raise RuntimeError('Chat surface token not found. Run manage_config key="chat_surfaces" to set up Slack first.')
-        # Fall through to connection token
-
-    # User OAuth token from sandbox (connection)
-    return _read_token_from_sandbox(sandbox, _MSG_TOKEN_FILES["slack"])
 
 
 @tool
 def send_message(
-    platform: Literal["slack", "teams"],
+    platform: Literal["slack", "teams", "telegram", "whatsapp"],
     recipient: str,
     text: str,
     thread_ts: str = None,
     via: Literal["chat_surface", "connection"] = None,
     state: Annotated[dict, InjectedState] = None,
 ) -> str:
-    """Send a message to a user or channel on Slack or Microsoft Teams.
+    """Send a message to a user or channel on Slack, Teams, Telegram, or WhatsApp.
 
     For channel-message sessions (inbound from webhook), use the platform,
     channel, and thread_ts from the system-message tag to reply in context.
 
     Args:
-        platform: Target platform — "slack" or "teams".
+        platform: Target platform — "slack", "teams", "telegram", or "whatsapp".
         recipient: Who to send to.
             Slack: channel ID (C...), user ID (U...), or channel name (#general).
             Teams: chat ID for 1:1/group chats, or "team:{teamId}/channel:{channelId}" for channels.
+            Telegram: chat ID, or "owner" to message the registered owner.
+            WhatsApp: JID, or "owner" to message the registered owner.
         text: Message content (plain text).
         thread_ts: (Slack only) Thread timestamp to reply in-thread. Use the
             thread_ts from the inbound channel-message to keep the conversation
             in the same thread.
-        via: How to send the message (Slack and Teams):
+        via: How to send the message:
             - "chat_surface" — sends as yourself (set up via manage_config key="chat_surfaces").
-              This is the default and preferred option.
-            - "connection" — sends as the user themselves via their OAuth token.
+              This is the default and preferred option. Required for Telegram and WhatsApp.
+            - "connection" — sends as the user themselves via their OAuth token (Slack and Teams only).
               **SENSITIVE**: This posts as the actual user, not as yourself. Always get
               explicit user approval before using this option. Never assume the user wants
               messages sent under their name.
@@ -1557,27 +1629,55 @@ def send_message(
     if not sandbox_id:
         return _json.dumps({"status": "error", "error": "No sandbox available."})
 
-    # Teams chat surface: use Bot Framework API directly (no sandbox token needed)
-    if platform == "teams" and (via == "chat_surface" or via is None):
+    # Telegram and WhatsApp only support chat_surface
+    if platform in ("telegram", "whatsapp") and via == "connection":
+        return _json.dumps({
+            "status": "error",
+            "error": f"{platform} only supports via='chat_surface'. Connection OAuth is not available.",
+        })
+
+    use_chat_surface = via == "chat_surface" or via is None
+
+    # ---- Chat-surface path (bot credentials from vault/env) ----
+    if use_chat_surface and platform in _CHAT_SURFACE_SENDERS:
         try:
-            result = _send_teams_bot(recipient, text)
+            result = _CHAT_SURFACE_SENDERS[platform](recipient, text)
             return _json.dumps(result)
         except Exception as e:
-            if via == "chat_surface":
-                return _json.dumps({"status": "error", "platform": "teams", "error": str(e)})
-            # Fall through to connection token if via was None
+            if via == "chat_surface" or platform in ("telegram", "whatsapp"):
+                return _json.dumps({"status": "error", "platform": platform, "error": str(e)})
+            # Fall through to connection token if via was None (Slack/Teams only)
 
+    # ---- Slack chat-surface (special: uses vault token + same _send_slack fn) ----
+    if use_chat_surface and platform == "slack":
+        from agent.auth import vault_get_secret, SLACK_BOT_TOKEN_SECRET
+        bot_token = vault_get_secret(SLACK_BOT_TOKEN_SECRET)
+        if bot_token:
+            try:
+                if thread_ts:
+                    result = _send_slack(bot_token, recipient, text, thread_ts=thread_ts)
+                else:
+                    result = _send_slack(bot_token, recipient, text)
+                return _json.dumps(result)
+            except Exception as e:
+                if via == "chat_surface":
+                    return _json.dumps({"status": "error", "platform": "slack", "error": str(e)})
+                # Fall through to connection token if via was None
+        elif via == "chat_surface":
+            return _json.dumps({
+                "status": "error",
+                "error": 'Chat surface token not found. Run manage_config key="chat_surfaces" to set up Slack first.',
+            })
+
+    # ---- Connection path (user's OAuth token from sandbox) ----
     sender_fn = _MSG_SENDERS.get(platform)
     if not sender_fn:
         return _json.dumps({"status": "error", "error": f"Unsupported platform: {platform}"})
 
     try:
         sandbox = modal.Sandbox.from_id(sandbox_id)
-        if platform == "slack":
-            token = _resolve_slack_token(sandbox, via)
-        else:
-            token_file = _MSG_TOKEN_FILES.get(platform)
-            token = _read_token_from_sandbox(sandbox, token_file)
+        token_file = _MSG_TOKEN_FILES.get(platform)
+        token = _read_token_from_sandbox(sandbox, token_file)
     except Exception as e:
         return _json.dumps({
             "status": "error",
