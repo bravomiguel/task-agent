@@ -792,13 +792,13 @@ def _handle_chat_surfaces(action: str, patch_str: str | None) -> str:
 
     CHAT_SURFACES = {
         "slack": {
-            "display_name": "Slack (chat with user directly)",
+            "display_name": "Slack (chat with user as yourself)",
             "vault_key": "slack_bot_token",
             "install_url": f"{supabase_url}/functions/v1/slack-oauth/install",
             "disconnect_fn": disconnect_slack_chat_surface,
         },
         "teams": {
-            "display_name": "Teams (chat with user directly)",
+            "display_name": "Teams (chat with user as yourself)",
             "vault_key": "teams_bot_app_id",
             "install_url": f"{supabase_url}/functions/v1/teams-bot-oauth/install",
             "disconnect_fn": lambda: _disconnect_teams_chat_surface(),
@@ -813,13 +813,13 @@ def _handle_chat_surfaces(action: str, patch_str: str | None) -> str:
             ),
         },
         "telegram": {
-            "display_name": "Telegram (chat with user directly)",
+            "display_name": "Telegram (chat with user as yourself)",
             "vault_key": "telegram_owner_chat_id",
             "install_url": f"https://t.me/{telegram_bot_name}" if telegram_bot_name else "",
             "disconnect_fn": lambda: _disconnect_telegram_chat_surface(),
         },
         "whatsapp": {
-            "display_name": "WhatsApp (chat with user directly)",
+            "display_name": "WhatsApp (chat with user as yourself)",
             "vault_key": "whatsapp_owner_jid",
             "install_url": f"{whatsapp_bridge_url}/qr" if whatsapp_bridge_url else "",
             "disconnect_fn": lambda: _disconnect_whatsapp_chat_surface(whatsapp_bridge_url),
@@ -1434,6 +1434,59 @@ def _send_teams(token: str, recipient: str, text: str) -> dict[str, Any]:
     }
 
 
+def _send_teams_bot(recipient: str, text: str) -> dict[str, Any]:
+    """Send a message via Bot Framework API (chat surface).
+
+    Uses the bot's app credentials to get a token, then posts to the
+    stored serviceUrl conversation endpoint.
+    """
+    from agent.auth import vault_get_secret
+
+    app_id = vault_get_secret("teams_bot_app_id")
+    app_secret = vault_get_secret("teams_bot_app_secret")
+    service_url = vault_get_secret("teams_bot_service_url")
+
+    if not app_id or not app_secret:
+        raise RuntimeError("Teams bot credentials not found in vault.")
+    if not service_url:
+        raise RuntimeError("Teams bot service URL not found. The user needs to message the bot first.")
+
+    # Get Bot Framework token
+    token_resp = httpx.post(
+        "https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token",
+        data={
+            "grant_type": "client_credentials",
+            "client_id": app_id,
+            "client_secret": app_secret,
+            "scope": "https://api.botframework.com/.default",
+        },
+        timeout=15,
+    )
+    token_resp.raise_for_status()
+    bot_token = token_resp.json()["access_token"]
+
+    # Send via Bot Framework conversations API
+    url = f"{service_url}v3/conversations/{recipient}/activities"
+    resp = httpx.post(
+        url,
+        headers={
+            "Authorization": f"Bearer {bot_token}",
+            "Content-Type": "application/json",
+        },
+        json={"type": "message", "text": text},
+        timeout=15,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+
+    return {
+        "status": "sent",
+        "platform": "teams",
+        "message_id": data.get("id"),
+        "chat_id": recipient,
+    }
+
+
 _MSG_SENDERS: dict[str, callable] = {
     "slack": _send_slack,
     "teams": _send_teams,
@@ -1484,11 +1537,11 @@ def send_message(
         thread_ts: (Slack only) Thread timestamp to reply in-thread. Use the
             thread_ts from the inbound channel-message to keep the conversation
             in the same thread.
-        via: (Slack only) How to send the message:
-            - "chat_surface" — sends as you (set up via manage_config key="chat_surfaces").
+        via: How to send the message (Slack and Teams):
+            - "chat_surface" — sends as yourself (set up via manage_config key="chat_surfaces").
               This is the default and preferred option.
             - "connection" — sends as the user themselves via their OAuth token.
-              **SENSITIVE**: This posts as the actual user, not as you. Always get
+              **SENSITIVE**: This posts as the actual user, not as yourself. Always get
               explicit user approval before using this option. Never assume the user wants
               messages sent under their name.
 
@@ -1498,6 +1551,16 @@ def send_message(
     sandbox_id = state.get("modal_sandbox_id") if state else None
     if not sandbox_id:
         return _json.dumps({"status": "error", "error": "No sandbox available."})
+
+    # Teams chat surface: use Bot Framework API directly (no sandbox token needed)
+    if platform == "teams" and (via == "chat_surface" or via is None):
+        try:
+            result = _send_teams_bot(recipient, text)
+            return _json.dumps(result)
+        except Exception as e:
+            if via == "chat_surface":
+                return _json.dumps({"status": "error", "platform": "teams", "error": str(e)})
+            # Fall through to connection token if via was None
 
     sender_fn = _MSG_SENDERS.get(platform)
     if not sender_fn:
