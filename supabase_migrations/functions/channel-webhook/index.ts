@@ -1252,21 +1252,28 @@ async function handleMeetings(req: Request): Promise<Response> {
   const transcriptFilename = (body.transcriptFilename as string) ?? "";
   const duration = body.duration as number | undefined;
   const startedAt = (body.startedAt as string) ?? "";
-  const endedAt = (body.endedAt as string) ?? "";
   const source = (body.source as string) ?? "";
   const meetingPlatform = (body.meetingPlatform as string) ?? "";
   const calendarSource = (body.calendarSource as string) ?? "";
-  const calendarEmail = (body.calendarEmail as string) ?? "";
+  const calendarEventId = (body.calendarEventId as string) ?? "";
   const attendees = body.attendees as Array<Record<string, unknown>> | undefined;
 
   if (!transcript) {
     return jsonResponse({ ok: true, skipped: "empty_transcript" });
   }
 
-  // Format attendees
-  const attendeeNames = attendees
-    ? attendees.map((a) => (a.name as string) ?? "Unknown").join(", ")
-    : "";
+  // Format attendees with name, email, and status
+  const attendeeLines = attendees
+    ? attendees.map((a) => {
+        const name = (a.name as string) ?? "Unknown";
+        const email = (a.email as string) ?? "";
+        const status = (a.status as string) ?? "";
+        const parts = [name];
+        if (email) parts.push(`<${email}>`);
+        if (status) parts.push(`(${status})`);
+        return parts.join(" ");
+      })
+    : [];
 
   // Format duration
   const durationStr = duration
@@ -1276,8 +1283,11 @@ async function handleMeetings(req: Request): Promise<Response> {
   // Build combined text with metadata header + transcript
   const metaLines = [`Meeting: ${title}`];
   if (meetingPlatform) metaLines.push(`Platform: ${meetingPlatform}`);
+  if (startedAt) metaLines.push(`Started: ${startedAt}`);
   if (durationStr) metaLines.push(`Duration: ${durationStr}`);
-  if (attendeeNames) metaLines.push(`Attendees: ${attendeeNames}`);
+  if (source) metaLines.push(`Trigger: ${source}`);
+  if (calendarSource) metaLines.push(`Calendar: ${calendarSource}`);
+  if (attendeeLines.length) metaLines.push(`Attendees:\n${attendeeLines.map((l) => `  - ${l}`).join("\n")}`);
   if (transcriptFilename) metaLines.push(`Transcript file: /mnt/meeting-transcripts/${transcriptFilename}`);
   metaLines.push("", transcript);
 
@@ -1291,14 +1301,14 @@ async function handleMeetings(req: Request): Promise<Response> {
     combined_text: combinedText,
     metadata: {
       title,
+      trigger: source,
       transcript_filename: transcriptFilename,
       meeting_platform: meetingPlatform,
       calendar_source: calendarSource,
-      calendar_email: calendarEmail,
+      calendar_event_id: calendarEventId,
       started_at: startedAt,
-      ended_at: endedAt,
       duration,
-      attendees: attendeeNames,
+      attendees: attendeeLines,
     },
   });
 

@@ -269,18 +269,24 @@ async function dispatchItem(item: Record<string, unknown>): Promise<{ dispatched
     runInput.channel_metadata = meta;
   } else if (source === "meeting") {
     const title = (meta.title as string) ?? "";
+    const trigger = (meta.trigger as string) ?? "";
     const platform = (meta.meeting_platform as string) ?? "";
-    const attendees = (meta.attendees as string) ?? "";
+    const calendarSource = (meta.calendar_source as string) ?? "";
+    const calendarEventId = (meta.calendar_event_id as string) ?? "";
+    const startedAt = (meta.started_at as string) ?? "";
     const transcriptFilename = (meta.transcript_filename as string) ?? "";
     const duration = meta.duration != null ? String(meta.duration) : "";
     const attrs = [
       `type="meeting-transcript"`,
     ];
     if (title) attrs.push(`title="${title}"`);
+    if (trigger) attrs.push(`trigger="${trigger}"`);
     if (platform) attrs.push(`platform="${platform}"`);
-    if (attendees) attrs.push(`attendees="${attendees}"`);
-    if (transcriptFilename) attrs.push(`transcript_path="/mnt/meeting-transcripts/${transcriptFilename}"`);
+    if (startedAt) attrs.push(`started_at="${startedAt}"`);
     if (duration) attrs.push(`duration="${duration}"`);
+    if (calendarSource) attrs.push(`calendar_source="${calendarSource}"`);
+    if (calendarEventId) attrs.push(`calendar_event_id="${calendarEventId}"`);
+    if (transcriptFilename) attrs.push(`transcript_path="/mnt/meeting-transcripts/${transcriptFilename}"`);
     message = `<system-message ${attrs.join(" ")}>\n${combinedText}\n</system-message>`;
     runInput.channel_metadata = meta;
   } else {
