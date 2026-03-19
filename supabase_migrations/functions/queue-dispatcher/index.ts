@@ -267,6 +267,22 @@ async function dispatchItem(item: Record<string, unknown>): Promise<{ dispatched
     message = `<system-message ${attrs.join(" ")}>\n${combinedText}\n</system-message>`;
     runInput.channel_platform = emailSource;
     runInput.channel_metadata = meta;
+  } else if (source === "meeting") {
+    const title = (meta.title as string) ?? "";
+    const platform = (meta.meeting_platform as string) ?? "";
+    const attendees = (meta.attendees as string) ?? "";
+    const transcriptFilename = (meta.transcript_filename as string) ?? "";
+    const duration = meta.duration != null ? String(meta.duration) : "";
+    const attrs = [
+      `type="meeting-transcript"`,
+    ];
+    if (title) attrs.push(`title="${title}"`);
+    if (platform) attrs.push(`platform="${platform}"`);
+    if (attendees) attrs.push(`attendees="${attendees}"`);
+    if (transcriptFilename) attrs.push(`transcript_path="/mnt/meeting-transcripts/${transcriptFilename}"`);
+    if (duration) attrs.push(`duration="${duration}"`);
+    message = `<system-message ${attrs.join(" ")}>\n${combinedText}\n</system-message>`;
+    runInput.channel_metadata = meta;
   } else {
     // Cron, heartbeat, subagent, sessions-send — combined_text is pre-formatted
     message = combinedText;

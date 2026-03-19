@@ -7,6 +7,7 @@
  *   POST /channel-webhook/slack-bot  — Slack Events API (bot events, direct from Slack)
  *   GET  /channel-webhook/teams      — Microsoft Graph subscription validation
  *   POST /channel-webhook/teams      — Microsoft Graph change notifications (Teams messages)
+ *   POST /channel-webhook/meetings   — Meeting transcripts from meeting-recorder app
  *
  * Composio sends all triggers to a single webhook URL. The handler inspects
  * payload.type to route: slack triggers → buffer+flush, email triggers → direct queue.
@@ -1235,6 +1236,77 @@ async function handleTeams(req: Request): Promise<Response> {
 }
 
 // ---------------------------------------------------------------------------
+// Meeting transcript handler (from meeting-recorder app)
+// ---------------------------------------------------------------------------
+
+async function handleMeetings(req: Request): Promise<Response> {
+  let body: Record<string, unknown>;
+  try {
+    body = await req.json();
+  } catch {
+    return new Response("Invalid JSON", { status: 400 });
+  }
+
+  const title = (body.title as string) ?? "Untitled Meeting";
+  const transcript = (body.transcript as string) ?? "";
+  const transcriptFilename = (body.transcriptFilename as string) ?? "";
+  const duration = body.duration as number | undefined;
+  const startedAt = (body.startedAt as string) ?? "";
+  const endedAt = (body.endedAt as string) ?? "";
+  const source = (body.source as string) ?? "";
+  const meetingPlatform = (body.meetingPlatform as string) ?? "";
+  const calendarSource = (body.calendarSource as string) ?? "";
+  const calendarEmail = (body.calendarEmail as string) ?? "";
+  const attendees = body.attendees as Array<Record<string, unknown>> | undefined;
+
+  if (!transcript) {
+    return jsonResponse({ ok: true, skipped: "empty_transcript" });
+  }
+
+  // Format attendees
+  const attendeeNames = attendees
+    ? attendees.map((a) => (a.name as string) ?? "Unknown").join(", ")
+    : "";
+
+  // Format duration
+  const durationStr = duration
+    ? `${Math.floor(duration / 60)}m ${duration % 60}s`
+    : "";
+
+  // Build combined text with metadata header + transcript
+  const metaLines = [`Meeting: ${title}`];
+  if (meetingPlatform) metaLines.push(`Platform: ${meetingPlatform}`);
+  if (durationStr) metaLines.push(`Duration: ${durationStr}`);
+  if (attendeeNames) metaLines.push(`Attendees: ${attendeeNames}`);
+  if (transcriptFilename) metaLines.push(`Transcript file: /mnt/meeting-transcripts/${transcriptFilename}`);
+  metaLines.push("", transcript);
+
+  const combinedText = metaLines.join("\n");
+
+  // Insert directly into queue (no debounce needed for meetings)
+  await insertQueue({
+    source: "meeting",
+    priority: 3,
+    buffer_key: `meeting:${body.id ?? Date.now()}`,
+    combined_text: combinedText,
+    metadata: {
+      title,
+      transcript_filename: transcriptFilename,
+      meeting_platform: meetingPlatform,
+      calendar_source: calendarSource,
+      calendar_email: calendarEmail,
+      started_at: startedAt,
+      ended_at: endedAt,
+      duration,
+      attendees: attendeeNames,
+    },
+  });
+
+  console.log(`[channel-webhook/meetings] queued: ${title}`);
+  return jsonResponse({ ok: true, queued: true, title });
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -1285,6 +1357,9 @@ serve(async (req: Request) => {
   }
   if (path.endsWith("/composio") || path.endsWith("/slack")) {
     return handleComposio(req);
+  }
+  if (path.endsWith("/meetings")) {
+    return handleMeetings(req);
   }
 
   return jsonResponse({ error: "Unknown route" }, 404);
