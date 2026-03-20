@@ -813,34 +813,22 @@ def _teardown_teams_dependents() -> list[str]:
     """Teardown Teams inbound (Graph subscriptions) if active.
 
     Called as a side effect when Teams connection is disabled.
+    Deletes subscription rows directly from DB (the connection token is
+    already gone so we can't call Graph to unsubscribe — the subscriptions
+    will expire on their own within 59 minutes).
     Returns list of what was disabled (e.g. ["inbound"]).
     """
-    import os
-
     also_disabled = []
 
-    # Teardown inbound (Graph subscriptions)
     try:
-        supabase_url = os.environ.get("SUPABASE_URL", "")
-        anon_key = os.environ.get("SUPABASE_ANON_KEY", "")
-
-        # Check if any subscriptions exist
-        list_resp = httpx.post(
-            f"{supabase_url}/functions/v1/teams-subscriptions/list",
-            headers={"Authorization": f"Bearer {anon_key}"},
-            timeout=15,
-        )
-        if list_resp.status_code == 200:
-            data = list_resp.json()
-            if data.get("count", 0) > 0:
-                # Unsubscribe — this will fail to delete from Graph (no token),
-                # but will clean up the DB rows. Subscriptions expire on their own.
-                httpx.post(
-                    f"{supabase_url}/functions/v1/teams-subscriptions/unsubscribe",
-                    headers={"Authorization": f"Bearer {anon_key}"},
-                    timeout=30,
-                )
-                also_disabled.append("inbound")
+        sb = _get_supabase()
+        # Check if any subscription rows exist
+        result = sb.table("teams_subscriptions").select("subscription_id").execute()
+        rows = result.data or []
+        if rows:
+            # Delete all subscription rows from DB
+            sb.table("teams_subscriptions").delete().neq("subscription_id", "").execute()
+            also_disabled.append("inbound")
     except Exception:
         pass
 
