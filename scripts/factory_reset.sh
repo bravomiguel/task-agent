@@ -98,7 +98,7 @@ done
 
 # Step 6: Recreate empty directory structure
 echo "Creating directory structure..."
-for dir in assets auth memory session-storage session-transcripts .temp-uploads browser-profiles; do
+for dir in auth memory session-storage session-transcripts .temp-uploads browser-profiles; do
   "$MODAL" volume put user-dev "$KEEPFILE" "/$dir/.keep" --force
 done
 
@@ -113,10 +113,6 @@ echo "Restoring default prompts..."
 # Step 9: Upload auth scripts to volume
 echo "Uploading auth scripts..."
 "$MODAL" volume put user-dev "$PROJECT_DIR/auth/fetch_auth.py" /auth/fetch_auth.py --force
-
-# Step 9b: Upload static assets to volume
-echo "Uploading assets..."
-"$MODAL" volume put user-dev "$PROJECT_DIR/assets/teams-bot-app.zip" /assets/teams-bot-app.zip --force
 
 # Step 10: Restore all skills
 echo "Restoring all skills..."
