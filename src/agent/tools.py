@@ -791,6 +791,19 @@ def _handle_connections(action: str, patch_str: str | None) -> str:
     return f"Error: unknown action '{action}'."
 
 
+# -- Teams chat surface helpers --
+
+def _is_teams_connection_active() -> bool:
+    """Check if the Microsoft Teams Composio connection is active."""
+    from agent.auth import _list_composio_accounts, _find_account_by_slug
+    try:
+        accounts = _list_composio_accounts()
+        acct = _find_account_by_slug(accounts, "microsoft_teams")
+        return acct is not None and acct.get("status") == "ACTIVE"
+    except Exception:
+        return False
+
+
 # -- Chat surfaces handler (vault-backed) --
 
 def _handle_chat_surfaces(action: str, patch_str: str | None) -> str:
@@ -879,6 +892,17 @@ def _handle_chat_surfaces(action: str, patch_str: str | None) -> str:
             if desired == "enabled":
                 if not cfg.get("install_url"):
                     results[surface] = {"error": f"{cfg['display_name']} is not configured on this instance."}
+
+                # Teams: check connection prerequisite
+                elif surface == "teams" and not _is_teams_connection_active():
+                    results[surface] = {
+                        "status": "prerequisite_missing",
+                        "message": (
+                            "Teams chat surface requires the Microsoft Teams connection to be enabled first. "
+                            "Use manage_config key=\"connections\" to enable Teams, then try enabling the chat surface again."
+                        ),
+                    }
+
                 else:
                     message = cfg.get("setup_message") or (
                         f"To set up {cfg['display_name']} so you can chat with me there, "
@@ -1073,7 +1097,7 @@ def _handle_inbound(action: str, patch_str: str | None) -> str:
             supabase_url = os.environ.get("SUPABASE_URL", "")
             subs_resp = httpx.post(
                 f"{supabase_url}/functions/v1/teams-subscriptions/list",
-                headers={"Authorization": f"Bearer {os.environ.get('SUPABASE_SERVICE_ROLE_KEY', '')}"},
+                headers={"Authorization": f"Bearer {os.environ.get('SUPABASE_ANON_KEY', '')}"},
                 timeout=15,
             )
             if subs_resp.status_code == 200:
@@ -1114,14 +1138,25 @@ def _handle_inbound(action: str, patch_str: str | None) -> str:
 
             # Teams — toggle via Graph subscriptions (not Composio triggers)
             if source == "teams":
+                # Check connection prerequisite before subscribing
+                if enable and not _is_teams_connection_active():
+                    results[source] = {
+                        "status": "prerequisite_missing",
+                        "message": (
+                            "Teams inbound requires the Microsoft Teams connection to be enabled first. "
+                            "Use manage_config key=\"connections\" to enable Teams, then try enabling inbound again."
+                        ),
+                    }
+                    continue
+
                 try:
                     import os
                     supabase_url = os.environ.get("SUPABASE_URL", "")
-                    svc_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+                    anon_key = os.environ.get("SUPABASE_ANON_KEY", "")
                     endpoint = "subscribe" if enable else "unsubscribe"
                     resp = httpx.post(
                         f"{supabase_url}/functions/v1/teams-subscriptions/{endpoint}",
-                        headers={"Authorization": f"Bearer {svc_key}"},
+                        headers={"Authorization": f"Bearer {anon_key}"},
                         timeout=30,
                     )
                     if resp.status_code == 200:
@@ -1142,26 +1177,6 @@ def _handle_inbound(action: str, patch_str: str | None) -> str:
                     "app_installed": None,  # TODO: detect whether Electron app is installed; surface DMG/install link if not
                 }
                 results[source] = result_entry
-                continue
-
-            # Teams — toggle via Graph subscriptions
-            if source == "teams":
-                try:
-                    import os
-                    supabase_url = os.environ.get("SUPABASE_URL", "")
-                    svc_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
-                    endpoint = "subscribe" if enable else "unsubscribe"
-                    resp = httpx.post(
-                        f"{supabase_url}/functions/v1/teams-subscriptions/{endpoint}",
-                        headers={"Authorization": f"Bearer {svc_key}"},
-                        timeout=30,
-                    )
-                    if resp.status_code == 200:
-                        results[source] = {"enabled": enable}
-                    else:
-                        results[source] = {"error": f"Teams {endpoint} failed: {resp.status_code} {resp.text[:200]}"}
-                except Exception as e:
-                    results[source] = {"error": str(e)}
                 continue
 
             # Composio trigger sources (slack, gmail, outlook)

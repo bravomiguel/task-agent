@@ -5,10 +5,10 @@
  *   POST /channel-webhook/composio   — All Composio triggers (Slack, Gmail, Outlook)
  *   POST /channel-webhook/slack      — Alias for /composio (backwards compat)
  *   POST /channel-webhook/slack-bot  — Slack Events API (bot events, direct from Slack)
- *   POST /channel-webhook/teams-bot  — Teams Bot Framework activities (chat surface)
  *   GET  /channel-webhook/teams      — Microsoft Graph subscription validation
- *   POST /channel-webhook/teams      — Microsoft Graph change notifications (Teams connection)
- *   POST /channel-webhook/meetings   — Meeting transcripts from Electron app
+ *   POST /channel-webhook/teams      — Microsoft Graph change notifications (Teams messages)
+ *   POST /channel-webhook/teams-bot  — Bot Framework messages (Teams chat surface DMs)
+ *   POST /channel-webhook/meetings   — Meeting transcripts from meeting-recorder app
  *
  * Composio sends all triggers to a single webhook URL. The handler inspects
  * payload.type to route: slack triggers → buffer+flush, email triggers → direct queue.
@@ -26,7 +26,7 @@
  * and looked up at request time.
  *
  * Teams webhook secret (clientState) is stored in vault as "teams_webhook_secret".
- * Teams Composio connection ID is stored in vault as "teams_composio_connection_id".
+ * Teams access token is fetched dynamically from Composio by entity ID + toolkit slug.
  */
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
@@ -329,14 +329,6 @@ async function getVaultSecret(name: string): Promise<string | null> {
   return data ?? null;
 }
 
-async function setVaultSecret(name: string, value: string): Promise<void> {
-  await fetch(`${SUPABASE_URL}/rest/v1/rpc/set_vault_secret`, {
-    method: "POST",
-    headers: supabaseHeaders(),
-    body: JSON.stringify({ p_name: name, p_secret: value }),
-  });
-}
-
 // ---------------------------------------------------------------------------
 // Shared debounce + flush + queue logic
 // ---------------------------------------------------------------------------
@@ -350,6 +342,7 @@ async function bufferAndFlush(
   messageTs: string,
   threadTs: string,
   debounceMs: number,
+  via: "chat_surface" | "connection" = "connection",
 ): Promise<Response> {
   const bufferKey = `slack:${channelId}`;
   const priority = channelType === "im" ? 1 : 2;
@@ -418,6 +411,7 @@ async function bufferAndFlush(
       channel_id: channelId,
       channel_type: channelType,
       thread_ts: lastThreadTs,
+      via,
       senders: [...senders],
       sender_ids: [...senderIds],
       message_count: flushedRows.length,
@@ -429,28 +423,28 @@ async function bufferAndFlush(
 }
 
 // ---------------------------------------------------------------------------
-// Inbound source gate — check if platform is enabled via vault config
+// Inbound channel gate — check if platform is enabled via vault config
 // ---------------------------------------------------------------------------
 
-let _inboundCache: { config: Record<string, boolean>; expiresAt: number } | null = null;
+let _channelsCache: { config: Record<string, boolean>; expiresAt: number } | null = null;
 
-async function isInboundEnabled(platform: string): Promise<boolean> {
+async function isChannelEnabled(platform: string): Promise<boolean> {
   // Cache for 60 seconds to avoid hammering vault on every message
-  if (_inboundCache && Date.now() < _inboundCache.expiresAt) {
-    return _inboundCache.config[platform] !== false;
+  if (_channelsCache && Date.now() < _channelsCache.expiresAt) {
+    return _channelsCache.config[platform] !== false;
   }
 
-  const raw = await getVaultSecret("inbound_sources");
+  const raw = await getVaultSecret("inbound_channels");
   if (raw) {
     try {
       const config = JSON.parse(raw) as Record<string, boolean>;
-      _inboundCache = { config, expiresAt: Date.now() + 60_000 };
+      _channelsCache = { config, expiresAt: Date.now() + 60_000 };
       return config[platform] !== false;
     } catch {
       // Invalid JSON — fall through to default (enabled)
     }
   }
-  // No config or parse error — all sources enabled by default
+  // No config or parse error — all channels enabled by default
   return true;
 }
 
@@ -512,19 +506,19 @@ async function handleComposio(req: Request): Promise<Response> {
   }
 
   if (SLACK_TRIGGERS.includes(routeKey)) {
-    if (!(await isInboundEnabled("slack"))) {
+    if (!(await isChannelEnabled("slack"))) {
       return jsonResponse({ ok: true, skipped: "channel_disabled", platform: "slack" });
     }
     return handleSlackTrigger(data);
   }
   if (routeKey === "gmail_new_gmail_message" || routeKey === "googlesuper_new_message") {
-    if (!(await isInboundEnabled("gmail"))) {
+    if (!(await isChannelEnabled("gmail"))) {
       return jsonResponse({ ok: true, skipped: "channel_disabled", platform: "gmail" });
     }
     return handleGmailTrigger(data);
   }
   if (routeKey === "outlook_message_trigger") {
-    if (!(await isInboundEnabled("outlook"))) {
+    if (!(await isChannelEnabled("outlook"))) {
       return jsonResponse({ ok: true, skipped: "channel_disabled", platform: "outlook" });
     }
     return handleOutlookTrigger(data, metadata);
@@ -569,6 +563,7 @@ async function handleSlackTrigger(data: Record<string, unknown>): Promise<Respon
     senderId, senderName, messageText,
     channelId, channelType, messageTs, threadTs,
     DEBOUNCE_MS,
+    "connection",
   );
 }
 
@@ -709,7 +704,7 @@ async function handleSlackBot(req: Request): Promise<Response> {
   }
 
   // Check if Slack channel is enabled
-  if (!(await isInboundEnabled("slack"))) {
+  if (!(await isChannelEnabled("slack"))) {
     return jsonResponse({ ok: true, skipped: "channel_disabled", platform: "slack" });
   }
 
@@ -827,6 +822,7 @@ async function handleSlackBot(req: Request): Promise<Response> {
     senderId, senderName, messageText,
     channelId, channelType, messageTs, threadTs,
     debounceMs,
+    channelType === "im" ? "chat_surface" : "connection",
   );
 }
 
@@ -839,11 +835,12 @@ const TEAMS_DEBOUNCE_MS = 5_000;
 // spaced ~3-4 seconds apart. DM debounce must exceed that gap.
 const TEAMS_DM_DEBOUNCE_MS = 5_000;
 
-let _teamsTokenCache: { token: string; connectionId: string; expiresAt: number } | null = null;
+let _teamsTokenCache: { token: string; expiresAt: number } | null = null;
 
 /**
- * Get the Microsoft access token via Composio connected account.
- * Connection ID is stored in vault as "teams_composio_connection_id".
+ * Get the Microsoft access token via dynamic Composio lookup.
+ * Queries active connected accounts by entity ID and finds the
+ * microsoft_teams connection by toolkit slug — no stored connection ID needed.
  */
 async function getTeamsAccessToken(): Promise<string | null> {
   // Return cached token if still valid (cache for 5 minutes)
@@ -851,18 +848,37 @@ async function getTeamsAccessToken(): Promise<string | null> {
     return _teamsTokenCache.token;
   }
 
-  // Look up connection ID from vault
-  const connectionId = await getVaultSecret("teams_composio_connection_id");
-  if (!connectionId) {
-    console.error("[channel-webhook/teams] teams_composio_connection_id not in vault");
-    return null;
-  }
+  if (!COMPOSIO_API_KEY) return null;
 
-  const token = await fetchComposioAccessToken(connectionId);
-  if (token) {
-    _teamsTokenCache = { token, connectionId, expiresAt: Date.now() + 5 * 60 * 1000 };
+  try {
+    const params = new URLSearchParams({
+      statuses: "ACTIVE",
+      user_ids: COMPOSIO_ENTITY_ID,
+    });
+    const resp = await fetch(
+      `https://backend.composio.dev/api/v3/connected_accounts?${params}`,
+      { headers: { "x-api-key": COMPOSIO_API_KEY } },
+    );
+    if (!resp.ok) return null;
+
+    const data = await resp.json();
+    const items = data.items ?? data;
+    if (!Array.isArray(items)) return null;
+
+    for (const item of items) {
+      const slug = typeof item.toolkit === "object" ? item.toolkit?.slug : item.toolkit;
+      if (slug === "microsoft_teams" && item.status === "ACTIVE") {
+        const token = item.state?.val?.access_token;
+        if (token) {
+          _teamsTokenCache = { token, expiresAt: Date.now() + 5 * 60 * 1000 };
+          return token;
+        }
+      }
+    }
+  } catch {
+    // Fall through
   }
-  return token;
+  return null;
 }
 
 let _teamsUserId: string | null = null;
@@ -1036,7 +1052,7 @@ async function handleTeams(req: Request): Promise<Response> {
   }
 
   // Check if Teams channel is enabled (after validation — always allow validation)
-  if (!(await isInboundEnabled("teams"))) {
+  if (!(await isChannelEnabled("teams"))) {
     return jsonResponse({ ok: true, skipped: "channel_disabled", platform: "teams" });
   }
 
@@ -1074,7 +1090,7 @@ async function handleTeams(req: Request): Promise<Response> {
     return jsonResponse({ ok: false, error: "token_unavailable" }, 500);
   }
 
-  // Get connected user ID for mention filtering in channels
+  // Get connected user ID to filter out own messages
   const connectedUserId = await getConnectedTeamsUserId(accessToken);
 
   let processed = 0;
@@ -1135,17 +1151,6 @@ async function handleTeams(req: Request): Promise<Response> {
     if (!message.text.trim()) {
       skipped++;
       continue;
-    }
-
-    // For channel messages: only process if connected user is @mentioned
-    if (isChannelMessage && connectedUserId) {
-      const isMentioned = message.mentions.some(
-        (m) => m.mentioned?.user?.id === connectedUserId,
-      );
-      if (!isMentioned) {
-        skipped++;
-        continue;
-      }
     }
 
     console.log(
@@ -1226,6 +1231,7 @@ async function handleTeams(req: Request): Promise<Response> {
         team_id: isChannelMessage ? teamId : undefined,
         channel_id: isChannelMessage ? channelId : undefined,
         chat_type: chatType,
+        via: "connection",
         senders: [...senders],
         sender_ids: [...senderIds],
         message_count: flushedRows.length,
@@ -1237,6 +1243,90 @@ async function handleTeams(req: Request): Promise<Response> {
   }
 
   return jsonResponse({ ok: true, processed, skipped });
+}
+
+// ---------------------------------------------------------------------------
+// Meeting transcript handler (from meeting-recorder app)
+// ---------------------------------------------------------------------------
+
+const MEETING_TRANSCRIPT_MAX_CHARS = 20_000;
+
+async function handleMeetings(req: Request): Promise<Response> {
+  let body: Record<string, unknown>;
+  try {
+    body = await req.json();
+  } catch {
+    return new Response("Invalid JSON", { status: 400 });
+  }
+
+  const title = (body.title as string) ?? "Untitled Meeting";
+  const transcript = (body.transcript as string) ?? "";
+  const transcriptFilename = (body.transcriptFilename as string) ?? "";
+  const duration = body.duration as number | undefined;
+  const startedAt = (body.startedAt as string) ?? "";
+  const endedAt = (body.endedAt as string) ?? "";
+  const source = (body.source as string) ?? "";
+  const meetingPlatform = (body.meetingPlatform as string) ?? "";
+  const calendarEmail = (body.calendarEmail as string) ?? "";
+  const calendarEventId = (body.calendarEventId as string) ?? "";
+  const attendees = body.attendees as Array<Record<string, unknown>> | undefined;
+
+  if (!transcript) {
+    return jsonResponse({ ok: true, skipped: "empty_transcript" });
+  }
+
+  // Build transcript markdown (mirrors meeting-recorder's buildTranscriptMarkdown)
+  const lines: string[] = [
+    `# ${title}`,
+    "",
+    `- **Date**: ${startedAt}`,
+    `- **Trigger**: ${source || "calendar"}`,
+  ];
+
+  if (meetingPlatform && source !== "manual") {
+    lines.push(`- **Platform**: ${meetingPlatform}`);
+  }
+  if (endedAt) lines.push(`- **Ended**: ${endedAt}`);
+  if (duration) {
+    const mins = Math.floor(duration / 60);
+    const secs = duration % 60;
+    lines.push(`- **Duration**: ${mins}m ${secs}s`);
+  }
+  if (calendarEmail) lines.push(`- **Calendar**: ${calendarEmail}`);
+  if (calendarEventId) lines.push(`- **Calendar Event ID**: ${calendarEventId}`);
+
+  if (attendees?.length) {
+    lines.push("", "## Attendees", "");
+    for (const a of attendees) {
+      const parts = [(a.name as string) || "Unknown"];
+      if (a.email) parts.push(`<${a.email}>`);
+      if (a.status) parts.push(`(${a.status})`);
+      lines.push(`- ${parts.join(" ")}`);
+    }
+  }
+
+  lines.push("", "## Transcript", "", transcript);
+
+  let combinedText = lines.join("\n");
+
+  // Truncate for system message (agent can read full file at transcript_path)
+  if (combinedText.length > MEETING_TRANSCRIPT_MAX_CHARS) {
+    combinedText = combinedText.slice(0, MEETING_TRANSCRIPT_MAX_CHARS) + "\n\n[truncated — read full transcript at transcript_path]";
+  }
+
+  // Insert directly into queue (no debounce needed for meetings)
+  await insertQueue({
+    source: "meeting",
+    priority: 3,
+    buffer_key: `meeting:${body.id ?? Date.now()}`,
+    combined_text: combinedText,
+    metadata: {
+      transcript_filename: transcriptFilename,
+    },
+  });
+
+  console.log(`[channel-webhook/meetings] queued: ${title}`);
+  return jsonResponse({ ok: true, queued: true, title });
 }
 
 // ---------------------------------------------------------------------------
@@ -1265,272 +1355,168 @@ function jsonResponse(data: Record<string, unknown>, status = 200): Response {
 }
 
 // ---------------------------------------------------------------------------
-// Meetings handler — receives transcripts from Electron app
+// Teams Bot: Bot Framework messaging endpoint (chat surface inbound)
 // ---------------------------------------------------------------------------
 
-async function handleMeetings(req: Request): Promise<Response> {
+const TEAMS_BOT_DEBOUNCE_MS = 300;
+
+/**
+ * Handle Teams Bot Framework messages.
+ *
+ * Receives messages from the Bot Framework when a user DMs the Mally bot.
+ * On first message from a conversation, creates a Graph subscription for
+ * just that chat (deferred subscription pattern).
+ *
+ * Also stores the serviceUrl from the first activity so the bot can send
+ * proactive messages later.
+ */
+async function handleTeamsBot(req: Request): Promise<Response> {
   let body: Record<string, unknown>;
   try {
     body = await req.json();
   } catch {
-    return jsonResponse({ error: "Invalid JSON" }, 400);
-  }
-
-  const id = body.id as string;
-  const title = body.title as string;
-  const transcript = body.transcript as string;
-  const userId = body.userId as string;
-  const startedAt = body.startedAt as string;
-
-  if (!id || !title || !transcript || !userId || !startedAt) {
-    return jsonResponse({ error: "Missing required fields: id, title, transcript, userId, startedAt" }, 400);
-  }
-
-  // Check if meetings inbound source is enabled
-  if (!(await isInboundEnabled("meetings"))) {
-    return jsonResponse({ ok: false, reason: "meetings inbound source is disabled" });
-  }
-
-  // Store in meetings table
-  const meetingRow = {
-    id,
-    user_id: userId,
-    title,
-    transcript,
-    duration: body.duration ?? null,
-    started_at: startedAt,
-    ended_at: body.endedAt ?? null,
-    source: body.source ?? "calendar",
-    calendar_event_id: body.calendarEventId ?? null,
-    calendar_email: body.calendarEmail ?? null,
-    meeting_url: body.meetingUrl ?? null,
-    meeting_platform: body.meetingPlatform ?? null,
-    attendees: body.attendees ?? [],
-  };
-
-  const storeResp = await fetch(`${SUPABASE_URL}/rest/v1/meetings`, {
-    method: "POST",
-    headers: {
-      ...supabaseHeaders(),
-      "Prefer": "return=representation,resolution=merge-duplicates",
-    },
-    body: JSON.stringify(meetingRow),
-  });
-
-  if (!storeResp.ok) {
-    const text = await storeResp.text();
-    console.error(`[channel-webhook] meetings store failed ${storeResp.status}: ${text}`);
-    return jsonResponse({ error: "Failed to store meeting" }, 500);
-  }
-
-  // Insert into inbound queue (no debounce — like email, single complete payload)
-  await insertQueue({
-    source: "meeting",
-    priority: 2,
-    combined_text: transcript,
-    metadata: {
-      meeting_id: id,
-      title,
-      duration: body.duration ?? null,
-      started_at: startedAt,
-      ended_at: body.endedAt ?? null,
-      source: body.source ?? "calendar",
-      meeting_platform: body.meetingPlatform ?? null,
-      attendees: body.attendees ?? [],
-      calendar_email: body.calendarEmail ?? null,
-    },
-  });
-
-  console.log(`[channel-webhook] meeting ${id} stored and queued`);
-  return jsonResponse({ ok: true, meeting_id: id });
-}
-
-// ---------------------------------------------------------------------------
-// Teams Bot Framework handler — receives activities from Bot Framework Service
-// ---------------------------------------------------------------------------
-
-const TEAMS_BOT_APP_ID = Deno.env.get("TEAMS_BOT_APP_ID") ?? "";
-const TEAMS_BOT_APP_SECRET = Deno.env.get("TEAMS_BOT_APP_SECRET") ?? "";
-const TEAMS_BOT_DM_DEBOUNCE_MS = 300;
-
-let _botFrameworkToken: { token: string; expiresAt: number } | null = null;
-
-/**
- * Get a Bot Framework token for sending replies.
- */
-async function getBotFrameworkToken(): Promise<string | null> {
-  if (_botFrameworkToken && Date.now() < _botFrameworkToken.expiresAt) {
-    return _botFrameworkToken.token;
-  }
-  try {
-    // SingleTenant bots need bot's HOME tenant for token acquisition
-    const homeTenant = await getVaultSecret("teams_bot_home_tenant_id");
-    const tokenAuthority = homeTenant || "botframework.com";
-    const resp = await fetch(`https://login.microsoftonline.com/${tokenAuthority}/oauth2/v2.0/token`, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        grant_type: "client_credentials",
-        client_id: TEAMS_BOT_APP_ID,
-        client_secret: TEAMS_BOT_APP_SECRET,
-        scope: "https://api.botframework.com/.default",
-      }),
-    });
-    if (!resp.ok) return null;
-    const data = await resp.json();
-    _botFrameworkToken = {
-      token: data.access_token,
-      expiresAt: Date.now() + (data.expires_in - 60) * 1000,
-    };
-    return data.access_token;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Handle Teams Bot Framework activities.
- * Bot Framework sends JSON activities with type, text, from, conversation, serviceUrl.
- */
-async function handleTeamsBot(req: Request): Promise<Response> {
-  const rawBody = await req.text();
-
-  let activity: Record<string, unknown>;
-  try {
-    activity = JSON.parse(rawBody);
-  } catch {
     return new Response("Invalid JSON", { status: 400 });
   }
 
-  const activityType = activity.type as string;
+  const activityType = (body.type as string) ?? "";
 
-  // Respond to conversationUpdate (bot added to conversation) — no-op
+  // Handle conversationUpdate (bot installed, members added)
   if (activityType === "conversationUpdate") {
-    return new Response("", { status: 200 });
+    // Store serviceUrl on first contact so bot can send proactive messages
+    const serviceUrl = (body.serviceUrl as string) ?? "";
+    if (serviceUrl) {
+      await setVaultSecret("teams_bot_service_url", serviceUrl);
+    }
+    return jsonResponse({ ok: true, skipped: "conversation_update" });
   }
 
   // Only process message activities
   if (activityType !== "message") {
-    return new Response("", { status: 200 });
+    return jsonResponse({ ok: true, skipped: "not_message" });
   }
 
-  const text = (activity.text as string ?? "").trim();
-  if (!text) {
-    return new Response("", { status: 200 });
+  const text = (body.text as string) ?? "";
+  if (!text.trim()) {
+    return jsonResponse({ ok: true, skipped: "empty_message" });
   }
 
-  const from = activity.from as Record<string, unknown> | undefined;
-  const senderId = (from?.aadObjectId as string) ?? (from?.id as string) ?? "unknown";
-  const senderName = (from?.name as string) ?? senderId;
-  const conversation = activity.conversation as Record<string, unknown> | undefined;
-  const conversationId = (conversation?.id as string) ?? "unknown";
-  const conversationType = (conversation?.conversationType as string) ?? "personal";
-  const serviceUrl = (activity.serviceUrl as string) ?? "";
-  const activityId = (activity.id as string) ?? "";
+  const conversation = (body.conversation ?? {}) as Record<string, unknown>;
+  const chatId = (conversation.id as string) ?? "";
+  const from = (body.from ?? {}) as Record<string, unknown>;
+  const senderId = (from.id as string) ?? "";
+  const senderName = (from.name as string) ?? "Unknown";
+  const serviceUrl = (body.serviceUrl as string) ?? "";
+  const messageId = (body.id as string) ?? "";
 
-  // Block non-owner DMs
-  if (conversationType === "personal") {
-    const ownerId = await getVaultSecret("teams_bot_owner_id");
-    if (ownerId && senderId !== ownerId) {
-      // Send rejection reply via Bot Framework
-      const token = await getBotFrameworkToken();
-      if (token && serviceUrl) {
-        await fetch(`${serviceUrl}v3/conversations/${encodeURIComponent(conversationId)}/activities`, {
+  // Store serviceUrl for proactive messaging
+  if (serviceUrl) {
+    await setVaultSecret("teams_bot_service_url", serviceUrl);
+  }
+
+  // Store owner conversation ID on first DM (for proactive messaging)
+  const existingConvId = await getVaultSecret("teams_bot_owner_conversation_id");
+  if (!existingConvId && chatId) {
+    await setVaultSecret("teams_bot_owner_conversation_id", chatId);
+
+    // Deferred subscription: create a Graph subscription for this specific chat
+    // so inbound messages also flow through the Graph notification pipeline
+    // (enables debounce, batching, and the standard queue-dispatcher flow)
+    try {
+      const anon_key = SUPABASE_SERVICE_ROLE_KEY; // Edge function has the service role key
+      const resp = await fetch(
+        `${SUPABASE_URL}/functions/v1/teams-subscriptions/subscribe-chat`,
+        {
           method: "POST",
           headers: {
-            "Authorization": `Bearer ${token}`,
+            Authorization: `Bearer ${anon_key}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({
-            type: "message",
-            text: "Sorry, this is a private assistant. Only the owner can message me directly.",
-          }),
-        });
+          body: JSON.stringify({ chat_id: chatId }),
+        },
+      );
+      if (resp.ok) {
+        console.log(`[channel-webhook/teams-bot] deferred subscription created for chat ${chatId}`);
+      } else {
+        console.error(`[channel-webhook/teams-bot] deferred subscription failed: ${resp.status}`);
       }
-      return new Response("", { status: 200 });
-    }
-
-    // Store owner ID on first DM if not set
-    if (!ownerId) {
-      await setVaultSecret("teams_bot_owner_id", senderId);
+    } catch (e) {
+      console.error(`[channel-webhook/teams-bot] deferred subscription error:`, e);
     }
   }
 
-  // Store serviceUrl in vault for outbound messaging
-  await setVaultSecret("teams_bot_service_url", serviceUrl);
+  // Buffer and flush the message through the standard pipeline
+  const bufferKey = `teams-bot:${chatId}`;
+  const priority = 1; // DM priority
 
-  // Buffer and flush through the inbound queue
-  const bufferKey = `teams:${conversationId}`;
-  const metadata = {
-    platform: "teams",
-    channel: conversationId,
-    channel_type: conversationType,
-    sender: senderId,
-    activity_id: activityId,
-    service_url: serviceUrl,
-  };
-
-  // Insert into inbound_buffer
-  const bufferRow = {
-    source: "teams-bot",
+  const inserted = await insertBuffer({
+    source: "teams",
     buffer_key: bufferKey,
     sender: senderId,
     sender_name: senderName,
     message_text: text,
-    metadata,
-  };
-
-  const bufferResp = await fetch(`${SUPABASE_URL}/rest/v1/inbound_buffer`, {
-    method: "POST",
-    headers: {
-      ...supabaseHeaders(),
-      "Prefer": "return=representation,resolution=ignore-duplicates",
+    metadata: {
+      message_ts: messageId,
+      message_id: messageId,
+      chat_id: chatId,
+      chat_type: "bot-dm",
+      priority,
+      via: "chat_surface",
     },
-    body: JSON.stringify(bufferRow),
   });
 
-  if (!bufferResp.ok) {
-    console.error(`[channel-webhook/teams-bot] buffer insert failed: ${bufferResp.status}`);
+  if (!inserted) {
+    return jsonResponse({ ok: true, skipped: "duplicate_or_error" });
   }
 
-  // Flush after debounce
-  setTimeout(async () => {
-    try {
-      const flushResp = await fetch(`${SUPABASE_URL}/rest/v1/rpc/flush_inbound_buffer`, {
-        method: "POST",
-        headers: supabaseHeaders(),
-        body: JSON.stringify({ p_buffer_key: bufferKey }),
-      });
-      if (!flushResp.ok) return;
-      const flushed = await flushResp.json();
-      if (!flushed || flushed.length === 0) return;
+  const insertedAt = inserted.created_at as string;
 
-      const combined = flushed.map((r: Record<string, unknown>) => r.message_text).join("\n");
+  // Short debounce for bot DMs
+  await new Promise((r) => setTimeout(r, TEAMS_BOT_DEBOUNCE_MS));
 
-      // Insert into inbound_queue
-      await fetch(`${SUPABASE_URL}/rest/v1/inbound_queue`, {
-        method: "POST",
-        headers: {
-          ...supabaseHeaders(),
-          "Prefer": "return=representation",
-        },
-        body: JSON.stringify({
-          source: "teams-bot",
-          buffer_key: bufferKey,
-          combined_text: combined,
-          metadata: {
-            ...metadata,
-            sender_name: senderName,
-            flushed_count: flushed.length,
-          },
-        }),
-      });
-    } catch (e) {
-      console.error("[channel-webhook/teams-bot] flush error:", e);
-    }
-  }, TEAMS_BOT_DM_DEBOUNCE_MS);
+  const hasNewer = await checkNewerMessages(bufferKey, insertedAt);
+  if (hasNewer) {
+    return jsonResponse({ ok: true, debounced: true });
+  }
 
-  return new Response("", { status: 200 });
+  const flushedRows = await flushBuffer(bufferKey);
+  if (flushedRows.length === 0) {
+    return jsonResponse({ ok: true, skipped: "already_flushed" });
+  }
+
+  const lines: string[] = [];
+  for (const row of flushedRows) {
+    const name = (row.sender_name as string) || (row.sender as string);
+    lines.push(`[${name}] ${row.message_text}`);
+  }
+
+  await insertQueue({
+    source: "teams",
+    priority,
+    buffer_key: bufferKey,
+    combined_text: lines.join("\n"),
+    metadata: {
+      chat_id: chatId,
+      chat_type: "bot-dm",
+      via: "chat_surface",
+      senders: [senderName],
+      sender_ids: [senderId],
+      message_count: flushedRows.length,
+    },
+  });
+
+  console.log(`[channel-webhook/teams-bot] flushed ${flushedRows.length} messages to queue`);
+  return jsonResponse({ ok: true, flushed: true, count: flushedRows.length });
+}
+
+async function setVaultSecret(name: string, value: string): Promise<void> {
+  const resp = await fetch(`${SUPABASE_URL}/rest/v1/rpc/set_vault_secret`, {
+    method: "POST",
+    headers: supabaseHeaders(),
+    body: JSON.stringify({ p_name: name, p_secret: value }),
+  });
+  if (!resp.ok) {
+    console.error(`[channel-webhook] failed to set vault secret ${name}: ${resp.status}`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1554,11 +1540,11 @@ serve(async (req: Request) => {
     return new Response("Method Not Allowed", { status: 405 });
   }
 
-  if (path.endsWith("/slack-bot")) {
-    return handleSlackBot(req);
-  }
   if (path.endsWith("/teams-bot")) {
     return handleTeamsBot(req);
+  }
+  if (path.endsWith("/slack-bot")) {
+    return handleSlackBot(req);
   }
   if (path.endsWith("/composio") || path.endsWith("/slack")) {
     return handleComposio(req);

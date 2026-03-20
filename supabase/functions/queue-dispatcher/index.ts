@@ -19,10 +19,6 @@ const LANGGRAPH_API_URL = Deno.env.get("LANGGRAPH_API_URL") ?? "";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 
-function escapeAttr(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
 // ---------------------------------------------------------------------------
 // Supabase REST helpers
 // ---------------------------------------------------------------------------
@@ -185,12 +181,15 @@ async function dispatchItem(item: Record<string, unknown>): Promise<{ dispatched
   }
 
   // Build message based on source
+  const via = (meta.via as string) ?? "";
+
   if (source === "slack") {
     const channelId = (meta.channel_id as string) ?? "";
     const threadTs = (meta.thread_ts as string) ?? "";
     const attrs = [
-      `type="channel-message"`,
+      `type="message"`,
       `platform="slack"`,
+      `via="${via || "connection"}"`,
       `channel="${channelId}"`,
     ];
     if (threadTs) attrs.push(`thread_ts="${threadTs}"`);
@@ -204,24 +203,6 @@ async function dispatchItem(item: Record<string, unknown>): Promise<{ dispatched
     runInput.channel_platform = "slack";
     runInput.channel_id = channelId;
     runInput.channel_metadata = meta;
-  } else if (source === "teams-bot") {
-    const conversationId = (meta.channel as string) ?? "";
-    const conversationType = (meta.channel_type as string) ?? "personal";
-    const isDm = conversationType === "personal";
-    const senderName = (meta.sender_name as string) ?? "";
-    const senderId = (meta.sender as string) ?? "";
-    const attrs = [
-      `type="channel-message"`,
-      `platform="teams"`,
-      `chat_id="${conversationId}"`,
-      `chat_type="${conversationType}"`,
-    ];
-    if (senderName) attrs.push(`${isDm ? "sender" : "senders"}="${senderName}"`);
-    if (senderId) attrs.push(`${isDm ? "sender_id" : "sender_ids"}="${senderId}"`);
-    message = `<system-message ${attrs.join(" ")}>\n${combinedText}\n</system-message>`;
-    runInput.channel_platform = "teams";
-    runInput.channel_id = conversationId;
-    runInput.channel_metadata = meta;
   } else if (source === "teams") {
     const chatId = (meta.chat_id as string) ?? "";
     const teamId = (meta.team_id as string) ?? "";
@@ -229,8 +210,9 @@ async function dispatchItem(item: Record<string, unknown>): Promise<{ dispatched
     const chatType = (meta.chat_type as string) ?? "chat";
     const isChannel = chatType === "channel";
     const attrs = [
-      `type="channel-message"`,
+      `type="message"`,
       `platform="teams"`,
+      `via="${via || "connection"}"`,
     ];
     if (isChannel) {
       attrs.push(`team_id="${teamId}"`);
@@ -241,12 +223,44 @@ async function dispatchItem(item: Record<string, unknown>): Promise<{ dispatched
     attrs.push(`chat_type="${chatType}"`);
     const ids = meta.sender_ids as string[] | undefined;
     const names = meta.senders as string[] | undefined;
-    const isDm = chatType === "chat";
+    const isDm = chatType === "chat" || chatType === "bot-dm";
     if (names) attrs.push(`${isDm ? "sender" : "senders"}="${names.join(",")}"`);
     if (ids) attrs.push(`${isDm ? "sender_id" : "sender_ids"}="${ids.join(",")}"`);
     message = `<system-message ${attrs.join(" ")}>\n${combinedText}\n</system-message>`;
     runInput.channel_platform = "teams";
     runInput.channel_id = isChannel ? `team:${teamId}/channel:${channelId}` : chatId;
+    runInput.channel_metadata = meta;
+  } else if (source === "telegram") {
+    const chatId = (meta.chat_id as string) ?? "";
+    const attrs = [
+      `type="message"`,
+      `platform="telegram"`,
+      `via="chat_surface"`,
+      `chat_id="${chatId}"`,
+    ];
+    const ids = meta.sender_ids as string[] | undefined;
+    const names = meta.senders as string[] | undefined;
+    if (names) attrs.push(`sender="${names[0]}"`);
+    if (ids) attrs.push(`sender_id="${ids[0]}"`);
+    message = `<system-message ${attrs.join(" ")}>\n${combinedText}\n</system-message>`;
+    runInput.channel_platform = "telegram";
+    runInput.channel_id = chatId;
+    runInput.channel_metadata = meta;
+  } else if (source === "whatsapp") {
+    const chatId = (meta.chat_id as string) ?? "";
+    const attrs = [
+      `type="message"`,
+      `platform="whatsapp"`,
+      `via="chat_surface"`,
+      `chat_id="${chatId}"`,
+    ];
+    const ids = meta.sender_ids as string[] | undefined;
+    const names = meta.senders as string[] | undefined;
+    if (names) attrs.push(`sender="${names[0]}"`);
+    if (ids) attrs.push(`sender_id="${ids[0]}"`);
+    message = `<system-message ${attrs.join(" ")}>\n${combinedText}\n</system-message>`;
+    runInput.channel_platform = "whatsapp";
+    runInput.channel_id = chatId;
     runInput.channel_metadata = meta;
   } else if (source === "email") {
     const emailSource = (meta.email_source as string) ?? "email";
@@ -270,38 +284,10 @@ async function dispatchItem(item: Record<string, unknown>): Promise<{ dispatched
     runInput.channel_platform = emailSource;
     runInput.channel_metadata = meta;
   } else if (source === "meeting") {
-    const meetingId = (meta.meeting_id as string) ?? "";
-    const title = (meta.title as string) ?? "";
-    const duration = meta.duration as number | null;
-    const startedAt = (meta.started_at as string) ?? "";
-    const endedAt = (meta.ended_at as string) ?? "";
-    const meetingSource = (meta.source as string) ?? "calendar";
-    const platform = (meta.meeting_platform as string) ?? "unknown";
-    const calendarEmail = (meta.calendar_email as string) ?? "";
-    const attendees = (meta.attendees as Array<Record<string, string>>) ?? [];
-
-    const attrs = [
-      `type="meeting-transcript"`,
-      `meeting_id="${meetingId}"`,
-      `title="${escapeAttr(title)}"`,
-      `platform="${platform}"`,
-      `source="${meetingSource}"`,
-    ];
-    if (startedAt) attrs.push(`started_at="${startedAt}"`);
-    if (endedAt) attrs.push(`ended_at="${endedAt}"`);
-    if (duration != null) attrs.push(`duration_seconds="${duration}"`);
-    if (calendarEmail) attrs.push(`calendar_email="${calendarEmail}"`);
-
-    let attendeesBlock = "";
-    if (attendees.length > 0) {
-      const attendeeLines = attendees
-        .map((a) => `  <attendee status="${a.status ?? "unknown"}">${escapeAttr(a.name ?? "")}</attendee>`)
-        .join("\n");
-      attendeesBlock = `\n<attendees>\n${attendeeLines}\n</attendees>\n`;
-    }
-
-    message = `<system-message ${attrs.join(" ")}>${attendeesBlock}\n${combinedText}\n</system-message>`;
-    runInput.channel_platform = "meeting";
+    const transcriptFilename = (meta.transcript_filename as string) ?? "";
+    const attrs = [`type="meeting-transcript"`];
+    if (transcriptFilename) attrs.push(`transcript_path="/mnt/meeting-transcripts/${transcriptFilename}"`);
+    message = `<system-message ${attrs.join(" ")}>\n${combinedText}\n</system-message>`;
     runInput.channel_metadata = meta;
   } else {
     // Cron, heartbeat, subagent, sessions-send — combined_text is pre-formatted

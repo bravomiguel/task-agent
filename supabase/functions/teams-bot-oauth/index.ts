@@ -9,8 +9,9 @@
  *   GET /teams-bot-oauth/install   — Redirects to Microsoft admin consent page
  *   GET /teams-bot-oauth/callback  — Microsoft redirects here after consent
  *
- * The bot itself receives messages via the Bot Framework messaging endpoint,
- * handled by the channel-webhook/teams-bot route (to be added).
+ * The bot receives messages via the Bot Framework messaging endpoint at
+ * channel-webhook/teams-bot. On first message, a Graph subscription is
+ * created for that specific chat (deferred subscription pattern).
  *
  * Required env vars:
  *   TEAMS_BOT_APP_ID       — Azure AD app (client) ID for the bot
