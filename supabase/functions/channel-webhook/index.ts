@@ -717,18 +717,21 @@ async function handleSlackBot(req: Request): Promise<Response> {
 
   if (!signingSecret) {
     // Direct chat disabled or not set up — auto-reply if we have a token
-    if (botToken) {
+    // But skip bot's own messages to avoid feedback loops
+    if (botToken && body.type === "event_callback") {
       const event = (body.event ?? {}) as Record<string, unknown>;
-      const channelId = (event.channel as string) ?? "";
-      if (channelId) {
-        await fetch("https://slack.com/api/chat.postMessage", {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${botToken}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ channel: channelId, text: DIRECT_CHAT_DISABLED_REPLY }),
-        });
+      if (!event.bot_id && !event.subtype) {
+        const channelId = (event.channel as string) ?? "";
+        if (channelId) {
+          await fetch("https://slack.com/api/chat.postMessage", {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${botToken}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ channel: channelId, text: DIRECT_CHAT_DISABLED_REPLY }),
+          });
+        }
       }
     }
     return jsonResponse({ ok: true, skipped: "direct_chat_disabled" });
