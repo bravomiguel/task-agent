@@ -1417,31 +1417,6 @@ async function handleTeamsBot(req: Request): Promise<Response> {
   const existingConvId = await getVaultSecret("teams_bot_owner_conversation_id");
   if (!existingConvId && chatId) {
     await setVaultSecret("teams_bot_owner_conversation_id", chatId);
-
-    // Deferred subscription: create a Graph subscription for this specific chat
-    // so inbound messages also flow through the Graph notification pipeline
-    // (enables debounce, batching, and the standard queue-dispatcher flow)
-    try {
-      const anon_key = SUPABASE_SERVICE_ROLE_KEY; // Edge function has the service role key
-      const resp = await fetch(
-        `${SUPABASE_URL}/functions/v1/teams-subscriptions/subscribe-chat`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${anon_key}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ chat_id: chatId }),
-        },
-      );
-      if (resp.ok) {
-        console.log(`[channel-webhook/teams-bot] deferred subscription created for chat ${chatId}`);
-      } else {
-        console.error(`[channel-webhook/teams-bot] deferred subscription failed: ${resp.status}`);
-      }
-    } catch (e) {
-      console.error(`[channel-webhook/teams-bot] deferred subscription error:`, e);
-    }
   }
 
   // Buffer and flush the message through the standard pipeline

@@ -669,8 +669,7 @@ def manage_config(
       GET returns all available platforms with enabled/disabled status.
       PATCH to enable triggers the setup flow and returns an install URL + instructions — do not ask
       the user for tokens, credentials, or chat IDs; the system handles all of that automatically.
-      PATCH to disable removes credentials.
-      Teams direct_chat requires the Teams connection to be enabled first (returns prerequisite_missing if not).
+      PATCH to disable removes credentials. All platforms are self-contained (no connection dependency).
     - **inbound**: Inbound event toggles per platform (slack, gmail, outlook, teams, meetings).
       Each platform requires its corresponding connection to be enabled first.
       Slack inbound requires Slack connection. Gmail requires Google. Outlook requires Microsoft.
@@ -810,13 +809,12 @@ def _handle_connections(action: str, patch_str: str | None) -> str:
 # -- Teams helpers --
 
 def _teardown_teams_dependents() -> list[str]:
-    """Teardown Teams inbound and direct chat if they are active.
+    """Teardown Teams inbound (Graph subscriptions) if active.
 
     Called as a side effect when Teams connection is disabled.
-    Returns list of what was disabled (e.g. ["inbound", "direct_chat"]).
+    Returns list of what was disabled (e.g. ["inbound"]).
     """
     import os
-    from agent.auth import vault_get_secret, vault_delete_secret
 
     also_disabled = []
 
@@ -842,16 +840,6 @@ def _teardown_teams_dependents() -> list[str]:
                     timeout=30,
                 )
                 also_disabled.append("inbound")
-    except Exception:
-        pass
-
-    # Teardown direct chat (bot credentials)
-    try:
-        if vault_get_secret("teams_bot_app_id"):
-            for key in ["teams_bot_app_id", "teams_bot_app_secret", "teams_bot_tenant_id",
-                        "teams_bot_service_url", "teams_bot_owner_conversation_id"]:
-                vault_delete_secret(key)
-            also_disabled.append("direct_chat")
     except Exception:
         pass
 
@@ -957,18 +945,6 @@ def _handle_direct_chat(action: str, patch_str: str | None) -> str:
             if desired == "enabled":
                 if not cfg.get("install_url"):
                     results[surface] = {"error": f"{cfg['display_name']} is not configured on this instance."}
-
-                # Teams: check connection prerequisite
-                elif surface == "teams" and not _is_teams_connection_active():
-                    results[surface] = {
-                        "status": "prerequisite_missing",
-                        "message": (
-                            "Teams direct chat requires the Microsoft Teams connection to be enabled first. "
-                            "This connection grants OAuth access to the user's Teams account so the system can "
-                            "receive messages via Graph subscriptions. "
-                            "Ask the user before enabling, and explain why briefly — use manage_config key=\"connections\" to enable teams."
-                        ),
-                    }
 
                 else:
                     message = cfg.get("setup_message") or (

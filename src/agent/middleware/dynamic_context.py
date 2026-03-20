@@ -197,7 +197,7 @@ class RuntimeContextMiddleware(AgentMiddleware[RuntimeContextState, Any]):
             "Use `manage_config` to discover and manage:\n"
             "- key `\"connections\"` — OAuth access to the user's accounts — read/write as the user (enable/disable). Disabling a connection also tears down its inbound triggers.\n"
             "- key `\"inbound\"` — inbound event sources (Slack, Gmail, Outlook, Teams, Meetings). Each requires its corresponding connection enabled first.\n"
-            "- key `\"direct_chat\"` — platforms where you can chat with the user directly as yourself (Slack, Teams, Telegram, Whatsapp). Teams requires the Teams connection enabled first.\n"
+            "- key `\"direct_chat\"` — platforms where you can chat with the user directly as yourself (Slack, Teams, Telegram, Whatsapp). Self-contained — no connection dependency.\n"
             "- key `\"skills\"` — all available skills (enable/disable)\n"
         )
         browser_fallback = (
