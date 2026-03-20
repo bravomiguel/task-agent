@@ -1415,9 +1415,13 @@ async function handleTeamsBot(req: Request): Promise<Response> {
         const appSecret = Deno.env.get("TEAMS_BOT_APP_SECRET") ?? "";
         if (appId && appSecret) {
           try {
-            // Get bot token
+            // Get bot token — use home tenant for SingleTenant bots
+            const homeTenant = await getVaultSecret("teams_bot_home_tenant_id");
+            const tokenUrl = homeTenant
+              ? `https://login.microsoftonline.com/${homeTenant}/oauth2/v2.0/token`
+              : "https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token";
             const tokenResp = await fetch(
-              "https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token",
+              tokenUrl,
               {
                 method: "POST",
                 headers: { "Content-Type": "application/x-www-form-urlencoded" },
