@@ -786,6 +786,19 @@ def _handle_connections(action: str, patch_str: str | None) -> str:
                 results[service] = result
             elif desired == "disabled":
                 result = disconnect_service(service)
+                # Enrich result with cascading teardowns for Teams
+                if service == "teams" and result.get("status") == "disconnected":
+                    also_disabled = _teardown_teams_dependents()
+                    if also_disabled:
+                        result["also_disabled"] = also_disabled
+                        result["message"] = (
+                            "Teams connection disabled. "
+                            + " ".join(
+                                f"Teams {dep} was also disabled since it depends on this connection."
+                                for dep in also_disabled
+                            )
+                            + " Explain this to the user."
+                        )
                 results[service] = result
             else:
                 results[service] = {"error": f"Invalid value '{desired}'. Use 'enabled' or 'disabled'."}
@@ -794,7 +807,56 @@ def _handle_connections(action: str, patch_str: str | None) -> str:
     return f"Error: unknown action '{action}'."
 
 
-# -- Teams direct chat helpers --
+# -- Teams helpers --
+
+def _teardown_teams_dependents() -> list[str]:
+    """Teardown Teams inbound and direct chat if they are active.
+
+    Called as a side effect when Teams connection is disabled.
+    Returns list of what was disabled (e.g. ["inbound", "direct_chat"]).
+    """
+    import os
+    from agent.auth import vault_get_secret, vault_delete_secret
+
+    also_disabled = []
+
+    # Teardown inbound (Graph subscriptions)
+    try:
+        supabase_url = os.environ.get("SUPABASE_URL", "")
+        anon_key = os.environ.get("SUPABASE_ANON_KEY", "")
+
+        # Check if any subscriptions exist
+        list_resp = httpx.post(
+            f"{supabase_url}/functions/v1/teams-subscriptions/list",
+            headers={"Authorization": f"Bearer {anon_key}"},
+            timeout=15,
+        )
+        if list_resp.status_code == 200:
+            data = list_resp.json()
+            if data.get("count", 0) > 0:
+                # Unsubscribe — this will fail to delete from Graph (no token),
+                # but will clean up the DB rows. Subscriptions expire on their own.
+                httpx.post(
+                    f"{supabase_url}/functions/v1/teams-subscriptions/unsubscribe",
+                    headers={"Authorization": f"Bearer {anon_key}"},
+                    timeout=30,
+                )
+                also_disabled.append("inbound")
+    except Exception:
+        pass
+
+    # Teardown direct chat (bot credentials)
+    try:
+        if vault_get_secret("teams_bot_app_id"):
+            for key in ["teams_bot_app_id", "teams_bot_app_secret", "teams_bot_tenant_id",
+                        "teams_bot_service_url", "teams_bot_owner_conversation_id"]:
+                vault_delete_secret(key)
+            also_disabled.append("direct_chat")
+    except Exception:
+        pass
+
+    return also_disabled
+
 
 def _is_teams_connection_active() -> bool:
     """Check if the Microsoft Teams Composio connection is active."""
@@ -902,7 +964,9 @@ def _handle_direct_chat(action: str, patch_str: str | None) -> str:
                         "status": "prerequisite_missing",
                         "message": (
                             "Teams direct chat requires the Microsoft Teams connection to be enabled first. "
-                            "Use manage_config key=\"connections\" to enable Teams, then try enabling direct chat again."
+                            "This connection grants OAuth access to the user's Teams account so the system can "
+                            "receive messages via Graph subscriptions. "
+                            "Ask the user before enabling — use manage_config key=\"connections\" to enable teams."
                         ),
                     }
 
@@ -1147,7 +1211,9 @@ def _handle_inbound(action: str, patch_str: str | None) -> str:
                         "status": "prerequisite_missing",
                         "message": (
                             "Teams inbound requires the Microsoft Teams connection to be enabled first. "
-                            "Use manage_config key=\"connections\" to enable Teams, then try enabling inbound again."
+                            "This connection grants OAuth access to the user's Teams account so the system can "
+                            "create Graph subscriptions to receive messages. "
+                            "Ask the user before enabling — use manage_config key=\"connections\" to enable teams."
                         ),
                     }
                     continue
@@ -1191,7 +1257,15 @@ def _handle_inbound(action: str, patch_str: str | None) -> str:
                     svc_config = SERVICE_REGISTRY[service]
                     acct = _find_account_by_slug(accounts, svc_config["composio_slug"])
                     if not acct or acct.get("status") != "ACTIVE":
-                        results[source] = {"error": f"Connection '{service}' must be enabled first."}
+                        display = svc_config["display_name"]
+                        results[source] = {
+                            "status": "prerequisite_missing",
+                            "message": (
+                                f"{source.capitalize()} inbound requires the {display} connection to be enabled first. "
+                                f"This connection grants OAuth access to the user's account so the system can receive events. "
+                                f'Ask the user before enabling — use manage_config key="connections" to enable {service}.'
+                            ),
+                        }
                         continue
                     trigger_results = setup_triggers(service, acct["id"])
                     results[source] = {"enabled": True, "triggers": trigger_results}

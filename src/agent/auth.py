@@ -762,10 +762,23 @@ def disconnect_service(service: str) -> dict[str, Any]:
             )
             resp.raise_for_status()
 
-        # Also teardown triggers for this service
-        teardown_triggers(service)
+        # Also teardown inbound triggers for this service
+        trigger_results = teardown_triggers(service)
+        triggers_removed = len([r for r in trigger_results if r.get("status") == "deleted"])
 
-        return {"status": "disconnected", "service": service, "display_name": svc_config["display_name"]}
+        result: dict[str, Any] = {
+            "status": "disconnected",
+            "service": service,
+            "display_name": svc_config["display_name"],
+        }
+        if triggers_removed > 0:
+            result["also_disabled"] = ["inbound"]
+            result["message"] = (
+                f"{svc_config['display_name']} connection disabled. "
+                f"Inbound triggers were also disabled since they depend on this connection. "
+                f"Explain this to the user."
+            )
+        return result
     except Exception as e:
         return {"error": f"Failed to disconnect {service}: {e}"}
 
