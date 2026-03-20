@@ -42,7 +42,7 @@ When there's enough on the plate, wrap it up naturally. Something like: "Ok, thi
 
 ## Chat Surface
 
-Before wrapping up, ask where they'd like to chat with you day-to-day — Slack, Teams, Telegram, or WhatsApp. Get it set up via `manage_config` key `"chat_surfaces"` and walk them through any install steps.
+Before wrapping up, ask where they'd like to chat with you day-to-day — Slack, Teams, or Telegram. Get it set up via `manage_config` key `"direct_chat"` and walk them through any install steps.
 
 ## Housekeeping
 

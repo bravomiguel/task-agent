@@ -665,7 +665,7 @@ def manage_config(
       GET returns all available services with enabled/disabled status (live from Composio).
       PATCH to enable starts OAuth flow and returns auth URL. PATCH to disable disconnects
       and automatically tears down any inbound triggers for that service.
-    - **direct_chat**: Platforms where you can chat with the user directly as yourself (Slack, Teams, Telegram, Whatsapp).
+    - **direct_chat**: Platforms where you can chat with the user directly as yourself (Slack, Teams, Telegram).
       GET returns all available platforms with enabled/disabled status.
       PATCH to enable triggers the setup flow and returns an install URL + instructions — do not ask
       the user for tokens, credentials, or chat IDs; the system handles all of that automatically.
@@ -866,7 +866,6 @@ def _handle_direct_chat(action: str, patch_str: str | None) -> str:
     supabase_url = os.environ.get("SUPABASE_URL", "")
 
     telegram_bot_name = os.environ.get("TELEGRAM_BOT_NAME", "")
-    whatsapp_bridge_url = os.environ.get("WHATSAPP_BRIDGE_URL", "")
 
     DIRECT_CHAT_PLATFORMS = {
         "slack": {
@@ -895,25 +894,6 @@ def _handle_direct_chat(action: str, patch_str: str | None) -> str:
             "vault_key": "telegram_owner_chat_id",
             "install_url": f"https://t.me/{telegram_bot_name}" if telegram_bot_name else "",
             "disconnect_fn": lambda: _disconnect_telegram_direct_chat(),
-        },
-        "whatsapp": {
-            "display_name": "WhatsApp (chat with user as yourself)",
-            "vault_key": "whatsapp_owner_jid",
-            "install_url": f"{whatsapp_bridge_url}/qr" if whatsapp_bridge_url else "",
-            "qr_url": f"{whatsapp_bridge_url}/qr/url" if whatsapp_bridge_url else "",
-            "disconnect_fn": lambda: _disconnect_whatsapp_direct_chat(whatsapp_bridge_url),
-            "setup_message": (
-                "To set up WhatsApp so you can chat with me there:\n\n"
-                "**Step 1: Link device** — scan the QR code with WhatsApp > Settings > Linked Devices > Link a Device. "
-                "(Skip this if you've already linked.)\n\n"
-                f'<qr_code url="{whatsapp_bridge_url}/qr/url"/>\n\n'
-                f"If the QR code doesn't render, open this link in your browser: {whatsapp_bridge_url}/qr\n\n"
-                "**Step 2: Create a solo group** — in WhatsApp, create a new group (add someone temporarily, then remove them "
-                'so it\'s just you). Name it whatever you like (e.g. "Mally").\n\n'
-                "**Step 3: Send a message in the group** — this registers it as our chat. "
-                "I'll reply there and you'll get push notifications.\n\n"
-                "Once you've done all steps, come back and let me know."
-            ) if whatsapp_bridge_url else "",
         },
     }
 
@@ -982,20 +962,6 @@ def _disconnect_telegram_direct_chat() -> dict:
         vault_delete_secret(key)
     return {"status": "disconnected", "service": "telegram"}
 
-
-def _disconnect_whatsapp_direct_chat(bridge_url: str) -> dict:
-    import httpx
-    # Call bridge disconnect endpoint to logout + clear vault
-    if bridge_url:
-        try:
-            httpx.post(f"{bridge_url}/disconnect", timeout=10)
-        except Exception:
-            pass
-    # Also clean vault directly as fallback
-    from agent.auth import vault_delete_secret
-    for key in ["whatsapp_auth_state", "whatsapp_owner_jid", "whatsapp_agent_group_jid"]:
-        vault_delete_secret(key)
-    return {"status": "disconnected", "service": "whatsapp"}
 
 
 # -- Skills handler (volume-backed) --
@@ -1431,7 +1397,7 @@ def manage_crons(
 
 
 # ---------------------------------------------------------------------------
-# Messaging (Slack, Teams, Telegram, WhatsApp)
+# Messaging (Slack, Teams, Telegram)
 # ---------------------------------------------------------------------------
 
 _MSG_AUTH_DIR = "/mnt/auth"
@@ -1642,43 +1608,6 @@ def _send_telegram_bot(recipient: str, text: str) -> dict[str, Any]:
     }
 
 
-def _send_whatsapp_bridge(recipient: str, text: str) -> dict[str, Any]:
-    """Send a message via WhatsApp bridge (direct chat).
-
-    Uses the bridge URL from env and the owner's JID from vault.
-    recipient is the WhatsApp JID.
-    """
-    import os
-    from agent.auth import vault_get_secret
-
-    bridge_url = os.environ.get("WHATSAPP_BRIDGE_URL")
-    if not bridge_url:
-        raise RuntimeError("WHATSAPP_BRIDGE_URL not configured.")
-
-    # If no explicit recipient, use the registered owner
-    if not recipient or recipient == "owner":
-        recipient = vault_get_secret("whatsapp_owner_jid")
-        if not recipient:
-            raise RuntimeError(
-                "WhatsApp owner not registered. The user needs to connect via QR code first."
-            )
-
-    resp = httpx.post(
-        f"{bridge_url}/send",
-        json={"to": recipient, "text": text},
-        timeout=15,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-
-    return {
-        "status": "sent",
-        "platform": "whatsapp",
-        "message_id": data.get("message_id", ""),
-        "chat_id": recipient,
-    }
-
-
 _MSG_SENDERS: dict[str, callable] = {
     "slack": _send_slack,
     "teams": _send_teams,
@@ -1688,7 +1617,6 @@ _MSG_SENDERS: dict[str, callable] = {
 _DIRECT_CHAT_SENDERS: dict[str, callable] = {
     "teams": _send_teams_bot,
     "telegram": _send_telegram_bot,
-    "whatsapp": _send_whatsapp_bridge,
     # Slack direct_chat is handled inline in send_message (vault token + _send_slack)
 }
 
@@ -1696,32 +1624,31 @@ _DIRECT_CHAT_SENDERS: dict[str, callable] = {
 
 @tool
 def send_message(
-    platform: Literal["slack", "teams", "telegram", "whatsapp"],
+    platform: Literal["slack", "teams", "telegram"],
     recipient: str,
     text: str,
     thread_ts: str = None,
     via: Literal["direct_chat", "connection"] = None,
     state: Annotated[dict, InjectedState] = None,
 ) -> str:
-    """Send a message to a user or channel on Slack, Teams, Telegram, or WhatsApp.
+    """Send a message to a user or channel on Slack, Teams, or Telegram.
 
     For inbound messages (type="message"), use the platform, via, and IDs
     from the system-message tag to reply in context.
 
     Args:
-        platform: Target platform — "slack", "teams", "telegram", or "whatsapp".
+        platform: Target platform — "slack", "teams", or "telegram".
         recipient: Who to send to.
             Slack: channel ID (C...), user ID (U...), or channel name (#general).
             Teams: chat ID for 1:1/group chats, or "team:{teamId}/channel:{channelId}" for channels.
             Telegram: chat ID, or "owner" to message the registered owner.
-            WhatsApp: JID, or "owner" to message the registered owner.
         text: Message content (plain text).
         thread_ts: (Slack only) Thread timestamp to reply in-thread. Use the
             thread_ts from the inbound system-message tag to keep the conversation
             in the same thread.
         via: How to send the message:
             - "direct_chat" — sends as yourself (set up via manage_config key="direct_chat").
-              This is the default and preferred option. Required for Telegram and WhatsApp.
+              This is the default and preferred option. Required for Telegram.
             - "connection" — sends as the user themselves via their OAuth token (Slack and Teams only).
               **SENSITIVE**: This posts as the actual user, not as yourself. Always get
               explicit user approval before using this option. Never assume the user wants
@@ -1734,11 +1661,11 @@ def send_message(
     if not sandbox_id:
         return _json.dumps({"status": "error", "error": "No sandbox available."})
 
-    # Telegram and WhatsApp only support direct_chat
-    if platform in ("telegram", "whatsapp") and via == "connection":
+    # Telegram only supports direct_chat
+    if platform == "telegram" and via == "connection":
         return _json.dumps({
             "status": "error",
-            "error": f"{platform} only supports via='direct_chat'. Connection OAuth is not available.",
+            "error": "Telegram only supports via='direct_chat'. Connection OAuth is not available.",
         })
 
     use_direct_chat = via == "direct_chat" or via is None
@@ -1749,7 +1676,7 @@ def send_message(
             result = _DIRECT_CHAT_SENDERS[platform](recipient, text)
             return _json.dumps(result)
         except Exception as e:
-            if via == "direct_chat" or platform in ("telegram", "whatsapp"):
+            if via == "direct_chat" or platform == "telegram":
                 return _json.dumps({"status": "error", "platform": platform, "error": str(e)})
             # Fall through to connection token if via was None (Slack/Teams only)
 

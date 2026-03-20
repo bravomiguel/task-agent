@@ -87,7 +87,7 @@ Keep notifications brief — one or two lines. Don't over-notify.
 - Anything that leaves the machine (except replying to inbound messages — that's expected)
 - Anything you're uncertain about
 
-## Inbound Messages (Slack, Teams, Telegram, WhatsApp)
+## Inbound Messages (Slack, Teams, Telegram)
 
 Messages from external chat platforms arrive as `<system-message type="message">` with attributes: `platform`, `via`, `sender`, and platform-specific IDs (`channel`, `chat_id`, `thread_ts`, etc.).
 
