@@ -661,7 +661,7 @@ def manage_config(
     Use key parameter to read/write a specific section instead of the full config.
 
     - **user**: User profile (timezone, expandable). Timezone auto-syncs to USER.md.
-    - **connections**: External service integrations you act on behalf of the user (Google, GitHub, Slack, Teams, etc.).
+    - **connections**: OAuth access to the user's accounts — read/write as the user (Google, GitHub, Slack, Teams, etc.).
       GET returns all available services with enabled/disabled status (live from Composio).
       PATCH to enable starts OAuth flow and returns auth URL. PATCH to disable disconnects
       and automatically tears down any inbound triggers for that service.
