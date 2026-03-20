@@ -966,7 +966,7 @@ def _handle_direct_chat(action: str, patch_str: str | None) -> str:
                             "Teams direct chat requires the Microsoft Teams connection to be enabled first. "
                             "This connection grants OAuth access to the user's Teams account so the system can "
                             "receive messages via Graph subscriptions. "
-                            "Ask the user before enabling — use manage_config key=\"connections\" to enable teams."
+                            "Ask the user before enabling, and explain why briefly — use manage_config key=\"connections\" to enable teams."
                         ),
                     }
 
@@ -1213,7 +1213,7 @@ def _handle_inbound(action: str, patch_str: str | None) -> str:
                             "Teams inbound requires the Microsoft Teams connection to be enabled first. "
                             "This connection grants OAuth access to the user's Teams account so the system can "
                             "create Graph subscriptions to receive messages. "
-                            "Ask the user before enabling — use manage_config key=\"connections\" to enable teams."
+                            "Ask the user before enabling, and explain why briefly — use manage_config key=\"connections\" to enable teams."
                         ),
                     }
                     continue
@@ -1263,7 +1263,7 @@ def _handle_inbound(action: str, patch_str: str | None) -> str:
                             "message": (
                                 f"{source.capitalize()} inbound requires the {display} connection to be enabled first. "
                                 f"This connection grants OAuth access to the user's account so the system can receive events. "
-                                f'Ask the user before enabling — use manage_config key="connections" to enable {service}.'
+                                f'Ask the user before enabling, and explain why briefly — use manage_config key="connections" to enable {service}.'
                             ),
                         }
                         continue
