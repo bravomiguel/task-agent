@@ -38,7 +38,7 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 
 const MALLY_APP_URL = "https://app.mally.ai"; // TODO: replace with actual frontend URL
-const DIRECT_CHAT_DISABLED_REPLY = "Hey! I'm not currently active on this platform. You can enable me in the Mally app: " + MALLY_APP_URL + " \u{1F60A}";
+const DIRECT_CHAT_DISABLED_REPLY = "Hey! I'm not currently active on this platform. You can enable me in the Mally app: " + MALLY_APP_URL;
 
 const DEBOUNCE_MS = 5_000;
 const BOT_DM_DEBOUNCE_MS = 300;
