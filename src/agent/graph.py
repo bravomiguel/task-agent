@@ -4,10 +4,12 @@ from deepagents.middleware import FilesystemMiddleware
 from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
 from langchain.agents.middleware.summarization import SummarizationMiddleware
 from langchain.agents.middleware.todo import TodoListMiddleware
+from langchain_anthropic import ChatAnthropic
 from langchain_anthropic.middleware import AnthropicPromptCachingMiddleware
 from deepagents_cli.tools import web_search, tavily_client
 from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
+from agent.claude_auth import get_claude_code_token
 from agent.tools import present_file, view_image, memory_search, sessions_list, sessions_send, sessions_spawn, sessions_history, manage_crons, manage_config, send_message
 from agent.web_fetch import web_fetch
 from agent.middleware import (
@@ -24,19 +26,26 @@ from agent.middleware import (
 from agent.system_prompt import STATIC_PART_01
 from agent.modal_backend import LazyModalBackend
 
-# Initialize models — powered by ChatGPT subscription via openai-oauth proxy.
-# Requires: npx openai-oauth (runs at http://127.0.0.1:10531/v1)
-# Override at runtime: config={"configurable": {"model": "openai:gpt-5.4"}}
+# Initialize models — main model powered by Claude Code OAuth subscription.
+# Codex proxy kept for auxiliary model (SessionSetupMiddleware slug generation).
 import os
 
-_CODEX_PROXY_URL = os.environ.get("CODEX_PROXY_URL", "http://127.0.0.1:10531/v1")
-
-main_model = init_chat_model(
-    model="openai:gpt-5.4",
-    configurable_fields=["model", "model_provider"],
-    base_url=_CODEX_PROXY_URL,
-    api_key="codex-oauth",  # proxy handles auth; placeholder to satisfy client
+_claude_token = get_claude_code_token()
+main_model = ChatAnthropic(
+    model="claude-opus-4-5",
+    default_headers={"Authorization": f"Bearer {_claude_token}"},
 )
+
+# # OpenAI Codex OAuth proxy — main model (commented out, kept for fallback)
+# # Requires: npx openai-oauth (runs at http://127.0.0.1:10531/v1)
+# main_model = init_chat_model(
+#     model="openai:gpt-5.4",
+#     configurable_fields=["model", "model_provider"],
+#     base_url=_CODEX_PROXY_URL,
+#     api_key="codex-oauth",
+# )
+
+_CODEX_PROXY_URL = os.environ.get("CODEX_PROXY_URL", "http://127.0.0.1:10531/v1")
 gpt_4_1_mini = init_chat_model(
     model="openai:gpt-4.1-mini",
     disable_streaming=True,
