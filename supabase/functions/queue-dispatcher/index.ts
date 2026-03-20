@@ -235,7 +235,7 @@ async function dispatchItem(item: Record<string, unknown>): Promise<{ dispatched
     const attrs = [
       `type="message"`,
       `platform="telegram"`,
-      `via="chat_surface"`,
+      `via="direct_chat"`,
       `chat_id="${chatId}"`,
     ];
     const ids = meta.sender_ids as string[] | undefined;
@@ -251,7 +251,7 @@ async function dispatchItem(item: Record<string, unknown>): Promise<{ dispatched
     const attrs = [
       `type="message"`,
       `platform="whatsapp"`,
-      `via="chat_surface"`,
+      `via="direct_chat"`,
       `chat_id="${chatId}"`,
     ];
     const ids = meta.sender_ids as string[] | undefined;

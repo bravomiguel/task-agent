@@ -13,7 +13,7 @@ Gating does NOT apply to:
 - Read-only CLI commands (list, view, get, search, status)
 - Internal agent operations (manage_config, manage_crons, file ops, etc.)
 - Cron/heartbeat sessions (no human present)
-- send_message via chat_surface (agent speaking as itself)
+- send_message via direct_chat (agent speaking as itself)
 """
 
 from __future__ import annotations

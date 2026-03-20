@@ -657,20 +657,24 @@ def manage_config(
 ) -> str:
     """View or update user configuration.
 
-    Supports these config keys: user, heartbeat, action_gating, skills, inbound, connections, chat_surfaces.
+    Supports these config keys: user, heartbeat, action_gating, skills, inbound, connections, direct_chat.
     Use key parameter to read/write a specific section instead of the full config.
 
     - **user**: User profile (timezone, expandable). Timezone auto-syncs to USER.md.
-    - **connections**: External service integrations you act on behalf of the user (Google, GitHub, Slack, etc.).
+    - **connections**: External service integrations you act on behalf of the user (Google, GitHub, Slack, Teams, etc.).
       GET returns all available services with enabled/disabled status (live from Composio).
-      PATCH to enable starts OAuth flow and returns auth URL. PATCH to disable disconnects.
-      Triggers are automatically set up/torn down when connections are enabled/disabled.
-    - **chat_surfaces**: Chat platforms where you can chat with the user directly (Slack, Teams, Telegram, Whatsapp).
-      GET returns all available surfaces with enabled/disabled status.
+      PATCH to enable starts OAuth flow and returns auth URL. PATCH to disable disconnects
+      and automatically tears down any inbound triggers for that service.
+    - **direct_chat**: Platforms where you can chat with the user directly as yourself (Slack, Teams, Telegram, Whatsapp).
+      GET returns all available platforms with enabled/disabled status.
       PATCH to enable triggers the setup flow and returns an install URL + instructions — do not ask
       the user for tokens, credentials, or chat IDs; the system handles all of that automatically.
       PATCH to disable removes credentials.
-    - **inbound**: Inbound event toggles per platform (slack, gmail, outlook, meetings).
+      Teams direct_chat requires the Teams connection to be enabled first (returns prerequisite_missing if not).
+    - **inbound**: Inbound event toggles per platform (slack, gmail, outlook, teams, meetings).
+      Each platform requires its corresponding connection to be enabled first.
+      Slack inbound requires Slack connection. Gmail requires Google. Outlook requires Microsoft.
+      Teams requires Teams connection.
     - **heartbeat**: Heartbeat frequency and active hours.
     - **action_gating**: Toggle user approval for write/destructive actions on connections (i.e. external services).
       Per-service toggles (google, github, notion, trello, slack, teams, microsoft, browser).
@@ -682,15 +686,14 @@ def manage_config(
     Args:
         action: "get" to read, "patch" to update.
         key: Optional config section to target (e.g. "connections", "heartbeat").
-            If omitted, operates on the full config (connections/chat_surfaces excluded).
+            If omitted, operates on the full config (connections/direct_chat excluded).
         patch: JSON string for patch action.
             For user: '{"user": {"timezone": "Europe/London"}}'
             For skills: '{"skills": {"browser": {"enabled": true}}}'
             For inbound: '{"inbound": {"gmail": true}}'
             For action_gating: '{"action_gating": {"services": {"github": false}}}'
             For connections: '{"google": "enabled"}' or '{"slack": "disabled"}'
-            For chat_surfaces: '{"slack": "enabled"}' or '{"slack": "disabled"}'
-              To complete Slack setup: '{"slack": {"token": "xoxb-...", "signing_secret": "...", "owner_slack_id": "U..."}}'
+            For direct_chat: '{"slack": "enabled"}' or '{"slack": "disabled"}'
 
     Returns:
         Current or updated config/status as JSON.
@@ -709,8 +712,8 @@ def manage_config(
             return _handle_inbound(action, patch)
         if key == "skills":
             return _handle_skills(action, patch, sandbox_id)
-        if key == "chat_surfaces":
-            return _handle_chat_surfaces(action, patch)
+        if key == "direct_chat":
+            return _handle_direct_chat(action, patch)
 
         # --- File-backed config (user, heartbeat, action_gating) ---
         if action == "get":
@@ -791,7 +794,7 @@ def _handle_connections(action: str, patch_str: str | None) -> str:
     return f"Error: unknown action '{action}'."
 
 
-# -- Teams chat surface helpers --
+# -- Teams direct chat helpers --
 
 def _is_teams_connection_active() -> bool:
     """Check if the Microsoft Teams Composio connection is active."""
@@ -804,29 +807,29 @@ def _is_teams_connection_active() -> bool:
         return False
 
 
-# -- Chat surfaces handler (vault-backed) --
+# -- Direct chat handler (vault-backed) --
 
-def _handle_chat_surfaces(action: str, patch_str: str | None) -> str:
+def _handle_direct_chat(action: str, patch_str: str | None) -> str:
     import os
-    from agent.auth import disconnect_slack_chat_surface, vault_get_secret
+    from agent.auth import disconnect_slack_direct_chat, vault_get_secret
 
     supabase_url = os.environ.get("SUPABASE_URL", "")
 
     telegram_bot_name = os.environ.get("TELEGRAM_BOT_NAME", "")
     whatsapp_bridge_url = os.environ.get("WHATSAPP_BRIDGE_URL", "")
 
-    CHAT_SURFACES = {
+    DIRECT_CHAT_PLATFORMS = {
         "slack": {
             "display_name": "Slack (chat with user as yourself)",
             "vault_key": "slack_bot_token",
             "install_url": f"{supabase_url}/functions/v1/slack-oauth/install",
-            "disconnect_fn": disconnect_slack_chat_surface,
+            "disconnect_fn": disconnect_slack_direct_chat,
         },
         "teams": {
             "display_name": "Teams (chat with user as yourself)",
             "vault_key": "teams_bot_app_id",
             "install_url": f"{supabase_url}/functions/v1/teams-bot-oauth/install",
-            "disconnect_fn": lambda: _disconnect_teams_chat_surface(),
+            "disconnect_fn": lambda: _disconnect_teams_direct_chat(),
             "setup_message": (
                 "To set up Teams so you can chat with me there, open this link and follow the prompts. "
                 "Important: Teams requires admin approval for custom apps. "
@@ -841,14 +844,14 @@ def _handle_chat_surfaces(action: str, patch_str: str | None) -> str:
             "display_name": "Telegram (chat with user as yourself)",
             "vault_key": "telegram_owner_chat_id",
             "install_url": f"https://t.me/{telegram_bot_name}" if telegram_bot_name else "",
-            "disconnect_fn": lambda: _disconnect_telegram_chat_surface(),
+            "disconnect_fn": lambda: _disconnect_telegram_direct_chat(),
         },
         "whatsapp": {
             "display_name": "WhatsApp (chat with user as yourself)",
             "vault_key": "whatsapp_owner_jid",
             "install_url": f"{whatsapp_bridge_url}/qr" if whatsapp_bridge_url else "",
             "qr_url": f"{whatsapp_bridge_url}/qr/url" if whatsapp_bridge_url else "",
-            "disconnect_fn": lambda: _disconnect_whatsapp_chat_surface(whatsapp_bridge_url),
+            "disconnect_fn": lambda: _disconnect_whatsapp_direct_chat(whatsapp_bridge_url),
             "setup_message": (
                 "To set up WhatsApp so you can chat with me there:\n\n"
                 "**Step 1: Link device** — scan the QR code with WhatsApp > Settings > Linked Devices > Link a Device. "
@@ -866,7 +869,7 @@ def _handle_chat_surfaces(action: str, patch_str: str | None) -> str:
 
     if action == "get":
         result = {}
-        for name, cfg in CHAT_SURFACES.items():
+        for name, cfg in DIRECT_CHAT_PLATFORMS.items():
             token = vault_get_secret(cfg["vault_key"])
             result[name] = {
                 "display_name": cfg["display_name"],
@@ -884,11 +887,11 @@ def _handle_chat_surfaces(action: str, patch_str: str | None) -> str:
 
         results = {}
         for surface, desired in patch_data.items():
-            if surface not in CHAT_SURFACES:
-                results[surface] = {"error": f"Unknown chat surface '{surface}'. Available: {', '.join(CHAT_SURFACES)}"}
+            if surface not in DIRECT_CHAT_PLATFORMS:
+                results[surface] = {"error": f"Unknown direct_chat platform '{surface}'. Available: {', '.join(DIRECT_CHAT_PLATFORMS)}"}
                 continue
 
-            cfg = CHAT_SURFACES[surface]
+            cfg = DIRECT_CHAT_PLATFORMS[surface]
             if desired == "enabled":
                 if not cfg.get("install_url"):
                     results[surface] = {"error": f"{cfg['display_name']} is not configured on this instance."}
@@ -898,8 +901,8 @@ def _handle_chat_surfaces(action: str, patch_str: str | None) -> str:
                     results[surface] = {
                         "status": "prerequisite_missing",
                         "message": (
-                            "Teams chat surface requires the Microsoft Teams connection to be enabled first. "
-                            "Use manage_config key=\"connections\" to enable Teams, then try enabling the chat surface again."
+                            "Teams direct chat requires the Microsoft Teams connection to be enabled first. "
+                            "Use manage_config key=\"connections\" to enable Teams, then try enabling direct chat again."
                         ),
                     }
 
@@ -926,21 +929,21 @@ def _handle_chat_surfaces(action: str, patch_str: str | None) -> str:
     return f"Error: unknown action '{action}'."
 
 
-def _disconnect_teams_chat_surface() -> dict:
+def _disconnect_teams_direct_chat() -> dict:
     from agent.auth import vault_delete_secret
     for key in ["teams_bot_app_id", "teams_bot_app_secret", "teams_bot_tenant_id"]:
         vault_delete_secret(key)
     return {"status": "disconnected", "service": "teams"}
 
 
-def _disconnect_telegram_chat_surface() -> dict:
+def _disconnect_telegram_direct_chat() -> dict:
     from agent.auth import vault_delete_secret
     for key in ["telegram_owner_chat_id", "telegram_owner_user_id", "telegram_owner_name"]:
         vault_delete_secret(key)
     return {"status": "disconnected", "service": "telegram"}
 
 
-def _disconnect_whatsapp_chat_surface(bridge_url: str) -> dict:
+def _disconnect_whatsapp_direct_chat(bridge_url: str) -> dict:
     import httpx
     # Call bridge disconnect endpoint to logout + clear vault
     if bridge_url:
@@ -1476,7 +1479,7 @@ def _send_teams(token: str, recipient: str, text: str) -> dict[str, Any]:
 
 
 def _send_teams_bot(recipient: str, text: str) -> dict[str, Any]:
-    """Send a message via Bot Framework API (chat surface).
+    """Send a message via Bot Framework API (direct chat).
 
     Uses the bot's app credentials to get a token, then posts to the
     stored serviceUrl conversation endpoint.
@@ -1545,7 +1548,7 @@ def _send_teams_bot(recipient: str, text: str) -> dict[str, Any]:
 
 
 def _send_telegram_bot(recipient: str, text: str) -> dict[str, Any]:
-    """Send a message via Telegram Bot API (chat surface).
+    """Send a message via Telegram Bot API (direct chat).
 
     Uses the bot token from env and the owner's chat_id from vault.
     recipient is the Telegram chat ID.
@@ -1590,7 +1593,7 @@ def _send_telegram_bot(recipient: str, text: str) -> dict[str, Any]:
 
 
 def _send_whatsapp_bridge(recipient: str, text: str) -> dict[str, Any]:
-    """Send a message via WhatsApp bridge (chat surface).
+    """Send a message via WhatsApp bridge (direct chat).
 
     Uses the bridge URL from env and the owner's JID from vault.
     recipient is the WhatsApp JID.
@@ -1631,12 +1634,12 @@ _MSG_SENDERS: dict[str, callable] = {
     "teams": _send_teams,
 }
 
-# Chat-surface senders: each fetches its own credentials (vault/env)
-_CHAT_SURFACE_SENDERS: dict[str, callable] = {
+# Direct chat senders: each fetches its own credentials (vault/env)
+_DIRECT_CHAT_SENDERS: dict[str, callable] = {
     "teams": _send_teams_bot,
     "telegram": _send_telegram_bot,
     "whatsapp": _send_whatsapp_bridge,
-    # Slack chat_surface is handled inline in send_message (vault token + _send_slack)
+    # Slack direct_chat is handled inline in send_message (vault token + _send_slack)
 }
 
 
@@ -1647,7 +1650,7 @@ def send_message(
     recipient: str,
     text: str,
     thread_ts: str = None,
-    via: Literal["chat_surface", "connection"] = None,
+    via: Literal["direct_chat", "connection"] = None,
     state: Annotated[dict, InjectedState] = None,
 ) -> str:
     """Send a message to a user or channel on Slack, Teams, Telegram, or WhatsApp.
@@ -1667,7 +1670,7 @@ def send_message(
             thread_ts from the inbound system-message tag to keep the conversation
             in the same thread.
         via: How to send the message:
-            - "chat_surface" — sends as yourself (set up via manage_config key="chat_surfaces").
+            - "direct_chat" — sends as yourself (set up via manage_config key="direct_chat").
               This is the default and preferred option. Required for Telegram and WhatsApp.
             - "connection" — sends as the user themselves via their OAuth token (Slack and Teams only).
               **SENSITIVE**: This posts as the actual user, not as yourself. Always get
@@ -1681,27 +1684,27 @@ def send_message(
     if not sandbox_id:
         return _json.dumps({"status": "error", "error": "No sandbox available."})
 
-    # Telegram and WhatsApp only support chat_surface
+    # Telegram and WhatsApp only support direct_chat
     if platform in ("telegram", "whatsapp") and via == "connection":
         return _json.dumps({
             "status": "error",
-            "error": f"{platform} only supports via='chat_surface'. Connection OAuth is not available.",
+            "error": f"{platform} only supports via='direct_chat'. Connection OAuth is not available.",
         })
 
-    use_chat_surface = via == "chat_surface" or via is None
+    use_direct_chat = via == "direct_chat" or via is None
 
-    # ---- Chat-surface path (bot credentials from vault/env) ----
-    if use_chat_surface and platform in _CHAT_SURFACE_SENDERS:
+    # ---- Direct chat path (bot credentials from vault/env) ----
+    if use_direct_chat and platform in _DIRECT_CHAT_SENDERS:
         try:
-            result = _CHAT_SURFACE_SENDERS[platform](recipient, text)
+            result = _DIRECT_CHAT_SENDERS[platform](recipient, text)
             return _json.dumps(result)
         except Exception as e:
-            if via == "chat_surface" or platform in ("telegram", "whatsapp"):
+            if via == "direct_chat" or platform in ("telegram", "whatsapp"):
                 return _json.dumps({"status": "error", "platform": platform, "error": str(e)})
             # Fall through to connection token if via was None (Slack/Teams only)
 
-    # ---- Slack chat-surface (special: uses vault token + same _send_slack fn) ----
-    if use_chat_surface and platform == "slack":
+    # ---- Slack direct chat (special: uses vault token + same _send_slack fn) ----
+    if use_direct_chat and platform == "slack":
         from agent.auth import vault_get_secret, SLACK_BOT_TOKEN_SECRET
         bot_token = vault_get_secret(SLACK_BOT_TOKEN_SECRET)
         if bot_token:
@@ -1712,13 +1715,13 @@ def send_message(
                     result = _send_slack(bot_token, recipient, text)
                 return _json.dumps(result)
             except Exception as e:
-                if via == "chat_surface":
+                if via == "direct_chat":
                     return _json.dumps({"status": "error", "platform": "slack", "error": str(e)})
                 # Fall through to connection token if via was None
-        elif via == "chat_surface":
+        elif via == "direct_chat":
             return _json.dumps({
                 "status": "error",
-                "error": 'Chat surface token not found. Run manage_config key="chat_surfaces" to set up Slack first.',
+                "error": 'Direct chat token not found. Run manage_config key="direct_chat" to set up Slack first.',
             })
 
     # ---- Connection path (user's OAuth token from sandbox) ----

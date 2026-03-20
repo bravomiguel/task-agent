@@ -1,7 +1,7 @@
 /**
  * slack-oauth — Supabase Edge Function
  *
- * Handles Slack OAuth 2.0 "Add to Slack" flow for chat surface setup.
+ * Handles Slack OAuth 2.0 "Add to Slack" flow for direct chat setup.
  * No manual token copying — user clicks a link, authorizes, tokens stored automatically.
  *
  * Routes:

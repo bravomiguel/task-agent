@@ -703,8 +703,8 @@ SLACK_BOT_TOKEN_SECRET = "slack_bot_token"
 SLACK_SIGNING_SECRET_NAME = "slack_signing_secret"
 
 
-def disconnect_slack_chat_surface() -> dict[str, Any]:
-    """Remove all Slack chat surface credentials from vault."""
+def disconnect_slack_direct_chat() -> dict[str, Any]:
+    """Remove all Slack direct chat credentials from vault."""
     vault_delete_secret(SLACK_BOT_TOKEN_SECRET)
     vault_delete_secret("slack_bot_user_id")
     vault_delete_secret(SLACK_SIGNING_SECRET_NAME)

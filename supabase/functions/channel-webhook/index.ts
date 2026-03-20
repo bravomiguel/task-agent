@@ -7,7 +7,7 @@
  *   POST /channel-webhook/slack-bot  — Slack Events API (bot events, direct from Slack)
  *   GET  /channel-webhook/teams      — Microsoft Graph subscription validation
  *   POST /channel-webhook/teams      — Microsoft Graph change notifications (Teams messages)
- *   POST /channel-webhook/teams-bot  — Bot Framework messages (Teams chat surface DMs)
+ *   POST /channel-webhook/teams-bot  — Bot Framework messages (Teams direct chat DMs)
  *   POST /channel-webhook/meetings   — Meeting transcripts from meeting-recorder app
  *
  * Composio sends all triggers to a single webhook URL. The handler inspects
@@ -342,7 +342,7 @@ async function bufferAndFlush(
   messageTs: string,
   threadTs: string,
   debounceMs: number,
-  via: "chat_surface" | "connection" = "connection",
+  via: "direct_chat" | "connection" = "connection",
 ): Promise<Response> {
   const bufferKey = `slack:${channelId}`;
   const priority = channelType === "im" ? 1 : 2;
@@ -822,7 +822,7 @@ async function handleSlackBot(req: Request): Promise<Response> {
     senderId, senderName, messageText,
     channelId, channelType, messageTs, threadTs,
     debounceMs,
-    channelType === "im" ? "chat_surface" : "connection",
+    channelType === "im" ? "direct_chat" : "connection",
   );
 }
 
@@ -1355,7 +1355,7 @@ function jsonResponse(data: Record<string, unknown>, status = 200): Response {
 }
 
 // ---------------------------------------------------------------------------
-// Teams Bot: Bot Framework messaging endpoint (chat surface inbound)
+// Teams Bot: Bot Framework messaging endpoint (direct chat inbound)
 // ---------------------------------------------------------------------------
 
 const TEAMS_BOT_DEBOUNCE_MS = 300;
@@ -1460,7 +1460,7 @@ async function handleTeamsBot(req: Request): Promise<Response> {
       chat_id: chatId,
       chat_type: "bot-dm",
       priority,
-      via: "chat_surface",
+      via: "direct_chat",
     },
   });
 
@@ -1497,7 +1497,7 @@ async function handleTeamsBot(req: Request): Promise<Response> {
     metadata: {
       chat_id: chatId,
       chat_type: "bot-dm",
-      via: "chat_surface",
+      via: "direct_chat",
       senders: [senderName],
       sender_ids: [senderId],
       message_count: flushedRows.length,

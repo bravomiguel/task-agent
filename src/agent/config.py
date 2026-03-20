@@ -127,7 +127,7 @@ class ActionGatingConfig(BaseModel):
 class UserConfig(BaseModel):
     """Config stored in config.json. Only user profile, heartbeat, and action gating.
 
-    Skills, connections, channels, and chat_surfaces are live from external
+    Skills, connections, channels, and direct_chat are live from external
     sources (volume, Composio, vault) — not stored here.
     """
     user: UserProfile = UserProfile()

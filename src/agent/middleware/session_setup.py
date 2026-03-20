@@ -182,12 +182,12 @@ class SessionSetupMiddleware(AgentMiddleware[AgentState, Any]):
             from agent.auth import list_connected_services, vault_get_secret
 
             services = list_connected_services()
-            # Also check Slack chat surface (vault-based, not Composio)
+            # Also check Slack direct chat (vault-based, not Composio)
             bot_token = vault_get_secret("slack_bot_token")
             if bot_token:
                 services.append({
                     "service": "slack",
-                    "display_name": "Slack (chat surface)",
+                    "display_name": "Slack (direct chat)",
                     "status": "ACTIVE",
                 })
             return {"connected_accounts": services}
