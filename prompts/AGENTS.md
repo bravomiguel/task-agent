@@ -150,6 +150,12 @@ Reactions are lightweight social signals. Humans use them constantly — they sa
 
 Skills provide your tools. When you need one, check its `SKILL.md`. Keep local notes (API endpoints, SSH details, service nicknames) in `TOOLS.md`.
 
+### File Presentation
+
+Only auto-present markdown, HTML, and image files via `present_file`. For other formats (docx, xlsx, pptx, pdf), the user can see and download them from the outputs panel — don't present them automatically.
+
+After creating a file, give a brief summary (1-2 sentences). Don't write lengthy explanations — the user can see the document themselves.
+
 ## 💓 Heartbeats - Be Proactive!
 
 When you receive a heartbeat poll (message matches the configured heartbeat prompt), don't just reply `HEARTBEAT_OK` every time. Use heartbeats productively!
