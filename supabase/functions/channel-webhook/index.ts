@@ -37,6 +37,9 @@ const COMPOSIO_ENTITY_ID = Deno.env.get("COMPOSIO_ENTITY_ID") ?? "default";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 
+const MALLY_APP_URL = "https://app.mally.ai"; // TODO: replace with actual frontend URL
+const DIRECT_CHAT_DISABLED_REPLY = `Hey! I'm not currently active on this platform. You can enable me in the Mally app: ${MALLY_APP_URL} 😊`;
+
 const DEBOUNCE_MS = 5_000;
 const BOT_DM_DEBOUNCE_MS = 300;
 
@@ -708,14 +711,34 @@ async function handleSlackBot(req: Request): Promise<Response> {
     return jsonResponse({ ok: true, skipped: "channel_disabled", platform: "slack" });
   }
 
-  // Check if bot is configured (token exists in vault)
-  const botTokenCheck = await getVaultSecret("slack_bot_token");
-  if (!botTokenCheck) {
+  // Check if direct chat is enabled (signing secret = enabled indicator)
+  const signingSecret = await getVaultSecret("slack_signing_secret");
+  const botToken = await getVaultSecret("slack_bot_token");
+
+  if (!signingSecret) {
+    // Direct chat disabled or not set up — auto-reply if we have a token
+    if (botToken) {
+      const event = (body.event ?? {}) as Record<string, unknown>;
+      const channelId = (event.channel as string) ?? "";
+      if (channelId) {
+        await fetch("https://slack.com/api/chat.postMessage", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${botToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ channel: channelId, text: DIRECT_CHAT_DISABLED_REPLY }),
+        });
+      }
+    }
+    return jsonResponse({ ok: true, skipped: "direct_chat_disabled" });
+  }
+
+  if (!botToken) {
     return jsonResponse({ ok: true, skipped: "bot_not_configured" });
   }
 
-  // Look up signing secret from vault and verify request
-  const signingSecret = await getVaultSecret("slack_signing_secret");
+  // Verify request signature
   if (signingSecret) {
     const timestamp = req.headers.get("x-slack-request-timestamp") ?? "";
     const signature = req.headers.get("x-slack-signature") ?? "";
@@ -788,7 +811,7 @@ async function handleSlackBot(req: Request): Promise<Response> {
           },
           body: JSON.stringify({
             channel: channelId,
-            text: "Sorry, this is a private assistant. Only the owner can message me directly.",
+            text: DIRECT_CHAT_DISABLED_REPLY,
           }),
         });
       }
@@ -1379,6 +1402,53 @@ async function handleTeamsBot(req: Request): Promise<Response> {
   }
 
   const activityType = (body.type as string) ?? "";
+
+  // Check if direct chat is enabled (tenant_id = enabled indicator)
+  if (activityType === "message") {
+    const tenantId = await getVaultSecret("teams_bot_tenant_id");
+    if (!tenantId) {
+      // Direct chat disabled or not set up — auto-reply via Bot Framework
+      const serviceUrl = (body.serviceUrl as string) ?? "";
+      const conversation = (body.conversation ?? {}) as Record<string, unknown>;
+      const convId = (conversation.id as string) ?? "";
+      if (serviceUrl && convId) {
+        const appId = Deno.env.get("TEAMS_BOT_APP_ID") ?? "";
+        const appSecret = Deno.env.get("TEAMS_BOT_APP_SECRET") ?? "";
+        if (appId && appSecret) {
+          try {
+            // Get bot token
+            const tokenResp = await fetch(
+              "https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token",
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                body: new URLSearchParams({
+                  grant_type: "client_credentials",
+                  client_id: appId,
+                  client_secret: appSecret,
+                  scope: "https://api.botframework.com/.default",
+                }),
+              },
+            );
+            const tokenData = await tokenResp.json();
+            if (tokenData.access_token) {
+              await fetch(`${serviceUrl}v3/conversations/${convId}/activities`, {
+                method: "POST",
+                headers: {
+                  Authorization: `Bearer ${tokenData.access_token}`,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ type: "message", text: DIRECT_CHAT_DISABLED_REPLY }),
+              });
+            }
+          } catch {
+            // Best effort — don't fail the request
+          }
+        }
+      }
+      return jsonResponse({ ok: true, skipped: "direct_chat_disabled" });
+    }
+  }
 
   // Handle conversationUpdate (bot installed, members added)
   if (activityType === "conversationUpdate") {

@@ -859,13 +859,13 @@ def _handle_direct_chat(action: str, patch_str: str | None) -> str:
     DIRECT_CHAT_PLATFORMS = {
         "slack": {
             "display_name": "Slack (chat with user as yourself)",
-            "vault_key": "slack_bot_token",
+            "vault_key": "slack_signing_secret",  # Token kept for auto-reply; signing secret = enabled
             "install_url": f"{supabase_url}/functions/v1/slack-oauth/install",
             "disconnect_fn": disconnect_slack_direct_chat,
         },
         "teams": {
             "display_name": "Teams (chat with user as yourself)",
-            "vault_key": "teams_bot_app_id",
+            "vault_key": "teams_bot_tenant_id",  # App creds in env; tenant_id = enabled
             "install_url": f"{supabase_url}/functions/v1/teams-bot-oauth/install",
             "disconnect_fn": lambda: _disconnect_teams_direct_chat(),
             "setup_message": (
@@ -940,8 +940,9 @@ def _handle_direct_chat(action: str, patch_str: str | None) -> str:
 
 def _disconnect_teams_direct_chat() -> dict:
     from agent.auth import vault_delete_secret
-    for key in ["teams_bot_app_id", "teams_bot_app_secret", "teams_bot_tenant_id"]:
+    for key in ["teams_bot_tenant_id", "teams_bot_service_url", "teams_bot_owner_conversation_id"]:
         vault_delete_secret(key)
+    # Keep teams_bot_app_id and teams_bot_app_secret — needed by edge function for auto-reply
     return {"status": "disconnected", "service": "teams"}
 
 

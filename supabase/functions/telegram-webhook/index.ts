@@ -18,6 +18,9 @@ const TELEGRAM_BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") ?? "";
 
 const TELEGRAM_API = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}`;
 
+const MALLY_APP_URL = "https://app.mally.ai"; // TODO: replace with actual frontend URL
+const DIRECT_CHAT_DISABLED_REPLY = `Hey! I'm not currently active on this platform. You can enable me in the Mally app: ${MALLY_APP_URL} 😊`;
+
 function supabaseHeaders(): Record<string, string> {
   return {
     apikey: SUPABASE_SERVICE_KEY,
@@ -139,12 +142,12 @@ async function handleUpdate(update: Record<string, unknown>): Promise<Response> 
 
   // Only process messages from the owner
   if (ownerChatId && ownerChatId !== chatId) {
-    await sendTelegramMessage(chatId, "Sorry, this assistant is only available to its owner.");
+    await sendTelegramMessage(chatId, DIRECT_CHAT_DISABLED_REPLY);
     return new Response("ok");
   }
 
   if (!ownerChatId) {
-    await sendTelegramMessage(chatId, "Please send /start first to set up the connection.");
+    await sendTelegramMessage(chatId, DIRECT_CHAT_DISABLED_REPLY);
     return new Response("ok");
   }
 
