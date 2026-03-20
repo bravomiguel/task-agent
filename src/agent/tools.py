@@ -1141,10 +1141,10 @@ def _handle_inbound(action: str, patch_str: str | None) -> str:
                     results[source] = {
                         "status": "prerequisite_missing",
                         "message": (
-                            "Teams inbound requires the Microsoft Teams connection to be enabled first. "
-                            "This connection grants OAuth access to the user's Teams account so the system can "
-                            "create Graph subscriptions to receive messages. "
-                            "Ask the user before enabling, and explain why briefly — use manage_config key=\"connections\" to enable teams."
+                            "To receive Teams messages, you need to connect your Microsoft Teams account first. "
+                            "This lets the system listen for new messages across your chats and channels. "
+                            "It requires signing into Microsoft. "
+                            "Ask the user for permission, then use manage_config key=\"connections\" to enable teams."
                         ),
                     }
                     continue
@@ -1192,13 +1192,18 @@ def _handle_inbound(action: str, patch_str: str | None) -> str:
                     svc_config = SERVICE_REGISTRY[service]
                     acct = _find_account_by_slug(accounts, svc_config["composio_slug"])
                     if not acct or acct.get("status") != "ACTIVE":
-                        display = svc_config["display_name"]
+                        INBOUND_EXPLANATIONS = {
+                            "slack": "To receive Slack messages, you need to connect your Slack account first. This lets the system listen for new messages in your channels and DMs.",
+                            "gmail": "To receive Gmail notifications, you need to connect your Google account first. This lets the system listen for new emails arriving in your inbox.",
+                            "outlook": "To receive Outlook notifications, you need to connect your Microsoft 365 account first. This lets the system listen for new emails arriving in your inbox.",
+                        }
+                        explanation = INBOUND_EXPLANATIONS.get(source, f"To receive {source} events, you need to connect the {svc_config['display_name']} account first.")
                         results[source] = {
                             "status": "prerequisite_missing",
                             "message": (
-                                f"{source.capitalize()} inbound requires the {display} connection to be enabled first. "
-                                f"This connection grants OAuth access to the user's account so the system can receive events. "
-                                f'Ask the user before enabling, and explain why briefly — use manage_config key="connections" to enable {service}.'
+                                f"{explanation} "
+                                f"It requires signing into the service. "
+                                f'Ask the user for permission, then use manage_config key="connections" to enable {service}.'
                             ),
                         }
                         continue
