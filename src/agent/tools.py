@@ -1521,7 +1521,16 @@ def _send_teams_bot(recipient: str, text: str) -> dict[str, Any]:
             "Authorization": f"Bearer {bot_token}",
             "Content-Type": "application/json",
         },
-        json={"type": "message", "text": text},
+        json={
+            "type": "message",
+            "text": text,
+            "summary": text[:50] if len(text) > 50 else text,
+            "channelData": {
+                "notification": {
+                    "alert": True,
+                },
+            },
+        },
         timeout=15,
     )
     resp.raise_for_status()
