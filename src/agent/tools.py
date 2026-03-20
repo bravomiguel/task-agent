@@ -673,7 +673,8 @@ def manage_config(
     - **inbound**: Inbound event toggles per platform (slack, gmail, outlook, teams, meetings).
       Each platform requires its corresponding connection to be enabled first.
       Slack inbound requires Slack connection. Gmail requires Google. Outlook requires Microsoft.
-      Teams requires Teams connection.
+      Teams requires Teams connection. Enabling Teams inbound can take up to a minute
+      (creates Graph subscriptions for all chats and channels) — let the user know.
     - **heartbeat**: Heartbeat frequency and active hours.
     - **action_gating**: Toggle user approval for write/destructive actions on connections (i.e. external services).
       Per-service toggles (google, github, notion, trello, slack, teams, microsoft, browser).
@@ -1168,10 +1169,14 @@ def _handle_inbound(action: str, patch_str: str | None) -> str:
                     resp = httpx.post(
                         f"{supabase_url}/functions/v1/teams-subscriptions/{endpoint}",
                         headers={"Authorization": f"Bearer {anon_key}"},
-                        timeout=30,
+                        timeout=60,
                     )
                     if resp.status_code == 200:
-                        results[source] = {"enabled": enable}
+                        data = resp.json()
+                        result_entry: dict = {"enabled": enable}
+                        if enable:
+                            result_entry["subscriptions"] = data.get("successful", 0)
+                        results[source] = result_entry
                     else:
                         results[source] = {"error": f"Teams {endpoint} failed: {resp.status_code} {resp.text[:200]}"}
                 except Exception as e:
