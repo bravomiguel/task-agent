@@ -883,6 +883,13 @@ def _handle_direct_chat(action: str, patch_str: str | None) -> str:
             "vault_key": "telegram_owner_chat_id",
             "install_url": f"https://t.me/{telegram_bot_name}" if telegram_bot_name else "",
             "disconnect_fn": lambda: _disconnect_telegram_direct_chat(),
+            "setup_message": (
+                "To set up Telegram so you can chat with me there, open this link:\n\n"
+                f"https://t.me/{telegram_bot_name}\n\n"
+                "If you have the Telegram app installed, it will open the chat — tap the **Start** button.\n\n"
+                "If you're on a browser without the app, click **Open in Web**, then type `/start` in the chat.\n\n"
+                "Once you see my confirmation message, come back and let me know."
+            ) if telegram_bot_name else "",
         },
     }
 
