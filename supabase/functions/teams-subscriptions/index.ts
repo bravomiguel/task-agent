@@ -247,73 +247,78 @@ async function handleSubscribe(token: string, notificationUrl: string, clientSta
   const expiration = new Date();
   expiration.setMinutes(expiration.getMinutes() + SUBSCRIPTION_LIFETIME_MINUTES);
 
-  const successful: Array<Record<string, unknown>> = [];
-  const failed: Array<Record<string, unknown>> = [];
+  // Gather all resources to subscribe to (chats + channels) in parallel
+  const resources: Array<{ resource: string; type: string; name: string }> = [];
 
-  // Subscribe to all chats
-  try {
-    const chats = await listChats(token);
+  const [chatsResult, teamsResult] = await Promise.allSettled([
+    listChats(token),
+    listTeams(token),
+  ]);
+
+  if (chatsResult.status === "fulfilled") {
+    const chats = chatsResult.value;
     console.log(`[teams-subscriptions] found ${chats.length} chats`);
-
     for (const chat of chats) {
-      const resource = `/chats/${chat.id}/messages`;
-      const name = chat.topic || `${chat.chatType} chat`;
-      try {
-        const sub = await createGraphSubscription(resource, notificationUrl, clientState, expiration, token);
-        await upsertSubscription({
-          subscription_id: sub.id,
-          resource,
-          resource_type: "chat",
-          resource_name: name,
-          expires_at: sub.expirationDateTime,
-        });
-        successful.push({ id: sub.id, resource, type: "chat", name });
-        console.log(`[teams-subscriptions] subscribed to chat: ${name}`);
-      } catch (e) {
-        const error = e instanceof Error ? e.message : String(e);
-        failed.push({ resource, type: "chat", name, error });
-        console.error(`[teams-subscriptions] failed chat ${name}: ${error}`);
-      }
+      resources.push({
+        resource: `/chats/${chat.id}/messages`,
+        type: "chat",
+        name: chat.topic || `${chat.chatType} chat`,
+      });
     }
-  } catch (e) {
-    console.error("[teams-subscriptions] failed to list chats:", e);
+  } else {
+    console.error("[teams-subscriptions] failed to list chats:", chatsResult.reason);
   }
 
-  // Subscribe to all team channels
-  try {
-    const teams = await listTeams(token);
+  if (teamsResult.status === "fulfilled") {
+    const teams = teamsResult.value;
     console.log(`[teams-subscriptions] found ${teams.length} teams`);
-
-    for (const team of teams) {
-      try {
-        const channels = await listChannels(team.id, token);
+    // Fetch all channel lists in parallel
+    const channelResults = await Promise.allSettled(
+      teams.map((team) => listChannels(team.id, token).then((channels) => ({ team, channels }))),
+    );
+    for (const result of channelResults) {
+      if (result.status === "fulfilled") {
+        const { team, channels } = result.value;
         for (const channel of channels) {
-          const resource = `/teams/${team.id}/channels/${channel.id}/messages`;
-          const name = `${team.displayName} > ${channel.displayName}`;
-          try {
-            const sub = await createGraphSubscription(resource, notificationUrl, clientState, expiration, token);
-            await upsertSubscription({
-              subscription_id: sub.id,
-              resource,
-              resource_type: "channel",
-              resource_name: name,
-              expires_at: sub.expirationDateTime,
-            });
-            successful.push({ id: sub.id, resource, type: "channel", name });
-            console.log(`[teams-subscriptions] subscribed to channel: ${name}`);
-          } catch (e) {
-            const error = e instanceof Error ? e.message : String(e);
-            failed.push({ resource, type: "channel", name, error });
-            console.error(`[teams-subscriptions] failed channel ${name}: ${error}`);
-          }
+          resources.push({
+            resource: `/teams/${team.id}/channels/${channel.id}/messages`,
+            type: "channel",
+            name: `${team.displayName} > ${channel.displayName}`,
+          });
         }
-      } catch (e) {
-        console.error(`[teams-subscriptions] failed to list channels for ${team.displayName}:`, e);
       }
     }
-  } catch (e) {
-    console.error("[teams-subscriptions] failed to list teams:", e);
+  } else {
+    console.error("[teams-subscriptions] failed to list teams:", teamsResult.reason);
   }
+
+  // Create all subscriptions in parallel
+  const results = await Promise.allSettled(
+    resources.map(async ({ resource, type, name }) => {
+      const sub = await createGraphSubscription(resource, notificationUrl, clientState, expiration, token);
+      await upsertSubscription({
+        subscription_id: sub.id,
+        resource,
+        resource_type: type,
+        resource_name: name,
+        expires_at: sub.expirationDateTime,
+      });
+      console.log(`[teams-subscriptions] subscribed to ${type}: ${name}`);
+      return { id: sub.id, resource, type, name };
+    }),
+  );
+
+  const successful = results
+    .filter((r): r is PromiseFulfilledResult<Record<string, unknown>> => r.status === "fulfilled")
+    .map((r) => r.value);
+  const failed = results
+    .filter((r): r is PromiseRejectedResult => r.status === "rejected")
+    .map((r, i) => {
+      const res = resources[results.indexOf(r)];
+      const error = r.reason instanceof Error ? r.reason.message : String(r.reason);
+      console.error(`[teams-subscriptions] failed ${res?.type} ${res?.name}: ${error}`);
+      return { ...res, error };
+    });
 
   return jsonResponse({
     ok: true,
@@ -333,29 +338,32 @@ async function handleRenew(token: string): Promise<Response> {
   const expiration = new Date();
   expiration.setMinutes(expiration.getMinutes() + SUBSCRIPTION_LIFETIME_MINUTES);
 
+  const results = await Promise.allSettled(
+    subs.map(async (sub) => {
+      const subId = sub.subscription_id as string;
+      const result = await renewGraphSubscription(subId, expiration, token);
+      if (result) {
+        await upsertSubscription({
+          subscription_id: subId,
+          resource: sub.resource,
+          resource_type: sub.resource_type,
+          resource_name: sub.resource_name,
+          expires_at: result.expirationDateTime,
+        });
+        return "renewed" as const;
+      } else {
+        await deleteSubscriptionRow(subId);
+        return "failed" as const;
+      }
+    }),
+  );
+
   let renewed = 0;
   let failed = 0;
   let deleted = 0;
-
-  for (const sub of subs) {
-    const subId = sub.subscription_id as string;
-    const result = await renewGraphSubscription(subId, expiration, token);
-    if (result) {
-      // Update expiration in DB
-      await upsertSubscription({
-        subscription_id: subId,
-        resource: sub.resource,
-        resource_type: sub.resource_type,
-        resource_name: sub.resource_name,
-        expires_at: result.expirationDateTime,
-      });
-      renewed++;
-    } else {
-      // Subscription expired or invalid — clean up row
-      await deleteSubscriptionRow(subId);
-      deleted++;
-      failed++;
-    }
+  for (const r of results) {
+    if (r.status === "fulfilled" && r.value === "renewed") renewed++;
+    else { failed++; deleted++; }
   }
 
   console.log(`[teams-subscriptions] renewed=${renewed} failed=${failed} deleted=${deleted}`);
@@ -380,18 +388,24 @@ async function handleList(): Promise<Response> {
 
 async function handleUnsubscribe(token: string): Promise<Response> {
   const subs = await getActiveSubscriptions();
+
+  const results = await Promise.allSettled(
+    subs.map(async (sub) => {
+      const subId = sub.subscription_id as string;
+      const ok = await deleteGraphSubscription(subId, token);
+      if (ok) {
+        await deleteSubscriptionRow(subId);
+        return "deleted" as const;
+      }
+      return "failed" as const;
+    }),
+  );
+
   let deleted = 0;
   let failed = 0;
-
-  for (const sub of subs) {
-    const subId = sub.subscription_id as string;
-    const ok = await deleteGraphSubscription(subId, token);
-    if (ok) {
-      await deleteSubscriptionRow(subId);
-      deleted++;
-    } else {
-      failed++;
-    }
+  for (const r of results) {
+    if (r.status === "fulfilled" && r.value === "deleted") deleted++;
+    else failed++;
   }
 
   return jsonResponse({ ok: true, action: "unsubscribe", deleted, failed });
