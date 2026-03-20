@@ -940,9 +940,10 @@ def _handle_direct_chat(action: str, patch_str: str | None) -> str:
 
 def _disconnect_teams_direct_chat() -> dict:
     from agent.auth import vault_delete_secret
-    for key in ["teams_bot_tenant_id", "teams_bot_service_url", "teams_bot_owner_conversation_id"]:
+    for key in ["teams_bot_app_id", "teams_bot_app_secret", "teams_bot_tenant_id",
+                "teams_bot_service_url", "teams_bot_owner_conversation_id"]:
         vault_delete_secret(key)
-    # Keep teams_bot_app_id and teams_bot_app_secret — needed by edge function for auto-reply
+    # Keep teams_bot_home_tenant_id — needed by edge function for auto-reply token endpoint
     return {"status": "disconnected", "service": "teams"}
 
 
