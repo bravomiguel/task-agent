@@ -378,6 +378,66 @@ def get_sandbox_files(session_id: str, sandbox_id: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Arbitrary volume file read/write (for config, prompts, etc.)
+# ---------------------------------------------------------------------------
+
+
+@app.function(volumes={"/mnt": volume})
+def read_volume_file(path: str) -> str:
+    """Read a text file from an arbitrary path on the volume.
+
+    Args:
+        path: Absolute path starting with /mnt/ (e.g. /mnt/config.json)
+
+    Returns:
+        File content as string.
+    """
+    volume.reload()
+    # Strip /mnt/ prefix for volume.read_file
+    vol_path = path.removeprefix("/mnt")
+    content_bytes = b"".join(volume.read_file(vol_path))
+    return content_bytes.decode("utf-8")
+
+
+@app.function(volumes={"/mnt": volume})
+def write_volume_file(path: str, content: str) -> dict:
+    """Write a text file to an arbitrary path on the volume.
+
+    Args:
+        path: Absolute path starting with /mnt/ (e.g. /mnt/config.json)
+        content: File content as string.
+
+    Returns:
+        Dictionary with 'success' boolean.
+    """
+    import io
+
+    vol_path = path.removeprefix("/mnt")
+    with volume.batch_upload(force=True) as batch:
+        batch.put_file(io.BytesIO(content.encode("utf-8")), vol_path)
+    return {"success": True}
+
+
+@app.function(volumes={"/mnt": volume})
+def list_volume_dir(path: str) -> list[str]:
+    """List directory entries at an arbitrary volume path.
+
+    Args:
+        path: Absolute path starting with /mnt/ (e.g. /mnt/skills)
+
+    Returns:
+        List of entry names.
+    """
+    volume.reload()
+    vol_path = path.removeprefix("/mnt")
+    try:
+        entries = volume.listdir(vol_path, recursive=False)
+        return [e.path.split("/")[-1] for e in entries]
+    except FileNotFoundError:
+        return []
+
+
+# ---------------------------------------------------------------------------
 # Web endpoints
 # ---------------------------------------------------------------------------
 

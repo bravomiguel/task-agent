@@ -30,28 +30,37 @@ from agent.modal_backend import LazyModalBackend
 # Codex proxy kept for auxiliary model (SessionSetupMiddleware slug generation).
 import os
 
+os.environ.pop("ANTHROPIC_API_KEY", None)  # Ensure OAuth token is used, not API key
+
 _claude_token = get_claude_code_token()
 main_model = ChatAnthropic(
     model="claude-opus-4-5",
-    default_headers={"Authorization": f"Bearer {_claude_token}"},
+    default_headers={
+        "Authorization": f"Bearer {_claude_token}",
+        "anthropic-beta": "oauth-2025-04-20,claude-code-20250219",
+    },
 )
 
-# # OpenAI Codex OAuth proxy — main model (commented out, kept for fallback)
+gpt_4_1_mini = init_chat_model(
+    model="openai:gpt-4.1-mini",
+    disable_streaming=True,
+)
+
+# # OpenAI Codex OAuth proxy (commented out, kept for fallback)
 # # Requires: npx openai-oauth (runs at http://127.0.0.1:10531/v1)
+# _CODEX_PROXY_URL = os.environ.get("CODEX_PROXY_URL", "http://127.0.0.1:10531/v1")
 # main_model = init_chat_model(
 #     model="openai:gpt-5.4",
 #     configurable_fields=["model", "model_provider"],
 #     base_url=_CODEX_PROXY_URL,
 #     api_key="codex-oauth",
 # )
-
-_CODEX_PROXY_URL = os.environ.get("CODEX_PROXY_URL", "http://127.0.0.1:10531/v1")
-gpt_4_1_mini = init_chat_model(
-    model="openai:gpt-4.1-mini",
-    disable_streaming=True,
-    base_url=_CODEX_PROXY_URL,
-    api_key="codex-oauth",
-)
+# gpt_4_1_mini = init_chat_model(
+#     model="openai:gpt-4.1-mini",
+#     disable_streaming=True,
+#     base_url=_CODEX_PROXY_URL,
+#     api_key="codex-oauth",
+# )
 
 
 def create_backend_factory():
