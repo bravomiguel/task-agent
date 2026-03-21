@@ -400,6 +400,31 @@ def read_volume_file(path: str) -> str:
 
 
 @app.function(volumes={"/mnt": volume})
+def read_volume_file_bytes(path: str) -> dict:
+    """Read a file as base64-encoded bytes from an arbitrary volume path.
+
+    Args:
+        path: Absolute path starting with /mnt/ (e.g. /mnt/meeting-transcripts/file.md)
+
+    Returns:
+        Dictionary with 'content_b64', 'mime', and 'size'.
+    """
+    import base64
+    import mimetypes
+
+    volume.reload()
+    vol_path = path.removeprefix("/mnt")
+    content_bytes = b"".join(volume.read_file(vol_path))
+    content_b64 = base64.b64encode(content_bytes).decode("ascii")
+    mime_type, _ = mimetypes.guess_type(path)
+    return {
+        "content_b64": content_b64,
+        "mime": mime_type or "application/octet-stream",
+        "size": len(content_bytes),
+    }
+
+
+@app.function(volumes={"/mnt": volume})
 def write_volume_file(path: str, content: str) -> dict:
     """Write a text file to an arbitrary path on the volume.
 
