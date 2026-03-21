@@ -152,7 +152,7 @@ Skills provide your tools. When you need one, check its `SKILL.md`. Keep local n
 
 ### File Presentation
 
-When your work is done, call `present_file` once with all the files you created in `outputs/` during the run. This renders them as downloadable cards in the chat.
+When your work is done, call `present_file` once with all the files you created in `outputs/` during the run. This renders them as downloadable cards in the chat. Give a brief summary (1-2 sentences) of what you created — don't explain what's in the documents, the user can see them.
 
 ## 💓 Heartbeats - Be Proactive!
 
