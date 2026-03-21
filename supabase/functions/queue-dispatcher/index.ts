@@ -271,6 +271,16 @@ async function dispatchItem(item: Record<string, unknown>): Promise<{ dispatched
     const transcriptFilename = (meta.transcript_filename as string) ?? "";
     const attrs = [`type="meeting-transcript"`];
     if (transcriptFilename) attrs.push(`transcript_path="/mnt/meeting-transcripts/${transcriptFilename}"`);
+    if (meta.title) attrs.push(`title="${meta.title}"`);
+    if (meta.date) attrs.push(`date="${meta.date}"`);
+    if (meta.ended) attrs.push(`ended="${meta.ended}"`);
+    if (meta.duration) attrs.push(`duration="${meta.duration}"`);
+    if (meta.platform) attrs.push(`platform="${meta.platform}"`);
+    if (meta.trigger) attrs.push(`trigger="${meta.trigger}"`);
+    if (meta.attendees) attrs.push(`attendees="${meta.attendees}"`);
+    if (meta.calendar_event_url) attrs.push(`calendar_event_url="${meta.calendar_event_url}"`);
+    if (meta.calendar_event_id) attrs.push(`calendar_event_id="${meta.calendar_event_id}"`);
+    if (meta.meeting_id) attrs.push(`meeting_id="${meta.meeting_id}"`);
     message = `<system-message ${attrs.join(" ")}>\n${combinedText}\n</system-message>`;
     runInput.channel_metadata = meta;
   } else {

@@ -1339,6 +1339,12 @@ async function handleMeetings(req: Request): Promise<Response> {
     combinedText = combinedText.slice(0, MEETING_TRANSCRIPT_MAX_CHARS) + "\n\n[truncated — read full transcript at transcript_path]";
   }
 
+  // Build attendee names list
+  const attendeeNames = (attendees ?? [])
+    .map((a) => (a.name as string) || (a.email as string) || "")
+    .filter(Boolean)
+    .join(", ");
+
   // Insert directly into queue (no debounce needed for meetings)
   await insertQueue({
     source: "meeting",
@@ -1347,6 +1353,18 @@ async function handleMeetings(req: Request): Promise<Response> {
     combined_text: combinedText,
     metadata: {
       transcript_filename: transcriptFilename,
+      title: title || "",
+      date: startedAt || "",
+      ended: endedAt || "",
+      duration: duration ? `${Math.floor(duration / 60)}m ${duration % 60}s` : "",
+      platform: meetingPlatform || "",
+      trigger: source === "manual" ? "manual" : "calendar",
+      attendees: attendeeNames,
+      calendar_event_url: calendarEmail && calendarEventId
+        ? `https://calendar.google.com/calendar/event?eid=${calendarEventId}`
+        : "",
+      calendar_event_id: calendarEventId || "",
+      meeting_id: (body.id as string) ?? "",
     },
   });
 
