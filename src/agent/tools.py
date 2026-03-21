@@ -27,28 +27,26 @@ def _get_mime_type(filepath: str) -> str:
 
 
 @tool
-def present_file(filepath: str) -> str:
-    """Present a file to the user in the document viewer.
+def present_file(filepaths: list[str]) -> str:
+    """Present files to the user in the document viewer.
 
-    Call this tool after creating or modifying a file that the user should see.
-    The file will automatically open in the user's document viewer.
+    Call once at the end of your run with all files you created in outputs/.
+    The frontend renders each as a downloadable card in the chat.
 
     Args:
-        filepath: Relative path to the file (e.g., "outputs/report.md").
-                  Must be a file in the outputs/ directory.
+        filepaths: List of relative paths (e.g., ["outputs/report.docx", "outputs/data.xlsx"]).
 
     Returns:
         XML with file metadata for frontend rendering.
     """
-    # Extract filename from path
-    name = os.path.basename(filepath)
-    mime_type = _get_mime_type(filepath)
-
-    return f"""<presented_file>
-<file_path>{filepath}</file_path>
-<name>{name}</name>
-<mime_type>{mime_type}</mime_type>
-</presented_file>"""
+    entries = []
+    for filepath in filepaths:
+        name = os.path.basename(filepath)
+        mime_type = _get_mime_type(filepath)
+        entries.append(
+            f"<file>\n<file_path>{filepath}</file_path>\n<name>{name}</name>\n<mime_type>{mime_type}</mime_type>\n</file>"
+        )
+    return "<presented_files>\n" + "\n".join(entries) + "\n</presented_files>"
 
 
 @tool

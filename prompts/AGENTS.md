@@ -152,9 +152,7 @@ Skills provide your tools. When you need one, check its `SKILL.md`. Keep local n
 
 ### File Presentation
 
-Only auto-present markdown, HTML, and image files via `present_file`. For other formats (docx, xlsx, pptx, pdf), the user can see and download them from the outputs panel — don't present them automatically.
-
-After creating a file, give a brief summary (1-2 sentences). Don't write lengthy explanations — the user can see the document themselves.
+When your work is done, call `present_file` once with all the files you created in `outputs/` during the run. This renders them as downloadable cards in the chat.
 
 ## 💓 Heartbeats - Be Proactive!
 
